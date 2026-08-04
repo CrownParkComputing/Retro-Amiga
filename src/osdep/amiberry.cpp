@@ -98,6 +98,41 @@
 
 #ifdef USE_GPIOD
 #include <gpiod.h>
+#endif
+
+// UAE4ARM 2026: Global stubs for removed GUI components
+bool joystick_refresh_needed = false;
+bool gui_running = false;
+void gui_restart() {}
+void amiberry_gui_init() {}
+void amiberry_gui_halt() {}
+void configurations_panel_reset() {}
+void run_gui() {}
+void ShowMessageBox(const char*, const char*) {}
+void ShowDiskInfo(const char*, const std::vector<std::string>&) {}
+void target_startup_msg(const char*, const char*) {}
+
+#ifdef AMIBERRY_HAS_CURL
+// Stub with correct expected return type (std::string) to avoid collision
+std::string get_json_timestamp(const std::string&) { return ""; }
+std::string get_xml_timestamp(const std::string&) { return ""; }
+#endif
+
+// Stubs for ImGuiFileDialog if referenced elsewhere
+struct ImVec2 { float x, y; };
+namespace IGFD {
+    class FileDialog {
+    public:
+        FileDialog() {}
+        ~FileDialog() {}
+        void Display(const std::string&, int, ImVec2, ImVec2) {}
+        bool IsOk() const { return false; }
+        void Close() {}
+        bool IsOpened(const std::string&) const { return false; }
+        std::string GetFilePathName(int) { return ""; }
+        std::string GetCurrentPath() { return ""; }
+    };
+}
 struct gpiod_chip* chip;
 #if defined(GPIOD_VERSION_MAJOR) && GPIOD_VERSION_MAJOR >= 2
 struct gpiod_line_request* gpio_request;
@@ -106,7 +141,6 @@ const char* chipname = "gpiochip0";
 struct gpiod_line* lineRed;    // Red LED
 struct gpiod_line* lineGreen;  // Green LED
 struct gpiod_line* lineYellow; // Yellow LED
-#endif
 #endif
 
 extern int run_jit_selftest_cli(void);

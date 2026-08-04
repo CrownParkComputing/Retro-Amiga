@@ -30,6 +30,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 	var currentUnknownLines by mutableStateOf<List<String>>(emptyList())
 		private set
 
+	var currentConfigName by mutableStateOf<String?>(null)
+		private set
+
 	val availableRoms: StateFlow<List<AmigaFile>> = repository.roms
 	val availableFloppies: StateFlow<List<AmigaFile>> = repository.floppies
 	val availableHardDrives: StateFlow<List<AmigaFile>> = repository.hardDrives
@@ -106,9 +109,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 		saveLastSession()
 	}
 
-	fun loadConfig(parsed: ConfigParser.ParsedConfig) {
+	fun loadConfig(parsed: ConfigParser.ParsedConfig, name: String? = null) {
 		settings = applyConstraints(parsed.settings)
 		currentUnknownLines = ConfigParser.sanitizeUnknownLines(parsed.unknownLines)
+		currentConfigName = name
 		autoSelectDefaultRomIfNeeded(availableRoms.value)
 		saveLastSession()
 	}
@@ -175,18 +179,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 		}
 
 		// Fallback: Try to match by filename if no CRC match found
-		val modelKeywords = when (model) {
-			AmigaModel.A500 -> listOf("a500", "kick13")
-			AmigaModel.A500_PLUS -> listOf("a500plus", "a500+", "kick204")
-			AmigaModel.A600 -> listOf("a600", "kick205", "kick37")
-			AmigaModel.A1000 -> listOf("a1000")
-			AmigaModel.A2000 -> listOf("a2000")
-			AmigaModel.A3000 -> listOf("a3000")
-			AmigaModel.A1200 -> listOf("a1200", "kick30", "kick31")
-			AmigaModel.A4000 -> listOf("a4000")
-			AmigaModel.CD32 -> listOf("cd32")
-			AmigaModel.CDTV -> listOf("cdtv")
-		}
+		val modelKeywords = MODEL_KEYWORDS[model] ?: emptyList()
 
 		val nameMatchedKick = roms.filter { rom ->
 			val name = rom.name.lowercase()
@@ -235,7 +228,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 		}
 	}
 
-	private fun detectRomId(rom: AmigaFile): Int? {
+	fun detectRomId(rom: AmigaFile): Int? {
 		return romIdCacheByPath.getOrPut(rom.path) {
 			val crc = rom.crc32 ?: return@getOrPut null
 			ROM_CRC_TO_ID[crc and 0xffffffffL]
@@ -246,24 +239,24 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 		return candidates.sortedBy { it.name.lowercase() }.firstOrNull()
 	}
 
-	private data class SelectedRoms(
+	data class SelectedRoms(
 		val kick: AmigaFile?,
 		val ext: AmigaFile?
 	)
 
-	private data class ModelRomProfile(
+	data class ModelRomProfile(
 		val kickIds: List<Int>,
 		val extIds: List<Int> = emptyList()
 	)
 
-	private companion object {
+	companion object {
 		private const val LAST_SESSION_FILE = ".last_session.uae"
 
 		/**
 		 * Exact --model ROM priority behavior from main.cpp wrappers:
 		 * A500->bip_a500(130), A500P->bip_a500plus(-1), A2000->bip_a2000(130), etc.
 		 */
-		private val MODEL_ROM_PROFILE = mapOf(
+		val MODEL_ROM_PROFILE = mapOf(
 			AmigaModel.A500 to ModelRomProfile(kickIds = listOf(6, 5, 4)),
 			AmigaModel.A500_PLUS to ModelRomProfile(kickIds = listOf(7, 6, 5)),
 			AmigaModel.A600 to ModelRomProfile(kickIds = listOf(10, 9, 8)),
@@ -274,6 +267,19 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 			AmigaModel.A4000 to ModelRomProfile(kickIds = listOf(16, 31, 13, 12, 46, 278, 283, 288, 293, 306)),
 			AmigaModel.CD32 to ModelRomProfile(kickIds = listOf(64, 18), extIds = listOf(19)),
 			AmigaModel.CDTV to ModelRomProfile(kickIds = listOf(6, 32), extIds = listOf(20, 21, 22))
+		)
+
+		val MODEL_KEYWORDS = mapOf(
+			AmigaModel.A500 to listOf("a500", "kick13"),
+			AmigaModel.A500_PLUS to listOf("a500plus", "a500+", "kick204"),
+			AmigaModel.A600 to listOf("a600", "kick205", "kick37"),
+			AmigaModel.A1000 to listOf("a1000"),
+			AmigaModel.A2000 to listOf("a2000"),
+			AmigaModel.A3000 to listOf("a3000"),
+			AmigaModel.A1200 to listOf("a1200", "kick30", "kick31"),
+			AmigaModel.A4000 to listOf("a4000"),
+			AmigaModel.CD32 to listOf("cd32"),
+			AmigaModel.CDTV to listOf("cdtv")
 		)
 
 		// CRC32 -> ROM ID mapping for the ids used above.
@@ -322,6 +328,20 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 	fun rescan() {
 		viewModelScope.launch {
 			repository.rescan()
+		}
+	}
+
+	fun getCompatibleRoms(model: AmigaModel): List<AmigaFile> {
+		val profile = MODEL_ROM_PROFILE[model] ?: return emptyList()
+		val modelKeywords = MODEL_KEYWORDS[model] ?: emptyList()
+		
+		return availableRoms.value.filter { rom ->
+			val romId = detectRomId(rom)
+			val name = rom.name.lowercase()
+			val matchesCrc = romId != null && (romId in profile.kickIds || romId in profile.extIds)
+			val matchesName = modelKeywords.any { name.contains(it) } && !name.contains("ext")
+			
+			matchesCrc || matchesName
 		}
 	}
 

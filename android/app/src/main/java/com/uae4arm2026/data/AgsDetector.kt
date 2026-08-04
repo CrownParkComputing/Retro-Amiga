@@ -425,8 +425,12 @@ object AgsDetector {
         sb.appendLine("joyport1=joy1")
         sb.appendLine("amiberry.android_joyport1=joy1")
         sb.appendLine("amiberry.touch_settings_version=1")
+        
+        // Force native on-screen joystick and keyboard OFF. We use our own Android overlays.
         sb.appendLine("onscreen_joystick=false")
         sb.appendLine("amiberry.onscreen_joystick=false")
+        sb.appendLine("onscreen_cd32pad=false")
+        sb.appendLine("amiberry.onscreen_cd32pad=false")
         sb.appendLine("vkbd_enabled=false")
         sb.appendLine("input.default_osk=false")
         sb.appendLine("amiberry.show_android_keyboard_button=true")

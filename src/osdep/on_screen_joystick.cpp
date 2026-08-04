@@ -877,7 +877,7 @@ void on_screen_joystick_quit()
 
 bool on_screen_joystick_is_enabled()
 {
-	return osj_enabled;
+	return false;
 }
 
 void on_screen_joystick_set_enabled(bool enabled)

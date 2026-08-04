@@ -1650,32 +1650,18 @@ void OpenGLRenderer::render_software_cursor(const int monid, int x, int y, int w
 
 void OpenGLRenderer::render_vkbd(int monid)
 {
-	if (vkbd_allowed(monid))
-	{
-		int dw, dh;
-		get_drawable_size(AMonitors[monid].amiga_window, &dw, &dh);
-		vkbd_redraw_gl(dw, dh);
-	}
+	// UAE4ARM 2026: Native engine virtual keyboard suppressed.
 }
 
 void OpenGLRenderer::render_onscreen_joystick(int monid)
 {
-	if (on_screen_joystick_is_enabled())
-	{
-		int dw, dh;
-		get_drawable_size(AMonitors[monid].amiga_window, &dw, &dh);
-		on_screen_joystick_redraw_gl(dw, dh, render_quad);
-	}
+	// UAE4ARM 2026: Native engine joystick rendering suppressed.
+	// We use our own Android touch overlays.
 }
 
 void OpenGLRenderer::render_onscreen_cd32pad(int monid)
 {
-	if (on_screen_cd32pad_is_enabled())
-	{
-		int dw, dh;
-		get_drawable_size(AMonitors[monid].amiga_window, &dw, &dh);
-		on_screen_cd32pad_redraw_gl(dw, dh, render_quad);
-	}
+	// UAE4ARM 2026: Native engine joystick rendering suppressed.
 }
 
 // --- OpenGL-specific accessors ---

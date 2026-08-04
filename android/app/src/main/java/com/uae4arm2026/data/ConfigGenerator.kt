@@ -86,8 +86,9 @@ object ConfigGenerator {
 		}
 
 		// Floppy drives
-		if (settings.floppy0.isNotEmpty()) sb.appendLine("floppy0=${settings.floppy0}")
-		sb.appendLine("floppy0type=${settings.floppy0Type}")
+		val hasWhdload = settings.whdloadFilename.isNotEmpty()
+		if (settings.floppy0.isNotEmpty() && !hasWhdload) sb.appendLine("floppy0=${settings.floppy0}")
+		sb.appendLine("floppy0type=${if (hasWhdload) -1 else settings.floppy0Type}")
 		if (settings.floppy1.isNotEmpty()) sb.appendLine("floppy1=${settings.floppy1}")
 		sb.appendLine("floppy1type=${settings.floppy1Type}")
 		if (settings.floppy2.isNotEmpty()) sb.appendLine("floppy2=${settings.floppy2}")
@@ -111,6 +112,11 @@ object ConfigGenerator {
 		} else if (settings.baseModel == AmigaModel.CD32 || settings.baseModel == AmigaModel.CDTV) {
 			// Required for CD console models even if no image is present to avoid BIOS loop
 			sb.appendLine("cdimage0_present=false")
+		}
+
+		// WHDLoad
+		if (settings.whdloadFilename.isNotEmpty()) {
+			sb.appendLine("whdload_filename=${settings.whdloadFilename}")
 		}
 
 		// Hard drives
@@ -170,12 +176,15 @@ object ConfigGenerator {
 
 		// Upstream Android compatibility keys that must remain stable for the core.
 		sb.appendLine("${UpstreamConfig.KEY_TOUCH_SETTINGS_VERSION}=${UpstreamConfig.TOUCH_SETTINGS_VERSION}")
-		sb.appendLine("${UpstreamConfig.KEY_ONSCREEN_JOYSTICK}=${onScreenJoystick.toCfg()}")
-		sb.appendLine("${UpstreamConfig.KEY_AMIBERRY_ONSCREEN_JOYSTICK}=${onScreenJoystick.toCfg()}")
-		sb.appendLine("${UpstreamConfig.KEY_ONSCREEN_CD32PAD}=${settings.onScreenCd32Pad.toCfg()}")
-		sb.appendLine("${UpstreamConfig.KEY_AMIBERRY_ONSCREEN_CD32PAD}=${settings.onScreenCd32Pad.toCfg()}")
+		
+		// Force native on-screen joystick and keyboard OFF. We use our own Android overlays.
+		sb.appendLine("${UpstreamConfig.KEY_ONSCREEN_JOYSTICK}=false")
+		sb.appendLine("${UpstreamConfig.KEY_AMIBERRY_ONSCREEN_JOYSTICK}=false")
+		sb.appendLine("${UpstreamConfig.KEY_ONSCREEN_CD32PAD}=false")
+		sb.appendLine("${UpstreamConfig.KEY_AMIBERRY_ONSCREEN_CD32PAD}=false")
 		sb.appendLine("${UpstreamConfig.KEY_VIRTUAL_KEYBOARD_ENABLED}=false")
 		sb.appendLine("${UpstreamConfig.KEY_DEFAULT_OSK}=false")
+		
 		sb.appendLine("${UpstreamConfig.KEY_SHOW_ANDROID_KEYBOARD_BUTTON}=${onScreenKeyboard.toCfg()}")
 
 		// Skip GUI when launched from Android native UI

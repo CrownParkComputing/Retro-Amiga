@@ -112,6 +112,7 @@ include(FetchContent)
     set(CURL_USE_OPENSSL OFF CACHE BOOL "" FORCE)
     set(CURL_USE_MBEDTLS ON CACHE BOOL "" FORCE)
     set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
+    set(USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
     FetchContent_Declare(
         curl
         GIT_REPOSITORY https://github.com/curl/curl.git

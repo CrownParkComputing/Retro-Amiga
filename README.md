@@ -2,7 +2,7 @@
 
 [![Android Release Build](https://github.com/CrownParkComputing/uae4arm_2026/actions/workflows/android-release.yml/badge.svg)](https://github.com/CrownParkComputing/uae4arm_2026/actions/workflows/android-release.yml)
 
-**UAE4ARM 2026** is an Android-only Amiga emulator, rebuilt with Jetpack Compose and Material3 around the proven Amiberry/WinUAE emulation core.
+**UAE4ARM 2026** is an Android-only Amiga emulator, rebuilt with Jetpack Compose and Material3 around the Copperline (WinUAE-derived) emulation core.
 
 ---
 
@@ -11,7 +11,7 @@
 UAE4ARM 2026 is a complete Android-first rewrite of the classic UAE4ARM Amiga emulator. This 2026 edition keeps the emulator core in-tree for Android native builds and modernises the app layer with:
 
 - **Jetpack Compose + Material3** UI — fully declarative, responsive layout
-- **Amiberry emulation core** — battle-tested UAE-based core with ARM64 JIT
+- **Copperline emulator backend** — battle-tested UAE-based core with ARM64 JIT
 - **Drive icon tile UI** — floppy, hard disk, and CD drive slots presented as visual icon cards
 - **Dynamic hard drive slots** — up to 10 HD entries, add/remove at runtime
 - **Single-row memory layout** — Chip, Fast, and Z3 memory on one compact row
@@ -97,7 +97,7 @@ project(uae4arm
 
 - Android Studio or Android SDK/NDK command-line tooling
 - JDK 21 (`JAVA_HOME` = Android Studio JBR)
-- Android SDK with NDK r28.0.13004108, CMake 3.22.1, build-tools 36, platform 36
+- Android SDK with NDK r28.0.13004108, CMake 3.22.1, build-tools 37, platform 37
 
 ### Debug build (local device)
 
@@ -168,4 +168,4 @@ Use the comparison script before and after any upstream import so each sync is a
 
 Licensed under the [GNU General Public License v3.0](LICENSE).
 
-UAE4ARM 2026 builds on open source work from [Amiberry](https://github.com/BlitterStudio/amiberry) and [WinUAE](https://www.winuae.net/). The original UAE4ARM project is by Chips (Georgiou Konstantinos).
+UAE4ARM 2026 builds on open source work from [Copperline](https://github.com/CrownParkComputing/uae4arm_2026) (derived from Amiberry) and [WinUAE](https://www.winuae.net/). The original UAE4ARM project is by Chips (Georgiou Konstantinos).

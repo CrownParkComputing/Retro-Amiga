@@ -1041,7 +1041,7 @@ void on_screen_cd32pad_quit()
 
 bool on_screen_cd32pad_is_enabled()
 {
-	return cd32_enabled;
+	return false;
 }
 
 void on_screen_cd32pad_set_enabled(bool enabled)

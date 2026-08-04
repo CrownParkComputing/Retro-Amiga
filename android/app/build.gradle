@@ -86,12 +86,12 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = 'com.uae4arm2026'
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.uae4arm2026"
         minSdk = 29
-        targetSdk = 36
+        targetSdk = 37
         versionCode = androidVersionCode
         versionName = computedVersionName
 

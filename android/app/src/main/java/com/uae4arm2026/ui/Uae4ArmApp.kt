@@ -25,6 +25,8 @@ import com.uae4arm2026.ui.screens.ConfigurationsScreen
 import com.uae4arm2026.ui.screens.FileManagerScreen
 import com.uae4arm2026.ui.screens.OnboardingScreen
 import com.uae4arm2026.ui.screens.Uae4ArmHomeScreen
+import com.uae4arm2026.ui.screens.GuidedConfigScreen
+import com.uae4arm2026.ui.screens.settings.AppSettingsScreen
 import com.uae4arm2026.ui.screens.settings.SettingsScreen
 
 @Composable
@@ -104,6 +106,9 @@ private fun Uae4ArmNavHost(navController: NavHostController, modifier: Modifier 
 		composable(Screen.Settings.route) {
 			SettingsScreen(navController = navController)
 		}
+		composable(Screen.AppSettings.route) {
+			AppSettingsScreen(navController = navController)
+		}
 		composable(Screen.FileManager.route) {
 			FileManagerScreen(navController = navController)
 		}
@@ -112,6 +117,10 @@ private fun Uae4ArmNavHost(navController: NavHostController, modifier: Modifier 
 		}
 		composable(Screen.Configurations.route) {
 			ConfigurationsScreen(navController = navController)
+		}
+		composable(Screen.GuidedConfig.route) { backStackEntry ->
+			val mode = backStackEntry.arguments?.getString("mode") ?: "adf"
+			GuidedConfigScreen(mode = mode, navController = navController)
 		}
 	}
 }

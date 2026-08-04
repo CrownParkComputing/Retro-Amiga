@@ -1,15 +1,21 @@
 package com.uae4arm2026.data
 
 import android.content.Context
+import com.uae4arm2026.data.model.AmigaModel
 import com.uae4arm2026.data.model.EmulatorSettings
 import java.io.File
 import java.io.IOException
+
+enum class ConfigCategory { ADF, CD32, HDF, WHDLOAD, GENERIC }
 
 data class ConfigInfo(
 	val path: String,
 	val name: String,
 	val lastModified: Long,
-	val description: String
+	val description: String,
+	val category: ConfigCategory = ConfigCategory.GENERIC,
+	val model: AmigaModel = AmigaModel.A500,
+	val validationError: String? = null
 )
 
 class ConfigRepository(private val context: Context) {
@@ -23,11 +29,44 @@ class ConfigRepository(private val context: Context) {
 		return confDir.listFiles { f -> f.extension == "uae" && !f.name.startsWith(".") }
 			?.map { file ->
 				val parsed = ConfigParser.parse(file)
+				val settings = parsed.settings
+				
+				var error: String? = null
+				val missingFiles = mutableListOf<String>()
+
+				if (settings.romFile.isNotBlank() && !MediaPathHelper.canAccessPath(context, settings.romFile)) {
+					missingFiles.add("ROM: ${settings.romFile.substringAfterLast('/')}")
+				}
+				if (settings.romExtFile.isNotBlank() && !MediaPathHelper.canAccessPath(context, settings.romExtFile)) {
+					missingFiles.add("Ext ROM: ${settings.romExtFile.substringAfterLast('/')}")
+				}
+				if (settings.floppy0.isNotBlank() && !MediaPathHelper.canAccessPath(context, settings.floppy0)) {
+					missingFiles.add("Disk: ${settings.floppy0.substringAfterLast('/')}")
+				}
+				if (settings.cdImage.isNotBlank() && !MediaPathHelper.canAccessPath(context, settings.cdImage)) {
+					missingFiles.add("CD: ${settings.cdImage.substringAfterLast('/')}")
+				}
+				if (settings.whdloadFilename.isNotBlank() && !MediaPathHelper.canAccessPath(context, settings.whdloadFilename)) {
+					missingFiles.add("LHA: ${settings.whdloadFilename.substringAfterLast('/')}")
+				}
+				settings.hardDrives.filter { it.isNotBlank() }.forEach { hdf ->
+					if (!MediaPathHelper.canAccessPath(context, hdf)) {
+						missingFiles.add("Drive: ${hdf.substringAfterLast('/')}")
+					}
+				}
+
+				if (missingFiles.isNotEmpty()) {
+					error = "Missing: " + missingFiles.joinToString(", ")
+				}
+
 				ConfigInfo(
 					path = file.absolutePath,
 					name = file.nameWithoutExtension,
 					lastModified = file.lastModified(),
-					description = parsed.description
+					description = parsed.description,
+					category = ConfigParser.guessCategory(parsed.settings),
+					model = parsed.settings.baseModel,
+					validationError = error
 				)
 			}
 			?.sortedByDescending { it.lastModified }

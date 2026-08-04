@@ -156,7 +156,7 @@ object FileManager {
 				val externalDir = File(configuredDir)
 				val uriString = getCategoryLibraryUri(context, category)
 				if (!uriString.isNullOrBlank() && !isAppOwnedPath(context, configuredDir)) {
-					for (file in scanDocumentDirectoryRecursive(context, Uri.parse(uriString), extensions, category)) {
+					for (file in scanDocumentDirectoryRecursive(context, Uri.parse(uriString), configuredDir, extensions, category)) {
 						if (seenPaths.add(file.path)) results.add(file)
 					}
 				} else if (isAppOwnedPath(context, configuredDir)) {
@@ -175,6 +175,7 @@ object FileManager {
 	private fun scanDocumentDirectoryRecursive(
 		context: Context,
 		treeUri: Uri,
+		basePath: String,
 		extensions: Set<String>,
 		category: FileCategory
 	): List<AmigaFile> {
@@ -184,7 +185,7 @@ object FileManager {
 		} catch (_: Exception) {
 			DocumentsContract.getDocumentId(treeUri)
 		}
-		scanDocumentDirectoryInternal(context, treeUri, rootId, rootId, extensions, category, results)
+		scanDocumentDirectoryInternal(context, treeUri, rootId, rootId, basePath, extensions, category, results)
 		return results
 	}
 
@@ -193,6 +194,7 @@ object FileManager {
 		treeUri: Uri,
 		rootId: String,
 		parentId: String,
+		basePath: String,
 		extensions: Set<String>,
 		category: FileCategory,
 		results: MutableList<AmigaFile>
@@ -227,27 +229,25 @@ object FileManager {
 
 					if (DocumentsContract.Document.MIME_TYPE_DIR == mime) {
 						if (!name.startsWith(".")) {
-							val otherCat = FileCategory.entries.firstOrNull { it != category && it.dirName.equals(name, ignoreCase = true) }
-							if (otherCat == null) {
-								scanDocumentDirectoryInternal(context, treeUri, rootId, docId, extensions, category, results)
+							// For recursion, we check if this folder is within our target base path
+							val folderUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+							val folderPath = MediaPathHelper.normalizeImportedPath(context, folderUri)
+							if (folderPath.startsWith(basePath, ignoreCase = true) || basePath.startsWith(folderPath, ignoreCase = true)) {
+								scanDocumentDirectoryInternal(context, treeUri, rootId, docId, basePath, extensions, category, results)
 							}
 						}
 						continue
 					}
 
-					val currentFolder = parentId.substringAfterLast('/', "")
-					val isRoot = parentId == rootId
-					val inMatchingFolder = category.dirName.equals(currentFolder, ignoreCase = true)
-					if (!isRoot && !inMatchingFolder) continue
-
 					val ext = name.substringAfterLast('.', "").lowercase()
 					if (ext !in extensions) continue
-					if (ext == "zip" && category != FileCategory.FLOPPIES && category != FileCategory.WHDLOAD_GAMES) {
-						if (!inMatchingFolder) continue
-					}
 
 					val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
 					val storedPath = MediaPathHelper.normalizeImportedPath(context, docUri)
+					
+					// Ensure the file is actually inside the configured library folder
+					if (!storedPath.startsWith(basePath, ignoreCase = true)) continue
+
 					results.add(
 						AmigaFile(
 							path = storedPath,
@@ -405,7 +405,20 @@ object FileManager {
 	}
 
 	private fun getLibraryPathKey(category: FileCategory): String = "library_path_${category.dirName}"
-	private fun getLibraryUriKey(category: FileCategory): String = "library_uri_${category.dirName}"
+	fun getLibraryUriKey(category: FileCategory): String = "library_uri_${category.dirName}"
+
+	fun treeUriToPath(uri: Uri): String? = try {
+		val docId = DocumentsContract.getTreeDocumentId(uri)
+		val split = docId.split(":")
+		if (split.size >= 2) {
+			if (split[0] == "primary") "${Environment.getExternalStorageDirectory()}/${split[1]}"
+			else "/storage/${split[0]}/${split[1]}"
+		} else {
+			Environment.getExternalStorageDirectory().absolutePath
+		}
+	} catch (_: Exception) {
+		null
+	}
 
 	private fun resolveDocumentPath(context: Context, uri: Uri): String? {
 		if (uri.scheme.equals("file", ignoreCase = true)) return uri.path?.let { File(it).absolutePath }

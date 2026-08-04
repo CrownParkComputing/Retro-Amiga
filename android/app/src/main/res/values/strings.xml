@@ -197,7 +197,7 @@
     <string name="settings_input_device_none">None</string>
     <string name="settings_input_device_joystick_0">Joystick 0</string>
     <string name="settings_input_device_joystick_1">Joystick 1</string>
-    <string name="settings_input_device_on_screen_joystick">On-Screen Joystick</string>
+    <string name="settings_input_device_on_screen_joystick">On-Screen Controller</string>
     <string name="settings_input_device_keyboard_layout_1">Keyboard Layout 1</string>
     <string name="settings_input_device_keyboard_layout_2">Keyboard Layout 2</string>
     <string name="settings_input_device_keyboard_layout_3">Keyboard Layout 3</string>
@@ -226,7 +226,7 @@
     <string name="clipboard_label_path">path</string>
     <string name="placeholder_none">(none)</string>
     <string name="welcome_title">Welcome to UAE4ARM</string>
-    <string name="welcome_message">UAE4ARM is an Amiga emulator. To get started, you\'ll need a Kickstart ROM file â€” this is the Amiga\'s operating system firmware. Import one from the Files tab, then choose an Amiga model and insert a floppy or CD image to start emulating.</string>
+    <string name="welcome_message">UAE4ARM is an Amiga emulator. To get started, you\'ll need a Kickstart ROM file — this is the Amiga\'s operating system firmware. Import one from the Files tab, then choose an Amiga model and insert a floppy or CD image to start emulating. Powered by the Copperline engine.</string>
     <string name="welcome_help_link">Learn more</string>
     <string name="welcome_dismiss">Got it</string>
     <string name="pause_menu_title">Emulation Paused</string>
@@ -262,10 +262,10 @@ Open the controller mapping screen (gamepad icon) to choose an on-screen control
 Tap the gamepad icon to open the controller mapping screen. Tap a CD32 button on the pad graphic, then press a physical button on your controller to assign it. Extra buttons (Select, L2, R2, L3, R3) can be mapped to Amiga keyboard keys.
 
 <b>Credits</b>
-AGS (Amiga Game Selector) created by Paul Vince â€” thank you for this amazing contribution to the Amiga community.
+AGS (Amiga Game Selector) created by Paul Vince — thank you for this amazing contribution to the Amiga community.
 
 Based on UAE/WinUAE by Bernd Schmidt, Toni Wilen, and many contributors.
-Upstream Amiberry core by Dimitris Panokostas (MiDWaN).
+Upstream Copperline core derived from Amiberry.
 SDL by Sam Lantinga and contributors.</string>
     <string name="crash_dialog_title">Emulator stopped unexpectedly</string>
     <string name="crash_dialog_message">The emulator process exited unexpectedly. This may have been caused by an incompatible configuration or a missing ROM file. If this keeps happening, try a different Amiga model or check your ROM files.</string>
@@ -289,4 +289,39 @@ SDL by Sam Lantinga and contributors.</string>
     <string name="downloads_download">Download</string>
     <string name="downloads_downloading">Downloading...</string>
     <string name="downloads_download_again">Download again</string>
+
+    <!-- Guided Configuration Wizards -->
+    <string name="guided_config_title">Guided Configuration</string>
+    <string name="guided_config_step_machine">1. Select Machine</string>
+    <string name="guided_config_step_rom">2. Select Kickstart</string>
+    <string name="guided_config_step_media">3. Setup Media</string>
+    <string name="guided_config_step_tailor">4. Tailor Hardware</string>
+    <string name="guided_config_step_save">5. Save Configuration</string>
+    <string name="guided_config_instruction_machine">Choose the Amiga model you want to emulate.</string>
+    <string name="guided_config_instruction_rom">Select a compatible Kickstart ROM for this model.</string>
+    <string name="guided_config_instruction_media">Insert your floppy disks or hard drive images.</string>
+    <string name="guided_config_instruction_media_adf_0">Insert the first floppy disk (DF0).</string>
+    <string name="guided_config_instruction_media_adf_1">Insert the second floppy disk (DF1) or skip if not needed.</string>
+    <string name="guided_config_instruction_media_cd">Select the CD image for this game.</string>
+    <string name="guided_config_instruction_media_hdf">Select the primary hard drive image (DH0).</string>
+    <string name="guided_config_instruction_media_primary">Step 3: Insert your primary boot disk or system drive.</string>
+    <string name="guided_config_instruction_media_optional">Step 4: (Optional) Insert an additional floppy disk or hardfile.</string>
+    <string name="guided_config_instruction_tailor">Step 5: Tailor your hardware settings (CPU, RAM).</string>
+    <string name="guided_config_instruction_save">Final Step: Give your new configuration a name.</string>
+    <string name="guided_config_error_no_ags">Could not detect a valid AGS_UAE installation in that folder.</string>
+    <string name="action_next">Next</string>
+    <string name="action_back">Back</string>
+    <string name="action_finish_save">Save &amp; Finish</string>
+    <string name="action_rerun_setup">Rerun Setup Wizard</string>
+    <string name="action_add_adf">Add ADF Config</string>
+    <string name="action_add_cd32">Add CD32 Config</string>
+    <string name="action_add_hdf">Add HDF Config</string>
+    <string name="action_add_whdload">Add WHDLoad Config</string>
+    <string name="action_add_ags">Setup AGS</string>
+    <string name="action_add_custom">Custom System</string>
+    <string name="label_no_compatible_roms">No compatible ROMs found in library.</string>
+    <string name="label_cpu_model">CPU Model</string>
+    <string name="label_chip_ram">Chip RAM</string>
+    <string name="label_fast_ram">Fast RAM</string>
+    <string name="label_z3_ram">Z3 Fast RAM</string>
 </resources>

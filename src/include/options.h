@@ -1392,7 +1392,7 @@ struct amiberry_options
 	bool allow_display_settings_from_xml = true;
 	int default_soundcard = 0;
 #ifdef __ANDROID__
-	bool default_onscreen_joystick = true;
+	bool default_onscreen_joystick = false;
 #else
 	bool default_onscreen_joystick = false;
 #endif

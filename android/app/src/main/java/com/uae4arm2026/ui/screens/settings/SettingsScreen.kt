@@ -164,7 +164,7 @@ fun SettingsScreen(
 		"mouse" to stringResource(R.string.settings_input_device_mouse),
 		"kbd1" to stringResource(R.string.settings_input_device_keyboard_layout_1),
 		"kbd2" to stringResource(R.string.settings_input_device_keyboard_layout_2),
-		"onscreen_joy" to stringResource(R.string.settings_input_device_on_screen_joystick)
+		"onscreen_joy" to "On-Screen Controller"
 	)
 	val themeModeOptions = listOf(
 		"system" to stringResource(R.string.settings_display_theme_system),
@@ -675,6 +675,7 @@ fun SettingsScreen(
 
 		if (showSaveDialog) {
 			SaveConfigDialog(
+				initialName = viewModel.currentConfigName ?: "",
 				onDismiss = { showSaveDialog = false },
 				onSave = { name, description ->
 					val repo = ConfigRepository.getInstance(context)
@@ -706,7 +707,7 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun SectionHeader(title: String) {
+fun SectionHeader(title: String) {
 	Text(
 		text = title,
 		style = MaterialTheme.typography.titleSmall,
@@ -791,40 +792,46 @@ fun SwitchRow(
 
 @Composable
 fun SaveConfigDialog(
+	initialName: String = "",
 	onDismiss: () -> Unit,
 	onSave: (String, String) -> Unit
 ) {
-	var name by remember { mutableStateOf("") }
+	var name by remember { mutableStateOf(initialName) }
 	var description by remember { mutableStateOf("") }
+	val isOverwrite = name.trim() == initialName && initialName.isNotEmpty()
 
 	AlertDialog(
 		onDismissRequest = onDismiss,
-		title = { Text(stringResource(R.string.dialog_save_config_title)) },
+		title = { Text(if (isOverwrite) "Update Configuration" else "Save Configuration") },
 		text = {
 			Column {
-				Text(stringResource(R.string.dialog_save_config_message))
-				Spacer(modifier = Modifier.height(8.dp))
+				if (initialName.isNotEmpty()) {
+					Text("Current: $initialName", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+					Spacer(Modifier.height(8.dp))
+				}
 				OutlinedTextField(
 					value = name,
 					onValueChange = { name = it },
-					label = { Text(stringResource(R.string.label_configuration_name)) },
-					singleLine = true
+					label = { Text("Configuration Name") },
+					singleLine = true,
+					modifier = Modifier.fillMaxWidth()
 				)
-				Spacer(modifier = Modifier.height(8.dp))
+				Spacer(Modifier.height(12.dp))
 				OutlinedTextField(
 					value = description,
 					onValueChange = { description = it },
-					label = { Text(stringResource(R.string.label_configuration_description)) },
-					singleLine = true
+					label = { Text("Description (Optional)") },
+					singleLine = true,
+					modifier = Modifier.fillMaxWidth()
 				)
 			}
 		},
 		confirmButton = {
-			TextButton(
+			Button(
 				onClick = { onSave(name.trim(), description.trim()) },
 				enabled = name.isNotBlank()
 			) {
-				Text(stringResource(R.string.action_save))
+				Text(if (isOverwrite) "Overwrite" else "Save As New")
 			}
 		},
 		dismissButton = {

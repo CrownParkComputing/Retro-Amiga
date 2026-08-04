@@ -92,6 +92,21 @@ object EmulatorLauncher {
 	 */
 	fun launchWithConfig(context: Context, configPath: String, skipGui: Boolean = true) {
 		val args = mutableListOf("--rescan-roms", "--config", configPath)
+		
+		// UAE4ARM 2026: If it's a WHDLoad config, we must also pass --autoload to trigger the internal booter.
+		// We use a simple line-based scan to avoid parsing the full config if not needed.
+		try {
+			val file = File(configPath)
+			if (file.exists()) {
+				val whdLine = file.useLines { lines -> lines.find { it.startsWith("whdload_filename=") } }
+				whdLine?.substringAfter('=')?.trim()?.takeIf { it.isNotBlank() }?.let { lhaPath ->
+					args.addAll(listOf("--autoload", lhaPath))
+				}
+			}
+		} catch (e: Exception) {
+			android.util.Log.w("Uae4Arm-Launcher", "Failed to check for whdload_filename in config", e)
+		}
+
 		if (skipGui) args.add("-G")
 
 		AppPreferences.getInstance(context).addRecentLaunch(JSONObject().apply {

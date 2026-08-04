@@ -174,7 +174,12 @@ com.uae4arm2026.data.model.AmigaModel.CD32,
 		}
 		val versionFile = File(externalDir, ".extracted_version")
 		val currentVersion = try {
-			packageManager.getPackageInfo(packageName, 0).versionName
+			if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+				packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0)).versionName
+			} else {
+				@Suppress("DEPRECATION")
+				packageManager.getPackageInfo(packageName, 0).versionName
+			}
 		} catch (e: PackageManager.NameNotFoundException) {
 			"unknown"
 		}

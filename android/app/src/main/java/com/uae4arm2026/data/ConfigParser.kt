@@ -30,7 +30,7 @@ object ConfigParser {
 		"kickstart_rom_file", "kickstart_ext_rom_file",
 		"floppy0", "floppy0type", "floppy1", "floppy1type",
 		"floppy2", "floppy2type", "floppy3", "floppy3type",
-		"cdimage0", "hardfile2", "filesystem2",
+		"cdimage0", "whdload_filename", "hardfile2", "filesystem2",
 		"sound_output", "sound_frequency", "sound_channels", "sound_stereo_separation", "sound_interpol",
 		"gfx_width", "gfx_height", "gfx_correct_aspect", "gfx_auto_crop", "rtgmem_type", "rtgmem_size", "gfxcard_type", "gfxcard_size", "gfxcard_options", "gfx_fullscreen_amiga", "gfx_fullscreen_picasso", "rtg_nocustom", "rtg_noautomodes", "show_leds",
 		"joyport0", "joyport1",
@@ -180,6 +180,7 @@ object ConfigParser {
 			floppy3Type = kv["floppy3type"]?.toIntOrNull() ?: -1,
 
 			cdImage = normalizeCdImagePath(kv["cdimage0"]),
+			whdloadFilename = kv["whdload_filename"] ?: "",
 			hardDrives = hardDriveList,
 
 			soundOutput = kv["sound_output"] ?: "exact",
@@ -246,6 +247,16 @@ object ConfigParser {
 		}
 		val extension = normalized.substringAfterLast('.', "").lowercase()
 		return normalized.takeIf { extension in FileCategory.CD_IMAGES.extensions }.orEmpty()
+	}
+
+	fun guessCategory(settings: EmulatorSettings): ConfigCategory {
+		return when {
+			settings.whdloadFilename.isNotBlank() -> ConfigCategory.WHDLOAD
+			settings.cdImage.isNotBlank() -> ConfigCategory.CD32
+			settings.hardDrives.any { it.isNotBlank() } -> ConfigCategory.HDF
+			settings.floppy0.isNotBlank() -> ConfigCategory.ADF
+			else -> ConfigCategory.GENERIC
+		}
 	}
 
 	/**

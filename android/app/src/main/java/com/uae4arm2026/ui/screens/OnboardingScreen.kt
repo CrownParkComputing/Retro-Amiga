@@ -253,7 +253,7 @@ fun OnboardingScreen(navController: NavController) {
 				)
 				Text("UAE4ARM", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
 				Text(
-					"Powered by Amiberry",
+					"Powered by Copperline",
 					style = MaterialTheme.typography.labelLarge,
 					color = MaterialTheme.colorScheme.primary
 				)

@@ -264,8 +264,6 @@ set(SOURCE_FILES
         src/qemuvga/vga.cpp
         src/sounddep/sound.cpp
         src/threaddep/threading.cpp
-        src/osdep/file_dialog.cpp
-        src/osdep/gui/main_window.cpp
         src/osdep/vkbd/vkbd.cpp
         src/osdep/vkbd/vkbd_gl.cpp
         src/osdep/on_screen_joystick.cpp
@@ -420,10 +418,48 @@ set(PCEM_SOURCE_FILES
         src/pcem/x87_timings.cpp
 )
 
-# ImGui GUI (always enabled)
-message(STATUS "Using ImGui for GUI")
-list(APPEND SOURCE_FILES external/ImGuiFileDialog/ImGuiFileDialog.cpp)
-list(APPEND SOURCE_FILES ${IMGUI_GUI_FILES})
+set(IMGUI_GUI_FILES
+		src/osdep/imgui/about.cpp
+		src/osdep/imgui/chipset.cpp
+		src/osdep/imgui/adv_chipset.cpp
+		src/osdep/imgui/controller_map.cpp
+		src/osdep/imgui/configurations.cpp
+		src/osdep/imgui/cpu.cpp
+		src/osdep/imgui/custom.cpp
+		src/osdep/imgui/diskswapper.cpp
+		src/osdep/imgui/display.cpp
+		src/osdep/imgui/filter.cpp
+		src/osdep/imgui/expansions.cpp
+		src/osdep/imgui/floppy.cpp
+		src/osdep/imgui/hd.cpp
+		src/osdep/imgui/hwinfo.cpp
+		src/osdep/imgui/input.cpp
+		src/osdep/imgui/io.cpp
+		src/osdep/imgui/misc.cpp
+		src/osdep/imgui/paths.cpp
+		src/osdep/imgui/prio.cpp
+		src/osdep/imgui/quickstart.cpp
+		src/osdep/imgui/ram.cpp
+		src/osdep/imgui/rom.cpp
+		src/osdep/imgui/rtg.cpp
+		src/osdep/imgui/savestates.cpp
+		src/osdep/imgui/sound.cpp
+		src/osdep/imgui/themes.cpp
+		src/osdep/imgui/virtualkeyboard.cpp
+		src/osdep/imgui/whdload.cpp
+)
+
+# ImGui GUI (Manual control for UAE4ARM 2026)
+option(USE_IMGUI "Enable native Amiberry ImGui GUI" OFF)
+if (USE_IMGUI)
+    message(STATUS "Using ImGui for GUI")
+    list(APPEND SOURCE_FILES external/ImGuiFileDialog/ImGuiFileDialog.cpp)
+    list(APPEND SOURCE_FILES src/osdep/gui/main_window.cpp)
+    list(APPEND SOURCE_FILES ${IMGUI_GUI_FILES})
+    target_compile_definitions(${PROJECT_NAME} PRIVATE USE_IMGUI)
+else()
+    message(STATUS "Native Amiberry GUI disabled for UAE4Arm 2026")
+endif()
 
 if (USE_PCEM)
     message(STATUS "PCem support enabled")

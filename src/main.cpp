@@ -80,7 +80,7 @@
 
 
 // Special version string so that AmigaOS can detect it
-static const char __ver[] = "$VER: Amiberry v" AMIBERRY_VERSION " (" AMIBERRY_BUILD_DATE ")";
+static const char __ver[] = "$VER: Copperline v" AMIBERRY_VERSION " (" AMIBERRY_BUILD_DATE ")";
 
 long int version = 256 * 65536L * UAEMAJOR + 65536L * UAEMINOR + UAESUBREV;
 
@@ -1586,7 +1586,7 @@ static int real_main2 (int argc, TCHAR **argv)
 	else if (restart_program == 3)
 		no_gui = false;
 	restart_program = 0;
-	if (! no_gui) {
+#ifdef USE_IMGUI
 		const auto err = gui_init ();
 		copy_prefs(&changed_prefs, &currprefs);
 		set_config_changed ();
@@ -1596,7 +1596,7 @@ static int real_main2 (int argc, TCHAR **argv)
 		} else if (err == -2) {
 			return 1;
 		}
-	}
+#endif
 
 #ifndef LIBRETRO
 	if (amiberry_options.update_check && get_update_method() != UpdateMethod::DISABLED) {

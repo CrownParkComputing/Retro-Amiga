@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(uae4arm
-    VERSION 4.1.4
+    VERSION 4.3.1
     LANGUAGES C CXX
     DESCRIPTION "UAE4ARM 2026 - Amiga emulator for Android"
     HOMEPAGE_URL "https://github.com/CrownParkComputing/uae4arm_2026"
@@ -53,7 +53,7 @@ endif()
 set(VERSION_PRE_RELEASE "" CACHE STRING "Pre-release version")
 
 # Project identity
-set(UPSTREAM_EMULATOR_NAME "Amiberry")
+set(UPSTREAM_EMULATOR_NAME "Copperline")
 set(PRODUCT_DISPLAY_NAME "UAE4Arm 2026")
 set(PROJECT_COMPANY_NAME "CrownParkComputing")
 set(PROJECT_COMPANY_NAMESPACE "com.uae4arm2026")

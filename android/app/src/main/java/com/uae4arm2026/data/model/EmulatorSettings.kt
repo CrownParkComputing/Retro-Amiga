@@ -47,6 +47,8 @@ data class EmulatorSettings(
 
 	// CD
 	val cdImage: String = "",
+	// WHDLoad
+	val whdloadFilename: String = "",
 	// Hard drives (HDF/HDI/VHD mounted as DH0..DH9 via hardfile2, up to 10)
 	val hardDrives: List<String> = listOf(""),
 

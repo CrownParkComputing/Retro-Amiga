@@ -333,28 +333,17 @@ bool SDLRenderer::render_frame(int monid, int mode, int immediate)
 
 void SDLRenderer::render_vkbd(int monid)
 {
-	if (vkbd_allowed(monid))
-	{
-		vkbd_redraw();
-	}
+	// UAE4ARM 2026: Native engine virtual keyboard suppressed.
 }
 
 void SDLRenderer::render_onscreen_joystick(int monid)
 {
-	if (on_screen_joystick_is_enabled())
-	{
-		AmigaMonitor* mon = &AMonitors[monid];
-		on_screen_joystick_redraw(mon->amiga_renderer);
-	}
+	// UAE4ARM 2026: Native engine joystick rendering suppressed.
 }
 
 void SDLRenderer::render_onscreen_cd32pad(int monid)
 {
-	if (on_screen_cd32pad_is_enabled())
-	{
-		AmigaMonitor* mon = &AMonitors[monid];
-		on_screen_cd32pad_redraw(mon->amiga_renderer);
-	}
+	// UAE4ARM 2026: Native engine joystick rendering suppressed.
 }
 
 void SDLRenderer::present_frame(int monid, int mode)

@@ -1,4 +1,4 @@
-# AMIBERRY — PROJECT KNOWLEDGE BASE
+# COPPERLINE — PROJECT KNOWLEDGE BASE
 
 **Generated:** 2026-03-23
 **Commit:** e018b60e
@@ -6,7 +6,7 @@
 
 ## OVERVIEW
 
-Amiga emulator (UAE-based) targeting Linux/macOS/Windows/Android/FreeBSD. C/C++ core (~1.3M lines), CMake build, multi-architecture JIT (ARM64/x86-64). Heterogeneous hardware emulation: M68K + PPC + x86(PCem) + DSP3210 + keyboard MCUs.
+Amiga emulator (UAE-based) targeting Linux/macOS/Windows/Android/FreeBSD. C/C++ core (~1.3M lines), CMake build, multi-architecture JIT (ARM64/x86-64). Heterogeneous hardware emulation: M68K + PPC + x86(PCem) + DSP3210 + keyboard MCUs. Copperline emulator backend.
 
 ## STRUCTURE
 

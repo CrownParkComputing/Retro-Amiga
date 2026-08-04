@@ -21,7 +21,9 @@
 #include "keybuf.h"
 #include "zfile.h"
 #include "gui.h"
+#ifdef USE_IMGUI
 #include "gui/gui_handling.h"
+#endif
 #include "rommgr.h"
 #include "custom.h"
 #include "inputdevice.h"
@@ -793,9 +795,11 @@ int gui_init()
 
 	read_rom_list(false);
 
+#ifdef USE_IMGUI
 	prefs_to_gui();
 	run_gui();
 	gui_to_prefs();
+#endif
 
 	if (quit_program < 0)
 		quit_program = -quit_program;
@@ -859,6 +863,7 @@ void gui_update()
 /* if drive is -1, show the full GUI, otherwise file-requester for DF[drive] */
 void gui_display(int shortcut)
 {
+#ifdef USE_IMGUI
 	static int here;
 
 	if (here)
@@ -934,6 +939,7 @@ void gui_display(int shortcut)
 	//write_disk_history();
 	gui_active--;
 	here--;
+#endif
 }
 
 static void gui_flicker_led2(int led, int unitnum, int status)
@@ -1138,6 +1144,9 @@ void gui_message(const char* format, ...)
 	va_start(parms, format);
 	_vsntprintf(msg, sizeof(msg), format, parms);
 	va_end(parms);
+
+	write_log("GUI_MESSAGE: %s\n", msg);
+
 #ifdef USE_IMGUI
 	ShowMessageBox("Message", msg);
 #endif
