@@ -16,6 +16,7 @@ import androidx.compose.runtime.setValue
 import com.uae4arm2026.data.AppPreferences
 import com.uae4arm2026.data.EmulatorLauncher
 import com.uae4arm2026.data.FileManager
+import com.uae4arm2026.data.ModPlayer
 import com.uae4arm2026.data.model.EmulatorSettings
 import com.uae4arm2026.data.model.FileCategory
 import com.uae4arm2026.ui.theme.Uae4ArmTheme
@@ -302,6 +303,20 @@ com.uae4arm2026.data.model.AmigaModel.CD32,
 	/** Tracks whether the emulator was running so we can distinguish
 	 *  "returning from emulation" vs normal activity resume. */
 	private var emulatorWasLaunched = false
+
+	/**
+	 * ModPlayer is a process-wide singleton with its own coroutine scope and AudioTrack, so
+	 * nothing tears it down when this Activity goes away - the tune kept playing after leaving
+	 * the app. Stop it whenever the UI leaves the foreground for good (isChangingConfigurations
+	 * excludes rotation, where the Activity is immediately recreated). Launching the emulator
+	 * also passes through here, and EmulatorLauncher already stops playback for that case.
+	 */
+	override fun onStop() {
+		super.onStop()
+		if (!isChangingConfigurations) {
+			ModPlayer.stop()
+		}
+	}
 
 	override fun onResume() {
 		super.onResume()

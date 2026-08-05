@@ -19,6 +19,7 @@ data class ModPlayerState(
 	val isPlaying: Boolean = false,
 	val assetName: String? = null,
 	val title: String = "",
+	val artist: String = "",
 	val durationSeconds: Double = 0.0
 )
 
@@ -187,7 +188,21 @@ object ModPlayer {
 			}
 			val duration = nativeGetDurationSeconds(newHandle)
 			val title = nativeGetTitle(newHandle).ifBlank { assetName.removeSuffix(".mod") }
-			_state.value = ModPlayerState(isPlaying = true, assetName = assetName, title = title, durationSeconds = duration)
+			// Song messages can run to many lines of ASCII art; keep just the first meaningful
+			// line so the scroller shows a credit rather than a wall of text.
+			val artist = nativeGetArtist(newHandle)
+				.lineSequence()
+				.map { it.trim() }
+				.firstOrNull { it.isNotEmpty() }
+				?.take(60)
+				.orEmpty()
+			_state.value = ModPlayerState(
+				isPlaying = true,
+				assetName = assetName,
+				title = title,
+				artist = artist,
+				durationSeconds = duration
+			)
 
 			val track = AudioTrack.Builder()
 				.setAudioAttributes(
@@ -254,6 +269,7 @@ object ModPlayer {
 	private external fun nativeReadStereo(handle: Long, buffer: ShortArray, frames: Int): Int
 	private external fun nativeGetDurationSeconds(handle: Long): Double
 	private external fun nativeGetTitle(handle: Long): String
+	private external fun nativeGetArtist(handle: Long): String
 	private external fun nativeSetPositionSeconds(handle: Long, seconds: Double)
 	private external fun nativeClose(handle: Long)
 }

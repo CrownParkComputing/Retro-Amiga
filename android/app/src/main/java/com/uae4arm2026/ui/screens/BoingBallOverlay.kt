@@ -17,6 +17,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.uae4arm2026.data.ModPlayer
@@ -81,6 +82,7 @@ private class BallState {
 @Composable
 fun BoingBallOverlay(modifier: Modifier = Modifier) {
 	val levels by ModPlayer.levels.collectAsState()
+	val playerState by ModPlayer.state.collectAsState()
 	val ball = remember { BallState() }
 	// Bumped on each physics step purely to trigger recomposition of the Canvas.
 	var tick by remember { mutableFloatStateOf(0f) }
@@ -152,6 +154,49 @@ fun BoingBallOverlay(modifier: Modifier = Modifier) {
 		@Suppress("UNUSED_EXPRESSION") tick // read so this Canvas recomposes each frame
 		drawBoingBall(ball)
 		drawGraphicEq(levels)
+		if (playerState.assetName != null) {
+			val credit = buildString {
+				append(playerState.title.ifBlank { playerState.assetName!!.removeSuffix(".mod") })
+				if (playerState.artist.isNotBlank()) {
+					append(" - ")
+					append(playerState.artist)
+				}
+			}
+			drawNowPlayingScroller(credit, tick)
+		}
+	}
+}
+
+/**
+ * Demo-style scroller crediting the currently playing tune, sitting just above the graphic EQ.
+ * Driven off the same frame clock as the ball, and wraps seamlessly by repeating the message.
+ */
+private fun DrawScope.drawNowPlayingScroller(text: String, time: Float) {
+	if (text.isBlank()) return
+	val message = "$text   ***   "
+	val fontSize = size.height * 0.032f
+	val baseY = size.height * 0.62f
+
+	drawContext.canvas.nativeCanvas.apply {
+		val paint = android.graphics.Paint().apply {
+			isAntiAlias = true
+			isFakeBoldText = true
+			textSize = fontSize
+			color = android.graphics.Color.WHITE
+			alpha = 190
+			setShadowLayer(fontSize * 0.35f, 0f, 0f, android.graphics.Color.BLACK)
+		}
+		val textWidth = paint.measureText(message)
+		if (textWidth <= 0f) return
+		// Scroll right-to-left, wrapping on the message width so it repeats without a gap.
+		val offset = (time * size.width * 0.12f) % textWidth
+		var x = size.width - offset
+		// Draw enough repeats to cover the full width no matter how short the message is.
+		while (x < size.width) {
+			drawText(message, x, baseY, paint)
+			x += textWidth
+		}
+		drawText(message, size.width - offset - textWidth, baseY, paint)
 	}
 }
 

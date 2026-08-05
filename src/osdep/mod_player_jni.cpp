@@ -92,6 +92,30 @@ Java_com_uae4arm2026_data_ModPlayer_nativeGetTitle(JNIEnv* env, jclass, jlong ha
 	return result;
 }
 
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_uae4arm2026_data_ModPlayer_nativeGetArtist(JNIEnv* env, jclass, jlong handle)
+{
+	auto* mod = reinterpret_cast<openmpt_module*>(handle);
+	if (!mod) {
+		return env->NewStringUTF("");
+	}
+	// Most ProTracker-era .mod files have no artist field at all; the composer is traditionally
+	// signed into the sample names / song message instead. Fall back to the message so the
+	// scroller can still credit the author where the format allows it.
+	const char* artist = openmpt_module_get_metadata(mod, "artist");
+	if (!artist || !*artist) {
+		if (artist) {
+			openmpt_free_string(artist);
+		}
+		artist = openmpt_module_get_metadata(mod, "message_raw");
+	}
+	jstring result = env->NewStringUTF(artist ? artist : "");
+	if (artist) {
+		openmpt_free_string(artist);
+	}
+	return result;
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_uae4arm2026_data_ModPlayer_nativeSetPositionSeconds(JNIEnv*, jclass, jlong handle, jdouble seconds)
 {
