@@ -192,14 +192,15 @@ jobs:
           fi
 
       # ── Build ──────────────────────────────────────────────────────────────
-      # Play Store upload uses the AAB. Push builds target arm64-v8a only; the
-      # full ABI set can still be requested from workflow_dispatch when needed.
+      # Play Store upload uses the AAB, so this ALWAYS builds the full ABI set:
+      # shipping a bundle with fewer ABIs than the previous release drops every
+      # device on the missing architectures - Play blocks it as thousands of
+      # devices losing support, and existing users there stop getting updates.
+      # (An AAB only delivers the matching ABI to each device, so including all
+      # three costs download size nothing.)
       - name: Build Release AAB
         run: |
-          ABI_FILTERS="arm64-v8a"
-          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.build_all_abis }}" = "true" ]; then
-            ABI_FILTERS="arm64-v8a,armeabi-v7a,x86_64"
-          fi
+          ABI_FILTERS="arm64-v8a,armeabi-v7a,x86_64"
           echo "Building release AAB for ABI filters: ${ABI_FILTERS}"
           ./android/gradlew -p android --no-daemon --build-cache -PandroidAbiFilters="${ABI_FILTERS}" bundleRelease
 

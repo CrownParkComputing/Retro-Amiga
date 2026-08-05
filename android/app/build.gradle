@@ -67,6 +67,14 @@ def computedVersionCode = computeAndroidVersionCode(cmakeVersionInfo)
 def computedVersionName = formatAndroidVersionName(cmakeVersionInfo)
 def versionCodeOverride = providers.gradleProperty("ANDROID_VERSION_CODE").orNull
 def androidVersionCode = computedVersionCode
+// ABIs to build, as -PandroidAbiFilters=arm64-v8a,armeabi-v7a,x86_64. Defaults to arm64-v8a
+// for fast local builds; CI passes the full set for release so no devices lose support.
+def androidAbiFilters = providers.gradleProperty("androidAbiFilters")
+        .orElse("arm64-v8a")
+        .get()
+        .split(',')
+        .collect { it.trim() }
+        .findAll { !it.isEmpty() }
 if (versionCodeOverride != null) {
     if (!(versionCodeOverride ==~ /\d+/)) {
         throw new GradleException("ANDROID_VERSION_CODE must be a positive integer, found '${versionCodeOverride}'")
@@ -103,11 +111,14 @@ android {
         }
 
         ndk {
-            // Retroid Pocket Flip2 (and every other device we've tested on) is arm64-v8a only.
-            // x86_64 was only ever needed for the Android emulator; dropping it roughly halves
-            // the native-library payload, which matters when the test device is nearly full.
-            // Re-add 'x86_64' here if emulator testing is ever needed again.
-            abiFilters = ['arm64-v8a']
+            // Driven by the -PandroidAbiFilters property so CI can build the full ABI set for
+            // release while local dev builds stay arm64-only (halves the native payload and the
+            // install size on a test handheld).
+            //
+            // Do NOT hardcode a narrower list here: a release built arm64-only drops every
+            // armeabi-v7a and x86_64 device, which Play reports as thousands of devices losing
+            // support - existing users on those devices stop receiving updates entirely.
+            abiFilters = androidAbiFilters
         }
     }
 
