@@ -95,14 +95,14 @@ fun DisplayTab(viewModel: SettingsViewModel) {
 						}
 
 						Spacer(modifier = Modifier.height(8.dp))
-						SwitchRow(
+						SettingsSwitchRow(
 							label = stringResource(R.string.settings_display_correct_aspect_ratio),
 							checked = settings.correctAspect,
 							onCheckedChange = {
 								viewModel.updateSettings { state -> state.copy(correctAspect = it) }
 							}
 						)
-						SwitchRow(
+						SettingsSwitchRow(
 							label = stringResource(R.string.settings_display_auto_crop),
 							checked = settings.autoCrop,
 							onCheckedChange = {
@@ -110,7 +110,7 @@ fun DisplayTab(viewModel: SettingsViewModel) {
 							}
 						)
 						Spacer(modifier = Modifier.height(8.dp))
-						SwitchRow(
+						SettingsSwitchRow(
 							label = stringResource(R.string.settings_display_rtg_label),
 							checked = settings.useRtg,
 							enabled = !settings.address24Bit && settings.cpuModel >= 68020,
@@ -158,7 +158,7 @@ fun DisplayTab(viewModel: SettingsViewModel) {
 								}
 							}
 						}
-						SwitchRow(
+						SettingsSwitchRow(
 							label = stringResource(R.string.settings_display_show_leds),
 							checked = settings.showLeds,
 							onCheckedChange = {
@@ -215,7 +215,7 @@ fun DisplayTab(viewModel: SettingsViewModel) {
 						if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
 							Spacer(modifier = Modifier.height(8.dp))
 							val useDynamicColor by appPrefs.useDynamicColor
-							SwitchRow(
+							SettingsSwitchRow(
 								label = stringResource(R.string.settings_display_dynamic_color),
 								checked = useDynamicColor,
 								onCheckedChange = { appPrefs.setDynamicColor(it) }
@@ -227,4 +227,3 @@ fun DisplayTab(viewModel: SettingsViewModel) {
 		)
 	}
 }
-

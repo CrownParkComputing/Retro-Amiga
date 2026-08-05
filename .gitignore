@@ -166,3 +166,5 @@ android/*.txt
 .sisyphus/
 build-debug/
 .cache/
+# Local Gradle user home used by the Android build (multi-GB dependency cache)
+android/.gradle_home/

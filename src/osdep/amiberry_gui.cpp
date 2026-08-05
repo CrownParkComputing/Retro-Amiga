@@ -59,6 +59,8 @@
 #endif
 #endif
 
+#include "android_keyboard_bridge.h"
+
 int emulating = 0;
 bool config_loaded = false;
 int gui_active;
@@ -790,6 +792,10 @@ static void after_leave_gui()
 
 int gui_init()
 {
+#ifdef __ANDROID__
+	if (no_gui)
+		return 0;
+#endif
 	emulating = 0;
 	auto ret = 0;
 
@@ -863,6 +869,13 @@ void gui_update()
 /* if drive is -1, show the full GUI, otherwise file-requester for DF[drive] */
 void gui_display(int shortcut)
 {
+#ifdef __ANDROID__
+	if (shortcut == -1)
+	{
+		android_show_pause_menu();
+		return;
+	}
+#endif
 #ifdef USE_IMGUI
 	static int here;
 

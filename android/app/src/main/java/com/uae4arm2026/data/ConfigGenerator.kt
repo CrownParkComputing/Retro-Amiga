@@ -13,10 +13,38 @@ import java.io.File
 object ConfigGenerator {
 
 	fun generate(settings: EmulatorSettings): String {
-		return generate(settings) { path -> !path.startsWith("content://") && File(path).isDirectory }
+		return generate(settings, { path -> !path.startsWith("content://") && File(path).isDirectory }, ::hasRdbSignature)
 	}
 
-	private fun generate(settings: EmulatorSettings, isDirectoryPath: (String) -> Boolean): String {
+	/**
+	 * RDB (Rigid Disk Block) partition tables are what AmigaOS's IDE/Gayle boot scan relies on
+	 * to auto-mount a hard drive. Raw, RDB-less hardfiles (just a DOS boot block, no partition
+	 * table) can only auto-boot when mounted through UAE's own uaehf.device pseudo-controller
+	 * ("uae0"/"uae1"), not through emulated real IDE ("ide0"/"ide1") — real IDE requires a real
+	 * RDB to be discoverable. Detect this by scanning the first 16 blocks for the "RDSK" magic.
+	 */
+	fun hasRdbSignature(path: String): Boolean {
+		if (path.startsWith("content://")) return true // can't cheaply sniff; assume modern/RDB'd image
+		return try {
+			File(path).inputStream().use { stream ->
+				val buffer = ByteArray(16 * 512)
+				val read = stream.read(buffer)
+				if (read <= 0) return false
+				val magic = byteArrayOf('R'.code.toByte(), 'D'.code.toByte(), 'S'.code.toByte(), 'K'.code.toByte())
+				(0..read - magic.size).any { offset ->
+					magic.indices.all { i -> buffer[offset + i] == magic[i] }
+				}
+			}
+		} catch (e: Exception) {
+			true // if we can't read it, don't second-guess the default (ide) controller
+		}
+	}
+
+	private fun generate(
+		settings: EmulatorSettings,
+		isDirectoryPath: (String) -> Boolean,
+		hasRdb: (String) -> Boolean = { true }
+	): String {
 		val sb = StringBuilder()
 		val normalizedCdImage = normalizeCdImageValue(settings.cdImage)
 		val onScreenJoystick = settings.onScreenJoystick || settings.joyport1 == "onscreen_joy"
@@ -28,7 +56,13 @@ object ConfigGenerator {
 
 		// CPU
 		sb.appendLine("cpu_model=${settings.cpuModel}")
-		sb.appendLine("cpu_compatible=${settings.cpuCompatible.toCfg()}")
+		// "More compatible" + JIT is a known-bad combo: it forces slow/exact instruction paths
+		// that make self-modifying-code-heavy software (WHDLoad ROM decrypters, etc.) run
+		// orders of magnitude slower — the native core only auto-disables this for 68040+, so
+		// force it off here for JIT'd 68020/030 configs too (matches AgsDetector.kt and every
+		// hand-tuned bundled *-RTG.uae config).
+		val cpuCompatible = settings.cpuCompatible && settings.jitCacheSize == 0
+		sb.appendLine("cpu_compatible=${cpuCompatible.toCfg()}")
 		sb.appendLine("cpu_24bit_addressing=${settings.address24Bit.toCfg()}")
 		sb.appendLine("cpu_speed=${settings.cpuSpeed}")
 		if (settings.fpuModel > 0) {
@@ -41,6 +75,11 @@ object ConfigGenerator {
 
 		// Chipset
 		sb.appendLine("chipset=${settings.chipset}")
+		when (settings.baseModel) {
+			AmigaModel.A600, AmigaModel.A1200 -> sb.appendLine("ide=a600/a1200")
+			AmigaModel.A4000 -> sb.appendLine("ide=a4000")
+			else -> {}
+		}
 		sb.appendLine("immediate_blits=${settings.immediateBlits.toCfg()}")
 		sb.appendLine("collision_level=${settings.collisionLevel}")
 		sb.appendLine("cycle_exact=${settings.cycleExact.toCfg()}")
@@ -51,9 +90,11 @@ object ConfigGenerator {
 			sb.appendLine("cd32cd=true")
 			sb.appendLine("cd32c2p=true")
 			sb.appendLine("cd32nvram=true")
+			sb.appendLine("cdcon=cd32")
 		} else if (settings.baseModel == AmigaModel.CDTV) {
 			sb.appendLine("chipset_compatible=CDTV")
 			sb.appendLine("cdtv=true")
+			sb.appendLine("cdcon=cdtv")
 		}
 
 		// Memory
@@ -86,9 +127,8 @@ object ConfigGenerator {
 		}
 
 		// Floppy drives
-		val hasWhdload = settings.whdloadFilename.isNotEmpty()
-		if (settings.floppy0.isNotEmpty() && !hasWhdload) sb.appendLine("floppy0=${settings.floppy0}")
-		sb.appendLine("floppy0type=${if (hasWhdload) -1 else settings.floppy0Type}")
+		if (settings.floppy0.isNotEmpty()) sb.appendLine("floppy0=${settings.floppy0}")
+		sb.appendLine("floppy0type=${settings.floppy0Type}")
 		if (settings.floppy1.isNotEmpty()) sb.appendLine("floppy1=${settings.floppy1}")
 		sb.appendLine("floppy1type=${settings.floppy1Type}")
 		if (settings.floppy2.isNotEmpty()) sb.appendLine("floppy2=${settings.floppy2}")
@@ -113,6 +153,10 @@ object ConfigGenerator {
 			// Required for CD console models even if no image is present to avoid BIOS loop
 			sb.appendLine("cdimage0_present=false")
 		}
+		if (settings.baseModel == AmigaModel.CD32 && settings.cd32Fmv) {
+			// Real CD32 "Full Motion Video" MPEG decoder cartridge add-on
+			sb.appendLine("cd32fmv=true")
+		}
 
 		// WHDLoad
 		if (settings.whdloadFilename.isNotEmpty()) {
@@ -135,15 +179,23 @@ object ConfigGenerator {
 					// Directory drive — use the robust filesystem2 format
 					sb.appendLine("filesystem2=rw,DH$i:$name:\"$path\",$bootPri")
 				} else {
-					// HDF drive — use the robust uaehfX format that supports geometry auto-detect
-					// Use raw path in config; Uae4ArmEmulatorActivity will bridge it if it's a URI.
-					sb.appendLine("uaehf$physicalUnit=hdf,rw,DH$i:\"$path\",0,0,0,512,$bootPri")
-					sb.appendLine("uaehf${physicalUnit}_file=$path")
-					sb.appendLine("uaehf${physicalUnit}_name=DH$i")
-					sb.appendLine("uaehf${physicalUnit}_bootpri=$bootPri")
-					sb.appendLine("uaehf${physicalUnit}_present=true")
-					sb.appendLine("uaehf${physicalUnit}_blocksize=512")
-					sb.appendLine("uaehf${physicalUnit}_readonly=false")
+					// HDF drive — use the robust hardfile2 format that supports controller mapping
+					// Format: rw,devname:path,sectors,heads,reserved,blocksize,bootpri,filesys,controller
+					// RDB-less hardfiles can't auto-boot through emulated real IDE — fall back to
+					// UAE's own uaehf.device controller for those (see hasRdbSignature).
+					val rdbPresent = hasRdb(path)
+					val controller = when {
+						!rdbPresent -> "uae$physicalUnit"
+						settings.baseModel == AmigaModel.A600 || settings.baseModel == AmigaModel.A1200 || settings.baseModel == AmigaModel.A4000 -> "ide$physicalUnit"
+						else -> "uae$physicalUnit"
+					}
+					// With a real RDB, UAE can auto-detect geometry (0,0,0). Without one, UAE needs
+					// an explicit CHS (surfaces=1, sectors=32, reserved=2) to synthesize a single
+					// bootable partition — otherwise mounting fails with "no supported partition
+					// tables detected", even via uaehf.device.
+					val geometry = if (rdbPresent) "0,0,0" else "32,1,2"
+					// We use uaehf.device as the filesys name; the controller mapping will handle the actual device binding in the core.
+					sb.appendLine("hardfile2=rw,DH$i:\"$path\",$geometry,512,$bootPri,uaehf.device,$controller")
 				}
 				physicalUnit++
 			}
@@ -172,6 +224,14 @@ object ConfigGenerator {
 		// Input
 		sb.appendLine("joyport0=${settings.joyport0}")
 		sb.appendLine("joyport1=$nativeJoyport1")
+		// A CD32 needs its control port explicitly in CD32-pad mode. Without joyport1mode=cd32joy
+		// the port stays a plain 2-button Atari-style joystick, so CD32 titles - which poll the
+		// pad's shift-register protocol for the red/blue/green/yellow/play/fwd/rew buttons - see
+		// no usable controller at all (not just "missing extra buttons"). joyportmodes in
+		// cfgfile.cpp is the authority for this string.
+		if (settings.baseModel == AmigaModel.CD32) {
+			sb.appendLine("joyport1mode=cd32joy")
+		}
 		sb.appendLine("${UpstreamConfig.KEY_ANDROID_JOYPORT1}=$androidJoyport1")
 
 		// Upstream Android compatibility keys that must remain stable for the core.
@@ -207,7 +267,11 @@ object ConfigGenerator {
 			cdImage = MediaPathHelper.normalizeLaunchPath(context, settings.cdImage),
 			hardDrives = settings.hardDrives.map { MediaPathHelper.normalizeLaunchPath(context, it) }
 		)
-		file.writeText(generate(normalizedSettings) { path -> MediaPathHelper.isDirectoryPath(context, path) })
+		file.writeText(generate(
+			normalizedSettings,
+			{ path -> MediaPathHelper.isDirectoryPath(context, path) },
+			::hasRdbSignature
+		))
 		return file
 	}
 

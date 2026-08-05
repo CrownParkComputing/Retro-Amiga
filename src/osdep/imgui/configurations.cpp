@@ -202,6 +202,29 @@ void render_panel_configurations()
 	}
 	if (strlen(name) == 0) ImGui::EndDisabled();
 	ImGui::SameLine();
+	if (strlen(name) == 0) ImGui::BeginDisabled();
+	if (AmigaButton(ICON_FA_FLOPPY_DISK " Save & Reset", ImVec2(BUTTON_WIDTH, BUTTON_HEIGHT)))
+	{
+		char filename[MAX_DPATH];
+		char config_path[MAX_DPATH];
+		get_configuration_path(config_path, MAX_DPATH);
+		snprintf(filename, MAX_DPATH, "%s%s.uae", config_path, name);
+		snprintf(changed_prefs.description, 256, "%s", desc);
+		if (cfgfile_save(&changed_prefs, filename, 0))
+		{
+			write_log("Config save: SUCCESS\n");
+			snprintf(last_active_config, MAX_DPATH, "%s", name);
+			target_cfgfile_load(&changed_prefs, filename, CONFIG_TYPE_DEFAULT, 0);
+			uae_reset(1, 1);
+			gui_running = false;
+		}
+		else
+		{
+			write_log("Config save: FAILED for '%s'\n", filename);
+		}
+	}
+	if (strlen(name) == 0) ImGui::EndDisabled();
+	ImGui::SameLine();
 	if (AmigaButton(ICON_FA_FLOPPY_DISK " Save As...", ImVec2(BUTTON_WIDTH, BUTTON_HEIGHT)))
 	{
 		std::string config_dir = get_configuration_path();

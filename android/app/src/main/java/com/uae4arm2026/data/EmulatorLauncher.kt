@@ -63,7 +63,8 @@ object EmulatorLauncher {
 				val name = File(launchHardDrive).name.ifBlank { "DH0" }
 				args.addAll(listOf("-s", "filesystem2=rw,DH0:$name:\"$launchHardDrive\",0"))
 			} else {
-				args.addAll(listOf("-s", "hardfile2=rw,DH0:\"$launchHardDrive\",32,1,2,512,0"))
+				val geometry = if (ConfigGenerator.hasRdbSignature(launchHardDrive)) "0,0,0" else "32,1,2"
+				args.addAll(listOf("-s", "hardfile2=rw,DH0:\"$launchHardDrive\",$geometry,512,0"))
 			}
 		}
 		if (useRtg) {
@@ -159,6 +160,9 @@ object EmulatorLauncher {
 	 *                     is expected and should not trigger the crash dialog.
 	 */
 	private fun launchSdlActivity(context: Context, args: Array<String>, trackSession: Boolean = true) {
+		// Don't let a bundled tracker tune (boot intro / mod player) overlap the game's own audio.
+		ModPlayer.stop()
+
 		val hasRom = args.any { it.startsWith("kickstart_rom_file=") } ||
 				args.contains("--config") ||
 				args.contains("-s") && args.any { it.startsWith("kickstart_rom_file=") }

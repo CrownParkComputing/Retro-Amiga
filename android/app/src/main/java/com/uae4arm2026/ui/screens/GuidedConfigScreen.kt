@@ -1,5 +1,6 @@
 package com.uae4arm2026.ui.screens
 
+import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -39,9 +40,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import com.uae4arm2026.Uae4ArmEmulatorActivity
 import com.uae4arm2026.R
 import com.uae4arm2026.data.AgsDetector
 import com.uae4arm2026.data.ConfigRepository
+import com.uae4arm2026.data.EmulatorLauncher
 import com.uae4arm2026.data.FileManager
 import com.uae4arm2026.data.FileRepository
 import com.uae4arm2026.data.model.AmigaFile
@@ -51,15 +54,24 @@ import com.uae4arm2026.ui.findActivity
 import com.uae4arm2026.ui.navigation.Screen
 import com.uae4arm2026.ui.viewmodel.SettingsViewModel
 import com.uae4arm2026.ui.viewmodel.QuickStartViewModel
+import com.uae4arm2026.ui.screens.settings.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private enum class WizardStep { MACHINE, ROM, MEDIA_PRIMARY, MEDIA_OPTIONAL, TAILOR, SAVE }
 
+// Every machine amiberry's own --model quickstart handler supports (see the --model
+// dispatch in main.cpp: bip_a500/bip_a500plus/.../bip_cdtv) - the full quick-config set,
+// not just a curated subset.
 private val PRIMARY_MODELS = listOf(
 	AmigaModel.A500,
+	AmigaModel.A500_PLUS,
+	AmigaModel.A600,
+	AmigaModel.A1000,
+	AmigaModel.A2000,
 	AmigaModel.A1200,
+	AmigaModel.A3000,
 	AmigaModel.A4000,
 	AmigaModel.CD32,
 	AmigaModel.CDTV
@@ -75,6 +87,17 @@ fun GuidedConfigScreen(
 	val context = LocalContext.current
 	val scope = rememberCoroutineScope()
 	val snackbarHostState = remember { SnackbarHostState() }
+
+	// Editing a config for a game that's still running (paused in the background - see
+	// Uae4ArmEmulatorActivity.openEditConfig()) should feel like a detour, not a trip back to the
+	// launcher. Hardware/gesture back is handled app-wide in Uae4ArmApp's BackHandler; this local
+	// action backs the on-screen arrow icon below once the wizard is at its first step.
+	val returningToRunningGame = mode == "edit" && Uae4ArmEmulatorActivity.isRunning
+	val returnToGame: () -> Unit = {
+		val intent = Intent(context, Uae4ArmEmulatorActivity::class.java)
+		intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+		context.startActivity(intent)
+	}
 	
 	var currentStep by remember { mutableStateOf(WizardStep.MACHINE) }
 	var wizardSettings by remember { mutableStateOf(EmulatorSettings()) }
@@ -118,9 +141,28 @@ fun GuidedConfigScreen(
 		}
 	}
 
-	val filteredModels = remember(mode) {
+	// Detect the effective wizard mode from the loaded settings when editing.
+	// This ensures CD32/HD configs show the right media picker, not floppy.
+	val effectiveMode = remember(mode, wizardSettings) {
+		if (mode == "edit") {
+			when {
+				wizardSettings.whdloadFilename.isNotBlank() -> "whdload"
+				wizardSettings.cdImage.isNotBlank() || wizardSettings.baseModel == AmigaModel.CD32 -> "cd32"
+				wizardSettings.hardDrives.any { it.isNotBlank() } -> "hdf"
+				wizardSettings.floppy0.isNotBlank() -> "adf"
+				wizardSettings.baseModel == AmigaModel.CDTV -> "cd32"
+				else -> "custom"
+			}
+		} else {
+			mode
+		}
+	}
+
+	val filteredModels = remember(effectiveMode) {
 		when (mode) {
-			"cd32" -> listOf(AmigaModel.CD32, AmigaModel.CDTV)
+			"cd32" -> listOf(AmigaModel.CD32)
+			/* CDTV hidden - CD32 covers all CD-based consoles */
+			// "whdload" -> ... handled below
 			"whdload" -> listOf(AmigaModel.A1200, AmigaModel.A4000, AmigaModel.A600)
 			"ags" -> listOf(AmigaModel.A1200, AmigaModel.A4000)
 			else -> PRIMARY_MODELS
@@ -131,7 +173,10 @@ fun GuidedConfigScreen(
 		if (mode == "edit") {
 			wizardSettings = settingsViewModel.settings
 			configName = settingsViewModel.currentConfigName ?: ""
-			currentStep = WizardStep.MACHINE
+			// Jump straight to the settings/tailor screen — an existing config already has a
+			// machine picked, so re-showing the model-selection step first is just an extra,
+			// pointless tap (and risks resetting cpu/chipset fields if the user taps a model).
+			currentStep = WizardStep.TAILOR
 		} else {
 			val initialModel = when (mode) {
 				"cd32" -> AmigaModel.CD32
@@ -141,6 +186,22 @@ fun GuidedConfigScreen(
 				else -> AmigaModel.A500
 			}
 			wizardSettings = EmulatorSettings.fromModel(initialModel)
+
+			// CD32 has only one possible machine and needs no CPU/JIT/RAM tailoring — a stock
+			// CD32 profile is already correct. Skip straight to picking the disc image, and
+			// resolve the CD32 + extended ROMs automatically if available.
+			if (mode == "cd32") {
+				val selectedRoms = settingsViewModel.selectRomsForModel(AmigaModel.CD32, availableRoms)
+				if (selectedRoms.kick != null && selectedRoms.ext != null) {
+					wizardSettings = wizardSettings.copy(
+						romFile = selectedRoms.kick.path,
+						romExtFile = selectedRoms.ext.path
+					)
+					currentStep = WizardStep.MEDIA_PRIMARY
+				} else {
+					currentStep = WizardStep.ROM
+				}
+			}
 		}
 	}
 
@@ -161,9 +222,17 @@ fun GuidedConfigScreen(
 								if (mode == "ags") {
 									folderPickerLauncher.launch(null)
 								} else {
-									val compatible = settingsViewModel.getCompatibleRoms(wizardSettings.baseModel)
-									if (compatible.size == 1) {
-										wizardSettings = wizardSettings.copy(romFile = compatible[0].path)
+									val selectedModel = wizardSettings.baseModel
+									val selectedRoms = settingsViewModel.selectRomsForModel(selectedModel, availableRoms)
+									
+									val isCd = selectedModel == AmigaModel.CD32 || selectedModel == AmigaModel.CDTV
+									val canSkip = if (isCd) selectedRoms.kick != null && selectedRoms.ext != null else selectedRoms.kick != null
+
+									if (canSkip) {
+										wizardSettings = wizardSettings.copy(
+											romFile = selectedRoms.kick!!.path,
+											romExtFile = selectedRoms.ext?.path ?: ""
+										)
 										currentStep = WizardStep.MEDIA_PRIMARY
 									} else {
 										currentStep = WizardStep.ROM
@@ -171,8 +240,18 @@ fun GuidedConfigScreen(
 								}
 							}
 							WizardStep.MEDIA_PRIMARY -> {
-								if (mode == "adf" || mode == "hdf") currentStep = WizardStep.MEDIA_OPTIONAL
-								else currentStep = WizardStep.TAILOR
+								when (mode) {
+									"adf", "hdf" -> currentStep = WizardStep.MEDIA_OPTIONAL
+									"cd32" -> {
+										// Skip CPU/JIT/RAM tailoring entirely for CD32 — jump straight
+										// to naming + saving with the stock CD32 defaults.
+										if (configName.isBlank()) {
+											configName = wizardSettings.cdImage.substringAfterLast('/').substringBeforeLast('.')
+										}
+										currentStep = WizardStep.SAVE
+									}
+									else -> currentStep = WizardStep.TAILOR
+								}
 							}
 							WizardStep.MEDIA_OPTIONAL -> currentStep = WizardStep.TAILOR
 							WizardStep.TAILOR -> {
@@ -191,8 +270,28 @@ fun GuidedConfigScreen(
 									scope.launch(Dispatchers.IO) {
 										ConfigRepository.getInstance(context).saveConfig(wizardSettings, configName)
 										withContext(Dispatchers.Main) {
-											navController.navigate(Screen.Configurations.route) {
-												popUpTo(Screen.QuickStart.route)
+											if (Uae4ArmEmulatorActivity.isRunning) {
+												// A game is already running (paused in the background) - hard-reboot
+												// it into the edited config. CLEAR_TASK replaces the stale instance
+												// entirely so the old and new emulator activities never coexist.
+												val args = settingsViewModel.generateLaunchArgs()
+												val i = Intent(context, Uae4ArmEmulatorActivity::class.java)
+												i.putExtra("SDL_ARGS", args)
+												i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+												context.startActivity(i)
+											} else if (mode == "edit") {
+												// Editing an existing config (e.g. via the pencil icon in
+												// Configurations) with nothing currently running: "save and
+												// restart" should actually launch it, not just silently save
+												// and drop back to the list.
+												val args = settingsViewModel.generateLaunchArgs()
+												val i = Intent(context, Uae4ArmEmulatorActivity::class.java)
+												i.putExtra("SDL_ARGS", args)
+												context.startActivity(i)
+											} else {
+												navController.navigate(Screen.Configurations.route) {
+													popUpTo(Screen.Configurations.route) { inclusive = true }
+												}
 											}
 										}
 									}
@@ -204,7 +303,7 @@ fun GuidedConfigScreen(
 					canFinish = when (currentStep) {
 						WizardStep.SAVE -> configName.isNotBlank()
 						WizardStep.ROM -> wizardSettings.romFile.isNotBlank()
-						WizardStep.MEDIA_PRIMARY -> when(mode) {
+						WizardStep.MEDIA_PRIMARY -> when(effectiveMode) {
 							"adf" -> wizardSettings.floppy0.isNotBlank()
 							"hdf" -> wizardSettings.hardDrives.firstOrNull()?.isNotBlank() == true
 							"cd32" -> wizardSettings.cdImage.isNotBlank()
@@ -214,7 +313,11 @@ fun GuidedConfigScreen(
 						else -> true
 					},
 					nextLabel = when (currentStep) {
-						WizardStep.SAVE -> if (mode == "edit" && configName.trim() == settingsViewModel.currentConfigName) "Update" else "Save & Finish"
+						WizardStep.SAVE -> {
+							if (Uae4ArmEmulatorActivity.isRunning) "Reboot System"
+							else if (mode == "edit" && configName.trim() == settingsViewModel.currentConfigName) "Save & Launch"
+							else "Save & Finish"
+						}
 						WizardStep.MACHINE -> if (mode == "ags") "Select Folder" else "Next"
 						else -> "Next"
 					}
@@ -262,7 +365,7 @@ fun GuidedConfigScreen(
 							wizardSettings = wizardSettings.copy(romFile = it.path)
 						}
 						WizardStep.MEDIA_PRIMARY -> PrimaryMediaStep(
-							mode = mode,
+							mode = effectiveMode,
 							settings = wizardSettings,
 							availableFloppies = availableFloppies,
 							availableHdfs = availableHdfs,
@@ -271,7 +374,7 @@ fun GuidedConfigScreen(
 							onUpdate = { wizardSettings = it }
 						)
 						WizardStep.MEDIA_OPTIONAL -> OptionalMediaStep(
-							mode = mode,
+							mode = effectiveMode,
 							settings = wizardSettings,
 							availableFloppies = availableFloppies,
 							availableHdfs = availableHdfs,
@@ -292,21 +395,32 @@ fun GuidedConfigScreen(
 			) {
 				IconButton(
 					onClick = {
-						if (currentStep == WizardStep.MACHINE) navController.popBackStack()
-						else currentStep = WizardStep.entries[currentStep.ordinal - 1]
+						if (currentStep != WizardStep.MACHINE) {
+							currentStep = WizardStep.entries[currentStep.ordinal - 1]
+						} else if (returningToRunningGame) {
+							returnToGame()
+						} else {
+							navController.popBackStack()
+						}
 					}
 				) {
 					Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.primary)
 				}
 				Spacer(Modifier.width(8.dp))
-				Column {
+				Column(modifier = Modifier.weight(1f)) {
 					Text(
-						text = mode.uppercase() + " SETUP",
+						text = effectiveMode.uppercase() + " SETUP",
 						style = MaterialTheme.typography.labelMedium,
 						fontWeight = FontWeight.Black,
 						color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
 						letterSpacing = 1.sp
 					)
+				}
+				
+				if (Uae4ArmEmulatorActivity.isRunning) {
+					IconButton(onClick = returnToGame) {
+						Icon(Icons.Default.PlayArrow, contentDescription = "Resume", tint = MaterialTheme.colorScheme.primary)
+					}
 				}
 			}
 		}
@@ -497,7 +611,14 @@ private fun PrimaryMediaStep(
 				when (mode) {
 					"adf" -> onUpdate(settings.copy(floppy0 = path))
 					"hdf" -> onUpdate(settings.copy(hardDrives = listOf(path)))
-					"cd32" -> onUpdate(settings.copy(cdImage = path))
+					"cd32" -> {
+						// Picking a CD image always means "boot this as a CD-console" — without
+						// promoting baseModel here, an 'edit' session on a non-CD32 config (e.g.
+						// A1200) would save a CD image with no chipset_compatible=CD32/cd32cd
+						// flags, leaving a plain Amiga with no CD-boot ROM (stuck at "insert disk").
+						val cdModel = if (settings.baseModel == AmigaModel.CDTV) AmigaModel.CDTV else AmigaModel.CD32
+						onUpdate(settings.copy(cdImage = path, baseModel = cdModel))
+					}
 					"whdload" -> onUpdate(settings.copy(whdloadFilename = path))
 				}
 			}
@@ -548,91 +669,56 @@ private fun TailorStep(settings: EmulatorSettings, onUpdate: (EmulatorSettings) 
 		Text(stringResource(R.string.guided_config_instruction_tailor), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 		Spacer(Modifier.height(16.dp))
 
-		HardwareDropdown("CPU Model", settings.cpuModel.toString(), EmulatorSettings.cpuModels.map { it.toString() }) {
+		SettingsHardwareDropdown("CPU Model", settings.cpuModel.toString(), EmulatorSettings.cpuModels.map { it.toString() }) {
 			onUpdate(settings.copy(cpuModel = it.toInt()))
 		}
 		
 		Spacer(Modifier.height(12.dp))
 
 		if (settings.cpuModel >= 68020) {
-			SwitchRow(
+			SettingsSwitchRow(
 				label = "JIT Acceleration",
 				checked = settings.jitCacheSize > 0,
-				onCheckedChange = { onUpdate(settings.copy(jitCacheSize = if (it) 16384 else 0)) }
+				onCheckedChange = { isChecked -> onUpdate(settings.copy(jitCacheSize = if (isChecked) 16384 else 0)) }
 			)
-			SwitchRow(
+			SettingsSwitchRow(
 				label = "RTG Graphics (UAEGFX)",
 				checked = settings.useRtg,
-				onCheckedChange = { onUpdate(settings.copy(useRtg = it)) }
+				onCheckedChange = { isChecked -> onUpdate(settings.copy(useRtg = isChecked)) }
 			)
 			Spacer(Modifier.height(12.dp))
 		}
 		
-		HardwareDropdown("Chip RAM", EmulatorSettings.chipRamOptions.find { it.first == settings.chipRam }?.second ?: "", EmulatorSettings.chipRamOptions.map { it.second }) { label ->
+		SettingsHardwareDropdown("Chip RAM", EmulatorSettings.chipRamOptions.find { it.first == settings.chipRam }?.second ?: "", EmulatorSettings.chipRamOptions.map { it.second }) { label ->
 			EmulatorSettings.chipRamOptions.find { it.second == label }?.let { onUpdate(settings.copy(chipRam = it.first)) }
 		}
 
 		Spacer(Modifier.height(12.dp))
 
-		HardwareDropdown("Fast RAM", EmulatorSettings.fastRamOptions.find { it.first == settings.fastRam }?.second ?: "", EmulatorSettings.fastRamOptions.map { it.second }) { label ->
+		SettingsHardwareDropdown("Fast RAM", EmulatorSettings.fastRamOptions.find { it.first == settings.fastRam }?.second ?: "", EmulatorSettings.fastRamOptions.map { it.second }) { label ->
 			EmulatorSettings.fastRamOptions.find { it.second == label }?.let { onUpdate(settings.copy(fastRam = it.first)) }
 		}
 		
 		if (settings.baseModel == AmigaModel.A1200 || settings.baseModel == AmigaModel.A4000) {
 			Spacer(Modifier.height(12.dp))
-			HardwareDropdown("Z3 RAM", EmulatorSettings.z3RamOptions.find { it.first == settings.z3Ram }?.second ?: "", EmulatorSettings.z3RamOptions.map { it.second }) { label ->
+			SettingsHardwareDropdown("Z3 RAM", EmulatorSettings.z3RamOptions.find { it.first == settings.z3Ram }?.second ?: "", EmulatorSettings.z3RamOptions.map { it.second }) { label ->
 				EmulatorSettings.z3RamOptions.find { it.second == label }?.let { onUpdate(settings.copy(z3Ram = it.first)) }
 			}
 		}
-	}
-}
 
-@Composable
-fun SwitchRow(
-	label: String,
-	checked: Boolean,
-	onCheckedChange: (Boolean) -> Unit,
-	enabled: Boolean = true
-) {
-	Row(
-		modifier = Modifier
-			.fillMaxWidth()
-			.clickable(enabled = enabled) { onCheckedChange(!checked) }
-			.padding(vertical = 8.dp),
-		verticalAlignment = Alignment.CenterVertically,
-		horizontalArrangement = Arrangement.SpaceBetween
-	) {
-		Text(
-			text = label,
-			style = MaterialTheme.typography.bodyMedium,
-			color = if (enabled) MaterialTheme.colorScheme.onSurface
-			else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+		Spacer(Modifier.height(12.dp))
+		SettingsSwitchRow(
+			label = "NTSC (60Hz, US region)",
+			checked = settings.ntsc,
+			onCheckedChange = { isChecked -> onUpdate(settings.copy(ntsc = isChecked)) }
 		)
-		Switch(
-			checked = checked,
-			onCheckedChange = null,
-			enabled = enabled
-		)
-	}
-}
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun HardwareDropdown(label: String, selected: String, options: List<String>, onSelect: (String) -> Unit) {
-	var expanded by remember { mutableStateOf(false) }
-	ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-		OutlinedTextField(
-			value = selected,
-			onValueChange = {},
-			readOnly = true,
-			label = { Text(label) },
-			trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-			modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-		)
-		ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-			options.forEach { option ->
-				DropdownMenuItem(text = { Text(option) }, onClick = { onSelect(option); expanded = false })
-			}
+		if (settings.baseModel == AmigaModel.CD32) {
+			SettingsSwitchRow(
+				label = "FMV Cartridge (MPEG video)",
+				checked = settings.cd32Fmv,
+				onCheckedChange = { isChecked -> onUpdate(settings.copy(cd32Fmv = isChecked)) }
+			)
 		}
 	}
 }
@@ -682,14 +768,16 @@ private fun SingleMediaPicker(
 		AlertDialog(
 			onDismissRequest = { expanded = false },
 			title = { Text("Select for $label") },
+			modifier = Modifier.fillMaxWidth(0.95f),
 			text = {
 				if (options.isEmpty()) {
 					Text("No files found. Please import some to your library first.")
 				} else {
-					LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+					LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
 						items(options) { file ->
 							ListItem(
 								headlineContent = { Text(file.name) },
+								supportingContent = { Text(file.sizeDisplay, style = MaterialTheme.typography.labelSmall) },
 								modifier = Modifier.clickable { onSelect(file.path); expanded = false }
 							)
 						}

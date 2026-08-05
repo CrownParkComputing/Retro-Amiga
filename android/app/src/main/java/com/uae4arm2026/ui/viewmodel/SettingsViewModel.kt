@@ -159,7 +159,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 		saveLastSession()
 	}
 
-	private fun selectRomsForModel(model: AmigaModel, roms: List<AmigaFile>): SelectedRoms {
+	fun selectRomsForModel(model: AmigaModel, roms: List<AmigaFile>): SelectedRoms {
 		val filteredRoms = roms.filter { !it.name.lowercase().contains("amigavision") }
 		if (filteredRoms.isEmpty()) return SelectedRoms(null, null)
 		val profile = MODEL_ROM_PROFILE[model] ?: return SelectedRoms(null, null)
@@ -202,18 +202,15 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 	): AmigaFile? {
 		return when (model) {
 			AmigaModel.CD32 -> {
-				if (selectedKickId == 64) null
-				else {
-					// Try CRC first
-					val crcExt = profile.extIds.firstNotNullOfOrNull { id ->
-						romsWithIds.filter { it.second == id }.map { it.first }.sortedBy { it.name.lowercase() }.firstOrNull()
-					}
-					// Fallback to filename
-					crcExt ?: romsWithIds.map { it.first }.filter { 
-						val name = it.name.lowercase()
-						name.contains("cd32") && name.contains("ext")
-					}.sortedBy { it.name.lowercase() }.firstOrNull()
+				// Try CRC first
+				val crcExt = profile.extIds.firstNotNullOfOrNull { id ->
+					romsWithIds.filter { it.second == id }.map { it.first }.sortedBy { it.name.lowercase() }.firstOrNull()
 				}
+				// Fallback to filename
+				crcExt ?: romsWithIds.map { it.first }.filter { 
+					val name = it.name.lowercase()
+					name.contains("cd32") && name.contains("ext")
+				}.sortedBy { it.name.lowercase() }.firstOrNull()
 			}
 			AmigaModel.CDTV -> {
 				val crcExt = profile.extIds.firstNotNullOfOrNull { id ->

@@ -25,6 +25,10 @@ class AppPreferences private constructor(context: Context) {
 	var hasCompletedSetup = mutableStateOf(prefs.getBoolean(KEY_HAS_COMPLETED_SETUP, false))
 		private set
 
+	/** Bouncing Boing ball + graphic EQ backdrop on the launcher screen. */
+	var showBoingBall = mutableStateOf(prefs.getBoolean(KEY_SHOW_BOING_BALL, true))
+		private set
+
 	var lastWhdloadPath: String
 		get() = prefs.getString(KEY_LAST_WHDLOAD, "") ?: ""
 		set(value) { prefs.edit { putString(KEY_LAST_WHDLOAD, value) } }
@@ -101,6 +105,11 @@ class AppPreferences private constructor(context: Context) {
 		prefs.edit { putBoolean(KEY_HAS_COMPLETED_SETUP, done) }
 	}
 
+	fun setShowBoingBall(show: Boolean) {
+		showBoingBall.value = show
+		prefs.edit { putBoolean(KEY_SHOW_BOING_BALL, show) }
+	}
+
 	fun clearAll() {
 		prefs.edit { clear() }
 		useDynamicColor.value = false
@@ -115,6 +124,7 @@ class AppPreferences private constructor(context: Context) {
 		private const val KEY_THEME_MODE = "theme_mode"
 		private const val KEY_HAS_SEEN_WELCOME = "has_seen_welcome"
 		private const val KEY_HAS_COMPLETED_SETUP = "has_completed_setup"
+		private const val KEY_SHOW_BOING_BALL = "show_boing_ball"
 		private const val KEY_LAST_WHDLOAD = "last_whdload_path"
 		private const val KEY_LAST_ROM_FINGERPRINT = "last_rom_fingerprint"
 		private const val KEY_RECENT_LAUNCHES = "recent_launches"

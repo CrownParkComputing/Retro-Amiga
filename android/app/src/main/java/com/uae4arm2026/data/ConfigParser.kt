@@ -30,7 +30,9 @@ object ConfigParser {
 		"kickstart_rom_file", "kickstart_ext_rom_file",
 		"floppy0", "floppy0type", "floppy1", "floppy1type",
 		"floppy2", "floppy2type", "floppy3", "floppy3type",
-		"cdimage0", "whdload_filename", "hardfile2", "filesystem2",
+		"cdimage0", "cdimage0_present", "cdimage0_readonly", "cd32fmv",
+		"chipset_compatible", "cd32cd", "cd32c2p", "cd32nvram", "cdcon", "cdtv",
+		"whdload_filename", "hardfile2", "filesystem2",
 		"sound_output", "sound_frequency", "sound_channels", "sound_stereo_separation", "sound_interpol",
 		"gfx_width", "gfx_height", "gfx_correct_aspect", "gfx_auto_crop", "rtgmem_type", "rtgmem_size", "gfxcard_type", "gfxcard_size", "gfxcard_options", "gfx_fullscreen_amiga", "gfx_fullscreen_picasso", "rtg_nocustom", "rtg_noautomodes", "show_leds",
 		"joyport0", "joyport1",
@@ -180,6 +182,7 @@ object ConfigParser {
 			floppy3Type = kv["floppy3type"]?.toIntOrNull() ?: -1,
 
 			cdImage = normalizeCdImagePath(kv["cdimage0"]),
+			cd32Fmv = kv["cd32fmv"].toBool(false),
 			whdloadFilename = kv["whdload_filename"] ?: "",
 			hardDrives = hardDriveList,
 
@@ -252,7 +255,7 @@ object ConfigParser {
 	fun guessCategory(settings: EmulatorSettings): ConfigCategory {
 		return when {
 			settings.whdloadFilename.isNotBlank() -> ConfigCategory.WHDLOAD
-			settings.cdImage.isNotBlank() -> ConfigCategory.CD32
+			settings.cdImage.isNotBlank() || settings.baseModel == AmigaModel.CD32 || settings.baseModel == AmigaModel.CDTV -> ConfigCategory.CD32
 			settings.hardDrives.any { it.isNotBlank() } -> ConfigCategory.HDF
 			settings.floppy0.isNotBlank() -> ConfigCategory.ADF
 			else -> ConfigCategory.GENERIC
@@ -265,24 +268,19 @@ object ConfigParser {
 	private fun guessModel(kv: Map<String, String>): AmigaModel {
 		val cpu = kv["cpu_model"]?.toIntOrNull() ?: 68000
 		val chipset = kv["chipset"] ?: "ocs"
-		val hasCd = kv["cdimage0"]?.isNotEmpty() == true
-		val chipRam = kv["chipmem_size"]?.toIntOrNull() ?: 1
-		val slowRam = kv["bogomem_size"]?.toIntOrNull() ?: 0
+		val isCd32 = kv["cd32cd"].toBool(false) || kv["chipset_compatible"] == "CD32"
+		val isCdtv = kv["cdtv"].toBool(false) || kv["chipset_compatible"] == "CDTV"
 		val hwPath = kv["config_hardware_path"] ?: ""
 
 		return when {
 			chipset == "aga" && cpu >= 68040 -> AmigaModel.A4000
-			chipset == "aga" && hasCd -> AmigaModel.CD32
+			chipset == "aga" && isCd32 -> AmigaModel.CD32
 			chipset == "aga" -> AmigaModel.A1200
 			chipset == "ecs" && cpu >= 68030 -> AmigaModel.A3000
 			chipset == "ecs" && hwPath.contains("A600", ignoreCase = true) -> AmigaModel.A600
 			chipset == "ecs" && hwPath.contains("A500", ignoreCase = true) -> AmigaModel.A500_PLUS
-			// Without config_hardware_path, A500+ has 1MB chip + no slow RAM,
-			// while A600 has 2MB chip + no slow RAM. But both have chipRam=2 in defaults.
-			// Default to A500+ (more common) when we can't distinguish.
 			chipset == "ecs" -> AmigaModel.A500_PLUS
-			hasCd -> AmigaModel.CDTV
-			// OCS with 512KB chip + 512KB slow = A500 (or A2000), default A500
+			isCdtv -> AmigaModel.CDTV
 			else -> AmigaModel.A500
 		}
 	}

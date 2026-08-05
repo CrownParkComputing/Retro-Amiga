@@ -64,7 +64,7 @@ fun Uae4ArmHomeScreen(navController: NavController? = null) {
 					fontWeight = FontWeight.Bold
 				)
 				Text(
-					text = "Powered by Copperline",
+					text = "Powered by Amiberry",
 					fontSize = 10.sp,
 					color = AccentColor,
 					fontWeight = FontWeight.Medium
@@ -117,6 +117,7 @@ fun Uae4ArmHomeScreen(navController: NavController? = null) {
 				verticalAlignment = Alignment.CenterVertically
 			) {
 				ToolIconButton(Icons.Default.Folder, "Files") { navController?.navigate(Screen.FileManager.route) }
+				ToolIconButton(Icons.Default.SportsEsports, "Controllers") { navController?.navigate(Screen.Settings.route) }
 				ToolIconButton(Icons.Default.Settings, "Settings") { navController?.navigate(Screen.AppSettings.route) }
 				ToolIconButton(Icons.Default.Replay, "Rerun Setup") { navController?.navigate(Screen.Onboarding.route) }
 			}

@@ -52,6 +52,11 @@ void android_hide_virtual_keyboard()
 	call_activity_void_method("hideVirtualKeyboardFromNative");
 }
 
+void android_show_pause_menu()
+{
+	call_activity_void_method("showPauseMenu");
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_uae4arm2026_Uae4ArmEmulatorActivity_nativeSendAmigaKey(JNIEnv*, jclass, jint keycode, jint pressed)
 {
@@ -89,6 +94,17 @@ Java_com_uae4arm2026_Uae4ArmEmulatorActivity_nativeSetPause(JNIEnv*, jclass, jbo
 	android_set_pause(paused != 0);
 }
 
+extern void uae_restart(struct uae_prefs* p, int opengui, const TCHAR* cfgfile);
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_uae4arm2026_Uae4ArmEmulatorActivity_nativeRestart(JNIEnv*, jclass)
+{
+	// opengui: 0 = normal (respects the "-G" no-gui launch flag -> restart_program=2 ->
+	// no_gui=true), 1 = force nogui, -1 = force-disable nogui (i.e. force the native ImGui
+	// menu open) which is NOT what an in-game "Reboot" action should do.
+	uae_restart(&currprefs, 0, nullptr);
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_uae4arm2026_Uae4ArmEmulatorActivity_nativeInsertFloppy(JNIEnv* env, jclass, jint drive, jstring path)
 {
@@ -110,9 +126,34 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_uae4arm2026_Uae4ArmEmulatorActivity_nativeSetOnScreenController(JNIEnv*, jclass, jint mode)
 {
 	// 0 = none, 1 = joystick, 2 = cd32 pad
+	write_log("ANDROID_DEBUG: nativeSetOnScreenController mode=%d (was joy=%d cd32=%d)\n",
+		mode, changed_prefs.onscreen_joystick, changed_prefs.onscreen_cd32pad);
 	changed_prefs.onscreen_joystick = (mode == 1);
 	changed_prefs.onscreen_cd32pad = (mode == 2);
 	set_config_changed();
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_uae4arm2026_Uae4ArmEmulatorActivity_nativeSetCorrectAspect(JNIEnv*, jclass, jboolean enabled)
+{
+	// Toggle 4:3 aspect correction (16:9/stretched native pixels when off) live,
+	// same mechanism used by the AKS_AUTO_CROP_IMAGE hotkey and every ImGui panel.
+	write_log("ANDROID_DEBUG: nativeSetCorrectAspect enabled=%d (currprefs was %d, changed_prefs was %d)\n",
+		(int)enabled, currprefs.gfx_correct_aspect, changed_prefs.gfx_correct_aspect);
+	changed_prefs.gfx_correct_aspect = enabled != 0 ? 1 : 0;
+	set_config_changed();
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_uae4arm2026_Uae4ArmEmulatorActivity_nativeGetCorrectAspect(JNIEnv*, jclass)
+{
+	return currprefs.gfx_correct_aspect != 0;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_uae4arm2026_Uae4ArmEmulatorActivity_nativeGetFloppyCount(JNIEnv*, jclass)
+{
+	return currprefs.nr_floppies;
 }
 
 extern "C" JNIEXPORT void JNICALL

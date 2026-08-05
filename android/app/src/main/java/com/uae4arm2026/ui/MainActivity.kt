@@ -28,6 +28,8 @@ import java.io.IOException
 
 class MainActivity : ComponentActivity() {
 	private var requestedRoute by mutableStateOf<String?>(null)
+	var pendingEditConfigPath by mutableStateOf<String?>(null)
+		private set
 
 	private var isReady by mutableStateOf(false)
 	var emulatorCrashDetected by mutableStateOf(false)
@@ -72,6 +74,11 @@ class MainActivity : ComponentActivity() {
 			intent.removeExtra(EXTRA_OPEN_ROUTE)
 		}
 
+		intent?.getStringExtra(EXTRA_CONFIG_PATH)?.let { path ->
+			pendingEditConfigPath = path
+			intent.removeExtra(EXTRA_CONFIG_PATH)
+		}
+
 		if (intent?.action != Intent.ACTION_VIEW) return
 		val uri = intent.data ?: return
 		// Clear the action so it isn't re-processed on config change
@@ -92,6 +99,12 @@ class MainActivity : ComponentActivity() {
 		val route = requestedRoute
 		requestedRoute = null
 		return route
+	}
+
+	fun consumePendingEditConfigPath(): String? {
+		val path = pendingEditConfigPath
+		pendingEditConfigPath = null
+		return path
 	}
 
 	/**
@@ -334,7 +347,8 @@ com.uae4arm2026.data.model.AmigaModel.CD32,
 
 	companion object {
 		private const val TAG = "Uae4Arm-Main"
-const val EXTRA_OPEN_ROUTE = "com.uae4arm2026.OPEN_ROUTE"
+		const val EXTRA_OPEN_ROUTE = "com.uae4arm2026.OPEN_ROUTE"
+		const val EXTRA_CONFIG_PATH = "com.uae4arm2026.CONFIG_PATH"
 	}
 }
 

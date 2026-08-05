@@ -1076,7 +1076,9 @@ static int set_master_volume(int volume, int mute)
 
 static int get_master_volume(int* volume, int* mute)
 {
-	return currprefs.sound_volume_master;
+	if (volume) *volume = currprefs.sound_volume_master;
+	if (mute) *mute = sdp->mute;
+	return 1;
 }
 
 void sound_mute(int newmute)

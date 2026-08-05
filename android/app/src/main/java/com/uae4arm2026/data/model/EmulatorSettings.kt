@@ -47,6 +47,7 @@ data class EmulatorSettings(
 
 	// CD
 	val cdImage: String = "",
+	val cd32Fmv: Boolean = false,  // CD32 "Full Motion Video" MPEG cartridge add-on
 	// WHDLoad
 	val whdloadFilename: String = "",
 	// Hard drives (HDF/HDI/VHD mounted as DH0..DH9 via hardfile2, up to 10)
@@ -64,7 +65,7 @@ data class EmulatorSettings(
 	val gfxHeight: Int = 568,
 	val rtgWidth: Int = 1920,
 	val rtgHeight: Int = 1080,
-	val correctAspect: Boolean = true,
+	val correctAspect: Boolean = false,
 	val autoCrop: Boolean = false,
 	val showLeds: Boolean = false,
 
@@ -114,9 +115,20 @@ data class EmulatorSettings(
 					fpuModel = 68040, cpuSpeed = "max", jitCacheSize = 16384, jitFpu = true
 				)
 				AmigaModel.CD32 -> EmulatorSettings(
+					// Matches real Commodore CD32 hardware: 68EC020 (24-bit addressing - the
+					// EC020 has no 32-bit address bus), AGA, 2MB Chip RAM, no Fast RAM or floppy
+					// drive out of the box. No JIT (real CD32 titles are timing-sensitive and
+					// plenty of them rely on 24-bit-addressing quirks/expect a real 68020, both
+					// of which JIT mode breaks) - "approximate" speed (cpu_speed=real,
+					// cycle_exact=false) is the right tradeoff: not the slow cycle-exact model,
+					// but still a real interpreted 68020 rather than JIT's fastest-possible mode.
+					// Needs two ROMs to boot: the CD32 kickstart plus the CD32 extended ROM
+					// (romExtFile) - GuidedConfigScreen's cd32 mode resolves both automatically
+					// when available.
 					baseModel = model, cpuModel = 68020, chipset = "aga",
-					chipRam = 4, slowRam = 0, fastRam = 4, address24Bit = false,
-					cpuSpeed = "max", cycleExact = false, floppy0Type = -1
+					chipRam = 4, slowRam = 0, fastRam = 0, address24Bit = true,
+					cpuSpeed = "real", cycleExact = false, floppy0Type = -1,
+					jitCacheSize = 0
 				)
 				AmigaModel.CDTV -> EmulatorSettings(
 					baseModel = model, cpuModel = 68000, chipset = "ocs",

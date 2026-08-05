@@ -1369,7 +1369,12 @@ struct amiberry_options
 	int default_height = 568;
 	int default_fullscreen_mode = 0;
 	int default_stereo_separation = 7;
-	int default_sound_buffer = 3072;
+	// UAE's own default_prefs() uses DEFAULT_SOUND_MAXB (16384, see sounddep/sound.h) as the
+	// genuine reference default. Amiberry's stock 3072 undercuts that for lower Android audio
+	// latency on Pi-class hardware, but on this port it's too tight - the audio callback misses
+	// its deadline under any load (e.g. the input-toggle stalls fixed elsewhere), which is heard
+	// as loud/harsh crackle. Match the real default instead of Amiberry's Pi-tuned override.
+	int default_sound_buffer = 16384;
 	int default_sound_frequency = 44100;
 	int default_joystick_deadzone = 33;
 	bool default_retroarch_quit = true;

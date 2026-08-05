@@ -122,28 +122,28 @@ fun CpuTab(viewModel: SettingsViewModel) {
 				Spacer(modifier = Modifier.height(8.dp))
 
 				// CPU speed
-				SwitchRow(
+				SettingsSwitchRow(
 					label = stringResource(R.string.settings_cpu_fastest_possible),
 					checked = settings.cpuSpeed == "max",
 					enabled = !settings.cycleExact,
-					onCheckedChange = {
+					onCheckedChange = { isChecked ->
 						viewModel.updateSettings { s ->
-							s.copy(cpuSpeed = if (it) "max" else "real")
+							s.copy(cpuSpeed = if (isChecked) "max" else "real")
 						}
 					}
 				)
 
-				SwitchRow(
+				SettingsSwitchRow(
 					label = stringResource(R.string.settings_cpu_more_compatible),
 					checked = settings.cpuCompatible,
-					onCheckedChange = { viewModel.updateSettings { s -> s.copy(cpuCompatible = it) } }
+					onCheckedChange = { isChecked -> viewModel.updateSettings { s -> s.copy(cpuCompatible = isChecked) } }
 				)
 
-				SwitchRow(
+				SettingsSwitchRow(
 					label = stringResource(R.string.settings_cpu_24bit_addressing),
 					checked = settings.address24Bit,
 					enabled = settings.cpuModel <= 68010,
-					onCheckedChange = { viewModel.updateSettings { s -> s.copy(address24Bit = it) } }
+					onCheckedChange = { isChecked -> viewModel.updateSettings { s -> s.copy(address24Bit = isChecked) } }
 				)
 
 				// FPU
@@ -233,12 +233,12 @@ fun CpuTab(viewModel: SettingsViewModel) {
 							),
 							style = MaterialTheme.typography.bodyMedium
 						)
-						SwitchRow(
+						SettingsSwitchRow(
 							label = stringResource(R.string.settings_cpu_jit_fpu_label),
 							checked = settings.jitFpu,
 							enabled = settings.jitCacheSize > 0 && settings.fpuModel > 0,
-							onCheckedChange = { enabled ->
-								viewModel.updateSettings { s -> s.copy(jitFpu = enabled) }
+							onCheckedChange = { isChecked ->
+								viewModel.updateSettings { s -> s.copy(jitFpu = isChecked) }
 							}
 						)
 					}
@@ -247,6 +247,3 @@ fun CpuTab(viewModel: SettingsViewModel) {
 		)
 	}
 }
-
-
-

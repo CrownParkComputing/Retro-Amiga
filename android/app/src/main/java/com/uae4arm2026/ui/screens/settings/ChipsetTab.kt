@@ -92,19 +92,19 @@ fun ChipsetTab(viewModel: SettingsViewModel) {
 
 						Spacer(modifier = Modifier.height(8.dp))
 
-						SwitchRow(
+						SettingsSwitchRow(
 							label = stringResource(R.string.settings_chipset_immediate_blitter),
 							checked = settings.immediateBlits,
 							onCheckedChange = { viewModel.updateSettings { s -> s.copy(immediateBlits = it) } }
 						)
 
-						SwitchRow(
+						SettingsSwitchRow(
 							label = stringResource(R.string.settings_chipset_cycle_exact),
 							checked = settings.cycleExact,
 							onCheckedChange = { viewModel.updateSettings { s -> s.copy(cycleExact = it) } }
 						)
 
-						SwitchRow(
+						SettingsSwitchRow(
 							label = stringResource(R.string.settings_chipset_ntsc),
 							checked = settings.ntsc,
 							onCheckedChange = { viewModel.updateSettings { s -> s.copy(ntsc = it) } }
@@ -171,4 +171,3 @@ fun ChipsetTab(viewModel: SettingsViewModel) {
 		)
 	}
 }
-

@@ -51,11 +51,11 @@ fun AppSettingsScreen(navController: NavController) {
 				.padding(16.dp),
 			verticalArrangement = Arrangement.spacedBy(16.dp)
 		) {
-			SectionHeader("Appearance")
+			SettingsSectionHeader("Appearance")
 			OutlinedCard {
 				Column(modifier = Modifier.padding(16.dp)) {
 					val themeMode by appPrefs.themeMode
-					RadioGroup(
+					SettingsRadioGroup(
 						label = stringResource(R.string.settings_display_theme_label),
 						options = themeModeOptions,
 						selected = themeMode,
@@ -65,7 +65,7 @@ fun AppSettingsScreen(navController: NavController) {
 					if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
 						Spacer(modifier = Modifier.height(16.dp))
 						val useDynamicColor by appPrefs.useDynamicColor
-						SwitchRow(
+						SettingsSwitchRow(
 							label = stringResource(R.string.settings_display_dynamic_color),
 							checked = useDynamicColor,
 							onCheckedChange = { appPrefs.setDynamicColor(it) }
@@ -74,12 +74,12 @@ fun AppSettingsScreen(navController: NavController) {
 				}
 			}
 
-			SectionHeader("About")
+			SettingsSectionHeader("About")
 			OutlinedCard {
 				Column(modifier = Modifier.padding(16.dp)) {
 					ListItem(
 						headlineContent = { Text("UAE4ARM 2026") },
-						supportingContent = { Text("Powered by Copperline Engine") },
+						supportingContent = { Text("Powered by Amiberry") },
 						leadingContent = { Icon(Icons.Default.Info, contentDescription = null) }
 					)
 				}

@@ -360,6 +360,19 @@ float calculate_desired_aspect(const AmigaMonitor* mon)
 		return 4.0f / 3.0f;
 	}
 
+	// "Correct aspect" off means "fill the screen" (stretched native pixels), not "letterbox to
+	// a slightly different fixed ratio". The raw framebuffer ratio (~720x568, i.e. ~4:3) used to
+	// be returned here, which is nearly identical to the 4:3 case above and made this toggle look
+	// like it did nothing on a widescreen device. Use the actual window/display aspect instead so
+	// the image stretches edge-to-edge (e.g. true 16:9 on a 16:9 screen).
+	if (g_renderer && mon->amiga_window) {
+		int drawable_w = 0, drawable_h = 0;
+		g_renderer->get_drawable_size(mon->amiga_window, &drawable_w, &drawable_h);
+		if (drawable_w > 0 && drawable_h > 0) {
+			return (float)drawable_w / (float)drawable_h;
+		}
+	}
+
 	if (surface) {
 		return (float)surface->w / (float)surface->h;
 	}

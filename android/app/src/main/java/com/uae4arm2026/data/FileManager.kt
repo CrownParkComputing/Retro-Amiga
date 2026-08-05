@@ -214,6 +214,8 @@ object FileManager {
 			DocumentsContract.Document.COLUMN_MIME_TYPE
 		)
 
+		val normBase = basePath.trimEnd('/')
+
 		try {
 			resolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
 				val idIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
@@ -229,10 +231,11 @@ object FileManager {
 
 					if (DocumentsContract.Document.MIME_TYPE_DIR == mime) {
 						if (!name.startsWith(".")) {
-							// For recursion, we check if this folder is within our target base path
 							val folderUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
-							val folderPath = MediaPathHelper.normalizeImportedPath(context, folderUri)
-							if (folderPath.startsWith(basePath, ignoreCase = true) || basePath.startsWith(folderPath, ignoreCase = true)) {
+							val folderPath = MediaPathHelper.normalizeImportedPath(context, folderUri).trimEnd('/')
+							
+							// Recurse if the folder is a parent of our target OR inside our target
+							if (normBase.startsWith(folderPath, ignoreCase = true) || folderPath.startsWith(normBase, ignoreCase = true)) {
 								scanDocumentDirectoryInternal(context, treeUri, rootId, docId, basePath, extensions, category, results)
 							}
 						}
@@ -246,7 +249,7 @@ object FileManager {
 					val storedPath = MediaPathHelper.normalizeImportedPath(context, docUri)
 					
 					// Ensure the file is actually inside the configured library folder
-					if (!storedPath.startsWith(basePath, ignoreCase = true)) continue
+					if (!storedPath.startsWith(normBase, ignoreCase = true)) continue
 
 					results.add(
 						AmigaFile(
@@ -325,7 +328,26 @@ object FileManager {
 
 	fun detectCategoryFolders(context: Context, treeUri: Uri): Map<FileCategory, String> {
 		val rootPath = resolveDocumentPath(context, treeUri) ?: return emptyMap()
-		return detectCategoryFolders(rootPath)
+		val detected = detectCategoryFolders(rootPath)
+		// On modern Android, we can't reliably use File.listFiles() on these detected paths
+		// unless they are app-owned. We'll trust the path detection for now.
+		return detected
+	}
+
+	fun countFilesInCategory(context: Context, category: FileCategory, path: String, treeUriString: String?): Int {
+		if (path.isBlank()) return 0
+		if (isAppOwnedPath(context, path)) {
+			return File(path).listFiles()?.count { it.isFile && it.extension.lowercase() in category.extensions } ?: 0
+		}
+		
+		val uri = treeUriString?.let { Uri.parse(it) } ?: return 0
+		return try {
+			val extensions = getScannableExtensions(category)
+			val files = scanDocumentDirectoryRecursive(context, uri, path, extensions, category)
+			files.size
+		} catch (e: Exception) {
+			0
+		}
 	}
 
 	fun detectCategoryFolders(rootPath: String): Map<FileCategory, String> {

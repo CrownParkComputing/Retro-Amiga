@@ -3,7 +3,6 @@ package com.uae4arm2026;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -30,29 +29,64 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
+import android.view.MotionEvent;
+import android.view.View;
+import android.widget.LinearLayout;
+import android.os.Handler;
+import android.os.Looper;
+
 public class Uae4ArmEmulatorActivity extends SDLActivity {
+	public static boolean isRunning = false;
+	private final Handler uiHandler = new Handler(Looper.getMainLooper());
+	private final Runnable hideOverlaysRunnable = this::hideOverlays;
+	private LinearLayout overlayContainer;
+	// dispatchTouchEvent() fires for every MotionEvent - including every ACTION_MOVE while
+	// dragging the on-screen joystick, which can be dozens of events per second. Re-arming the
+	// Handler and touching View visibility on each one forces a layout/invalidate pass on the UI
+	// thread for every sample, competing with the SDL render thread and visibly slowing the
+	// emulation while a finger is down. Throttle so the timer is only actually reset at most
+	// once per this window; the 3s auto-hide delay makes the lost precision unnoticeable.
+	private static final long AUTO_HIDE_RESET_THROTTLE_MS = 500;
+	private long lastAutoHideResetUptimeMs = 0;
+
 	private OnBackInvokedCallback backCallback;
 	private Uae4ArmVirtualKeyboard virtualKeyboard;
 	private ImageButton keyboardButton;
 	private ImageButton pauseButton;
 	private ImageButton controllerButton;
+	private ImageButton aspectButton;
+	private ImageButton floppyButton;
+	private ImageButton editConfigButton;
+	private ImageButton rebootButton;
+	private ImageButton quitButton;
 	private boolean pauseMenuPausedEmulation = false;
-	private boolean keepPausedForSubdialog = false;
-	private boolean leavingEmulator = false;
 	private final List<ParcelFileDescriptor> openFileDescriptors = new ArrayList<>();
 
 	private static final String HINT_TRAP_BACK = "SDL_ANDROID_TRAP_BACK_BUTTON";
+	public static final String EXTRA_CONFIG_PATH = "com.uae4arm2026.CONFIG_PATH";
+
+	private String currentConfigPath;
 
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
+		isRunning = true;
 		cleanCache();
 		super.onCreate(savedInstanceState);
+		currentConfigPath = extractConfigPath(getIntent());
+		setupOverlayContainer();
 		ensureVirtualKeyboardOverlay();
 		if (shouldShowKeyboardButton()) {
 			ensureKeyboardButtonOverlay();
 		}
 		ensureControllerButtonOverlay();
+		ensureAspectButtonOverlay();
+		if (configHasFloppyDrive(0)) {
+			ensureFloppyButtonOverlay();
+		}
 		ensurePauseButtonOverlay();
+		ensureEditConfigButtonOverlay();
+		ensureRebootButtonOverlay();
+		ensureQuitButtonOverlay();
 		enterImmersiveMode();
 		registerBackHandler();
 		applyControllerMappingsFromPrefs();
@@ -317,8 +351,6 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 		return lastSlash >= 0 ? fallback.substring(lastSlash + 1) : fallback;
 	}
 
-	private boolean pauseMenuVisible = false;
-
 	private boolean isBackTrapped() {
 		return SDLActivity.nativeGetHintBoolean(HINT_TRAP_BACK, false);
 	}
@@ -335,61 +367,25 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 		}
 	}
 
-	private void showPauseMenu() {
-		if (pauseMenuVisible) return;
-		pauseMenuVisible = true;
-		keepPausedForSubdialog = false;
-		leavingEmulator = false;
-		nativeSetPause(true);
-		pauseMenuPausedEmulation = true;
+	// Kept as "showPauseMenu" (rather than renamed) since native code invokes this exact method
+	// name by reflection (android_show_pause_menu() in android_keyboard_bridge.cpp, wired to the
+	// three-finger-tap gesture) and handleBackPress() below also calls it directly.
+	// There's no dialog/menu anymore — every action (keyboard, joypad, aspect, disk swap, pause)
+	// is its own always-available overlay icon, so this just toggles pause/resume.
+	public void showPauseMenu() {
+		togglePause();
+	}
 
+	private void togglePause() {
+		pauseMenuPausedEmulation = !pauseMenuPausedEmulation;
+		nativeSetPause(pauseMenuPausedEmulation);
 		runOnUiThread(() -> {
-			String[] options = {
-				getString(R.string.pause_menu_resume),
-				getString(R.string.pause_menu_swap_df0),
-				getString(R.string.pause_menu_swap_df1),
-				getString(R.string.pause_menu_detailed_settings),
-				getString(R.string.pause_menu_help),
-				getString(R.string.pause_menu_quit)
-			};
-
-			new AlertDialog.Builder(this)
-				.setTitle(R.string.pause_menu_title)
-				.setItems(options, (dialog, which) -> {
-					switch (which) {
-						case 0:
-							break;
-						case 1:
-							keepPausedForSubdialog = true;
-							showFloppyPicker(0);
-							break;
-						case 2:
-							keepPausedForSubdialog = true;
-							showFloppyPicker(1);
-							break;
-						case 3:
-							leavingEmulator = true;
-							openDetailedSettings();
-							break;
-						case 4:
-							keepPausedForSubdialog = true;
-							showHelpDialog();
-							break;
-						case 5:
-							leavingEmulator = true;
-							com.uae4arm2026.data.EmulatorLauncher.INSTANCE.writeCleanExitMarker(Uae4ArmEmulatorActivity.this);
-							finish();
-							break;
-					}
-				})
-				.setOnDismissListener(d -> {
-					pauseMenuVisible = false;
-					if (!keepPausedForSubdialog && !leavingEmulator) {
-						resumeFromPauseMenuIfNeeded();
-					}
-					enterImmersiveMode();
-				})
-				.show();
+			if (pauseButton != null) {
+				pauseButton.setImageResource(pauseMenuPausedEmulation
+					? android.R.drawable.ic_media_play
+					: android.R.drawable.ic_media_pause);
+			}
+			enterImmersiveMode();
 		});
 	}
 
@@ -415,7 +411,7 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 			})
 			.setNeutralButton(R.string.action_eject, (dialog, which) -> nativeEjectFloppy(drive))
 			.setNegativeButton(android.R.string.cancel, null)
-			.setOnDismissListener(d -> completePausedSubdialogFlow())
+			.setOnDismissListener(d -> enterImmersiveMode())
 			.show();
 	}
 
@@ -424,29 +420,9 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 			.setTitle(title)
 			.setMessage(message)
 			.setPositiveButton(android.R.string.ok, null)
-			.setNegativeButton(R.string.pause_menu_detailed_settings, (dialog, which) -> {
-				leavingEmulator = true;
-				openDetailedSettings();
-			})
-			.setOnDismissListener(d -> completePausedSubdialogFlow())
+			.setNegativeButton(R.string.pause_menu_detailed_settings, (dialog, which) -> openDetailedSettings())
+			.setOnDismissListener(d -> enterImmersiveMode())
 			.show();
-	}
-
-	private void showHelpDialog() {
-		new AlertDialog.Builder(this)
-			.setTitle(R.string.help_dialog_title)
-			.setMessage(android.text.Html.fromHtml(getString(R.string.help_dialog_message), android.text.Html.FROM_HTML_MODE_COMPACT))
-			.setPositiveButton(android.R.string.ok, null)
-			.setOnDismissListener(d -> completePausedSubdialogFlow())
-			.show();
-	}
-
-	private void completePausedSubdialogFlow() {
-		keepPausedForSubdialog = false;
-		if (!leavingEmulator) {
-			resumeFromPauseMenuIfNeeded();
-		}
-		enterImmersiveMode();
 	}
 
 	private final java.util.HashMap<Integer, Integer> kbButtonMap = new java.util.HashMap<>();
@@ -522,7 +498,39 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 		intent.putExtra(com.uae4arm2026.ui.MainActivity.EXTRA_OPEN_ROUTE, com.uae4arm2026.ui.navigation.Screen.Settings.INSTANCE.getRoute());
 		intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
 		startActivity(intent);
-		finish();
+	}
+
+	private void openEditConfig() {
+		// Deliberately NOT writeCleanExitMarker() / FLAG_ACTIVITY_CLEAR_TOP here: this is a detour
+		// to edit the running game's config, not an exit. CLEAR_TOP would finish this activity
+		// (onDestroy() sets isRunning = false), which broke two things downstream: the "Reboot
+		// System" save button in the edit wizard couldn't tell the game was still running, and
+		// there was no live emulator instance left underneath to return to on back-press. Leaving
+		// this activity alive (just backgrounded) is what makes both of those work.
+		Intent intent = new Intent(this, com.uae4arm2026.ui.MainActivity.class);
+		intent.putExtra(EXTRA_CONFIG_PATH, currentConfigPath);
+		intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+		startActivity(intent);
+	}
+
+	private static String extractConfigPath(Intent intent) {
+		if (intent == null) return null;
+		String[] args = intent.getStringArrayExtra("SDL_ARGS");
+		if (args == null) return null;
+		for (int i = 0; i < args.length - 1; i++) {
+			if ("--config".equals(args[i])) {
+				return args[i + 1];
+			}
+		}
+		return null;
+	}
+
+	private int currentOnScreenMode = 0; // 0=None, 1=Joystick, 2=CD32 Pad
+
+	private void toggleOnScreenController() {
+		currentOnScreenMode = (currentOnScreenMode + 1) % 3;
+		nativeSetOnScreenController(currentOnScreenMode);
+		getSharedPreferences("controller_map", MODE_PRIVATE).edit().putInt("onscreen_mode", currentOnScreenMode).apply();
 	}
 
 	private void ensureVirtualKeyboardOverlay() {
@@ -599,85 +607,200 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 		return defaultValue;
 	}
 
-	private void ensureKeyboardButtonOverlay() {
-		if (keyboardButton != null) {
+	private void setupOverlayContainer() {
+		final float density = getResources().getDisplayMetrics().density;
+		overlayContainer = new LinearLayout(this);
+		overlayContainer.setOrientation(LinearLayout.VERTICAL);
+		overlayContainer.setPadding((int)(8 * density), (int)(8 * density), (int)(8 * density), (int)(8 * density));
+		
+		FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+			ViewGroup.LayoutParams.WRAP_CONTENT,
+			ViewGroup.LayoutParams.WRAP_CONTENT
+		);
+		params.gravity = Gravity.TOP | Gravity.END;
+		addContentView(overlayContainer, params);
+
+		// Hide overlays initially after a delay
+		resetAutoHideTimer();
+	}
+
+	/**
+	 * Cheap line-scan of the currently loaded .uae config for floppy drive presence, used to
+	 * decide whether to show the overlay disk-swap icon at all. This runs at onCreate time,
+	 * before the native core has necessarily parsed the config, so we can't rely on
+	 * nativeGetFloppyCount() yet (that's only safe once gameplay has actually started, e.g. from
+	 * the pause menu).
+	 */
+	private boolean configHasFloppyDrive(int drive) {
+		if (currentConfigPath == null) {
+			// No explicit config (e.g. quickstart floppy launch) - assume a floppy drive exists.
+			return true;
+		}
+		try {
+			File file = new File(currentConfigPath);
+			if (!file.exists()) return true;
+			String key = "floppy" + drive + "type=";
+			try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader(file))) {
+				String line;
+				while ((line = reader.readLine()) != null) {
+					if (line.startsWith(key)) {
+						String value = line.substring(key.length()).trim();
+						return !value.equals("-1");
+					}
+				}
+			}
+		} catch (IOException ignored) {
+		}
+		// floppy0type defaults to enabled (0) when unspecified; higher drives default to off.
+		return drive == 0;
+	}
+
+	private void resetAutoHideTimer() {
+		long now = android.os.SystemClock.uptimeMillis();
+		if (now - lastAutoHideResetUptimeMs < AUTO_HIDE_RESET_THROTTLE_MS) {
+			// Already reset recently (e.g. mid-drag on the on-screen joystick) - skip the UI-thread
+			// work below rather than doing it for every single MotionEvent.
 			return;
 		}
+		lastAutoHideResetUptimeMs = now;
+		uiHandler.removeCallbacks(hideOverlaysRunnable);
+		showOverlays();
+		uiHandler.postDelayed(hideOverlaysRunnable, 3000);
+	}
 
+	private void showOverlays() {
+		if (overlayContainer != null && overlayContainer.getVisibility() != View.VISIBLE) {
+			overlayContainer.setVisibility(View.VISIBLE);
+		}
+	}
+
+	private void hideOverlays() {
+		if (overlayContainer != null) overlayContainer.setVisibility(View.GONE);
+	}
+
+	@Override
+	public boolean onGenericMotionEvent(MotionEvent event) {
+		resetAutoHideTimer();
+		return super.onGenericMotionEvent(event);
+	}
+
+	@Override
+	public boolean onTouchEvent(MotionEvent event) {
+		resetAutoHideTimer();
+		return super.onTouchEvent(event);
+	}
+
+	// SDLActivity's game surface consumes touch events for gameplay input before they'd ever
+	// reach onTouchEvent() above, so relying on onTouchEvent alone means the overlay icons show
+	// once at startup and never come back once the auto-hide timer fires. dispatchTouchEvent()
+	// runs for every touch before any view gets a chance to consume it, so hook the timer here
+	// too (without altering dispatch) to keep the icons reachable throughout gameplay.
+	@Override
+	public boolean dispatchTouchEvent(MotionEvent event) {
+		resetAutoHideTimer();
+		return super.dispatchTouchEvent(event);
+	}
+
+	/**
+	 * Shared factory for overlay icon buttons: consistent (and touch-friendly) sizing, a
+	 * generous padded tap target well beyond the visible glyph, and vertical spacing suited to
+	 * the now-vertical overlay stack.
+	 */
+	private ImageButton addOverlayIconButton(int drawableRes, boolean isFirst, View.OnClickListener listener) {
 		final float density = getResources().getDisplayMetrics().density;
-		keyboardButton = new ImageButton(this);
-		keyboardButton.setImageResource(android.R.drawable.ic_menu_edit);
-		keyboardButton.setColorFilter(0xFFFFFFFF);
-		keyboardButton.setContentDescription(getString(R.string.pause_menu_keyboard));
-		keyboardButton.setBackground(createPauseButtonBackground(density));
-		keyboardButton.setAlpha(0.88f);
-		keyboardButton.setOnClickListener(v -> toggleVirtualKeyboardFromNative());
+		ImageButton button = new ImageButton(this);
+		button.setImageResource(drawableRes);
+		button.setColorFilter(0xFFFFFFFF);
+		button.setBackground(null);
+		button.setAlpha(0.75f);
+		int iconSize = (int) (28 * density);
+		int padding = (int) (10 * density);
+		button.setPadding(padding, padding, padding, padding);
+		button.setOnClickListener(v -> {
+			resetAutoHideTimer();
+			listener.onClick(v);
+		});
 
-		int size = (int) (44 * density);
-		int margin = (int) (12 * density);
-		FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(size, size);
-		params.gravity = Gravity.BOTTOM | Gravity.END;
-		params.bottomMargin = margin;
-		params.rightMargin = margin;
-		addContentView(keyboardButton, params);
+		LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(iconSize + padding * 2, iconSize + padding * 2);
+		lp.setMargins(0, isFirst ? 0 : (int) (4 * density), 0, 0);
+		overlayContainer.addView(button, lp);
+		return button;
+	}
+
+	private void ensureKeyboardButtonOverlay() {
+		if (keyboardButton != null) return;
+		keyboardButton = addOverlayIconButton(android.R.drawable.ic_menu_edit, overlayContainer.getChildCount() == 0,
+			v -> toggleVirtualKeyboardFromNative());
 	}
 
 	private void ensureControllerButtonOverlay() {
-		if (controllerButton != null) {
-			return;
+		if (controllerButton != null) return;
+		// Just toggles the on-screen joystick/CD32-pad overlay on/off (cycling None -> Joystick
+		// -> CD32 Pad), same as the pause menu's joypad entry. Port/device assignment (real
+		// mouse, external controller, or the touch joystick/mouse) now lives in the main
+		// Settings screen's "Controller Ports" section, not behind an in-game mapping screen.
+		controllerButton = addOverlayIconButton(R.drawable.ic_gamepad, overlayContainer.getChildCount() == 0,
+			v -> toggleOnScreenController());
+	}
+
+	private void ensureAspectButtonOverlay() {
+		if (aspectButton != null) return;
+		aspectButton = addOverlayIconButton(android.R.drawable.ic_menu_zoom, overlayContainer.getChildCount() == 0,
+			v -> nativeSetCorrectAspect(!nativeGetCorrectAspect()));
+	}
+
+	private void ensureFloppyButtonOverlay() {
+		if (floppyButton != null) return;
+		floppyButton = addOverlayIconButton(android.R.drawable.ic_menu_save, overlayContainer.getChildCount() == 0,
+			v -> showFloppySwapEntry());
+	}
+
+	private void showFloppySwapEntry() {
+		// Prefer the live native drive count (accurate once the core has actually booted);
+		// fall back to the config-file scan used at startup if it isn't available yet.
+		int floppyCount = nativeGetFloppyCount();
+		if (floppyCount <= 0) {
+			floppyCount = configHasFloppyDrive(1) ? 2 : (configHasFloppyDrive(0) ? 1 : 0);
 		}
-
-		final float density = getResources().getDisplayMetrics().density;
-		controllerButton = new ImageButton(this);
-		controllerButton.setImageResource(R.drawable.ic_gamepad);
-		controllerButton.setColorFilter(0xFFFFFFFF);
-		controllerButton.setContentDescription(getString(R.string.ext_controller_content_desc));
-		controllerButton.setBackground(createPauseButtonBackground(density));
-		controllerButton.setAlpha(0.88f);
-		controllerButton.setOnClickListener(v -> {
-			Intent mapIntent = new Intent(Uae4ArmEmulatorActivity.this, ControllerMapActivity.class);
-			startActivityForResult(mapIntent, 1001);
-		});
-
-		int size = (int) (44 * density);
-		int margin = (int) (12 * density);
-		int gap = (int) (8 * density);
-		FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(size, size);
-		params.gravity = Gravity.BOTTOM | Gravity.END;
-		params.bottomMargin = margin + size + gap;
-		params.rightMargin = margin;
-		addContentView(controllerButton, params);
+		if (floppyCount >= 2) {
+			new AlertDialog.Builder(this)
+				.setTitle(R.string.pause_menu_title)
+				.setItems(new String[]{
+					getString(R.string.pause_menu_swap_df0),
+					getString(R.string.pause_menu_swap_df1)
+				}, (dialog, which) -> showFloppyPicker(which))
+				.setNegativeButton(android.R.string.cancel, null)
+				.show();
+		} else {
+			showFloppyPicker(0);
+		}
 	}
 
 	private void ensurePauseButtonOverlay() {
-		if (pauseButton != null) {
-			return;
-		}
-
-		final float density = getResources().getDisplayMetrics().density;
-		pauseButton = new ImageButton(this);
-		pauseButton.setImageResource(android.R.drawable.ic_media_pause);
-		pauseButton.setColorFilter(0xFFFFFFFF);
-		pauseButton.setContentDescription(getString(R.string.pause_menu_title));
-		pauseButton.setBackground(createPauseButtonBackground(density));
-		pauseButton.setAlpha(0.88f);
-		pauseButton.setOnClickListener(v -> showPauseMenu());
-
-		int size = (int) (44 * density);
-		int margin = (int) (12 * density);
-		FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(size, size);
-		params.gravity = Gravity.TOP | Gravity.END;
-		params.topMargin = margin;
-		params.rightMargin = margin;
-		addContentView(pauseButton, params);
+		if (pauseButton != null) return;
+		pauseButton = addOverlayIconButton(android.R.drawable.ic_media_pause, overlayContainer.getChildCount() == 0,
+			v -> showPauseMenu());
 	}
 
-	private GradientDrawable createPauseButtonBackground(float density) {
-		GradientDrawable background = new GradientDrawable();
-		background.setShape(GradientDrawable.OVAL);
-		background.setColor(0xA8202020);
-		background.setStroke((int) (1.5f * density), 0x99FFFFFF);
-		return background;
+	private void ensureEditConfigButtonOverlay() {
+		if (editConfigButton != null) return;
+		editConfigButton = addOverlayIconButton(android.R.drawable.ic_menu_preferences,
+			overlayContainer.getChildCount() == 0, v -> openEditConfig());
+	}
+
+	private void ensureRebootButtonOverlay() {
+		if (rebootButton != null) return;
+		rebootButton = addOverlayIconButton(android.R.drawable.ic_menu_revert,
+			overlayContainer.getChildCount() == 0, v -> nativeRestart());
+	}
+
+	private void ensureQuitButtonOverlay() {
+		if (quitButton != null) return;
+		quitButton = addOverlayIconButton(android.R.drawable.ic_menu_close_clear_cancel,
+			overlayContainer.getChildCount() == 0, v -> {
+				com.uae4arm2026.data.EmulatorLauncher.INSTANCE.writeCleanExitMarker(Uae4ArmEmulatorActivity.this);
+				finish();
+			});
 	}
 
 	public void toggleVirtualKeyboardFromNative() {
@@ -699,9 +822,13 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 
 	public static native void nativeSendAmigaKey(int keycode, int pressed);
 	public static native void nativeSetPause(boolean paused);
+	public static native void nativeRestart();
 	public static native void nativeInsertFloppy(int drive, String path);
 	public static native void nativeEjectFloppy(int drive);
 	public static native void nativeSetOnScreenController(int mode);
+	public static native void nativeSetCorrectAspect(boolean enabled);
+	public static native boolean nativeGetCorrectAspect();
+	public static native int nativeGetFloppyCount();
 	public static native void nativeSetExternalControllerMode(int mode);
 	public static native void nativeApplyControllerMapping(int[] sdlToTarget);
 
@@ -720,6 +847,7 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 
 	@Override
 	protected void onDestroy() {
+		isRunning = false;
 		resumeFromPauseMenuIfNeeded();
 		if (Build.VERSION.SDK_INT >= 33 && backCallback != null) {
 			getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);

@@ -676,9 +676,17 @@ int check_prefs_changed_gfx()
 	if (currprefs.onscreen_joystick != changed_prefs.onscreen_joystick)
 	{
 		currprefs.onscreen_joystick = changed_prefs.onscreen_joystick;
-		// Re-enumerate joysticks so the on-screen joystick device gets
-		// registered or removed from the input subsystem.
-		import_joysticks();
+		// Real controllers are already enumerated once at startup (amiberry.cpp calls
+		// import_joysticks() during input init) - ensure_onscreen_joystick_registered() below
+		// just appends a synthetic entry to the existing di_joystick table, it doesn't need a
+		// fresh scan. Calling import_joysticks() here (as this used to) closes and reopens every
+		// REAL controller (each doing blocking Retroarch-cfg file lookups on disk), stalling the
+		// emulation thread audibly on every single tap of the overlay's controller icon. Worse,
+		// close_joystick() only resets osj_device_index and NOT cd32pad_device_index, so any
+		// reimport triggered while the CD32 pad was already registered left cd32pad_device_index
+		// dangling at a slot number that the freshly rebuilt table could reassign to a real
+		// controller - the on-screen CD32 pad silently stopped responding, or worse, aliased a
+		// physical gamepad. Never re-scanning real hardware here avoids both problems.
 		inputdevice_config_change();
 		joystick_refresh_needed = true;
 
@@ -713,7 +721,7 @@ int check_prefs_changed_gfx()
 	if (currprefs.onscreen_cd32pad != changed_prefs.onscreen_cd32pad)
 	{
 		currprefs.onscreen_cd32pad = changed_prefs.onscreen_cd32pad;
-		import_joysticks();
+		// See the on-screen joystick block above - no need to re-scan real controllers here either.
 		inputdevice_config_change();
 		joystick_refresh_needed = true;
 

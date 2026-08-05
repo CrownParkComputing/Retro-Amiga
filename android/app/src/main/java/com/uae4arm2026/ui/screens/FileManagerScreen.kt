@@ -160,9 +160,9 @@ fun FileManagerScreen(
 				verticalAlignment = Alignment.CenterVertically
 			) {
 				if (navController != null) {
-					IconButton(onClick = { 
-						navController.navigate(com.uae4arm2026.ui.navigation.Screen.QuickStart.route) {
-							popUpTo(com.uae4arm2026.ui.navigation.Screen.QuickStart.route) { inclusive = true }
+					IconButton(onClick = {
+						navController.navigate(com.uae4arm2026.ui.navigation.Screen.Configurations.route) {
+							popUpTo(com.uae4arm2026.ui.navigation.Screen.Configurations.route) { inclusive = true }
 						}
 					}, modifier = Modifier.size(32.dp)) {
 						Icon(Icons.Default.Home, contentDescription = "Home", modifier = Modifier.size(20.dp))

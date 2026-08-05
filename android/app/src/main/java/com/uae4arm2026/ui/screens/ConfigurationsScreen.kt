@@ -6,9 +6,11 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.items as lazyRowItems
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -30,6 +32,7 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.uae4arm2026.R
+import com.uae4arm2026.data.AppPreferences
 import com.uae4arm2026.data.ConfigCategory
 import com.uae4arm2026.data.ConfigInfo
 import com.uae4arm2026.data.EmulatorLauncher
@@ -54,16 +57,31 @@ fun ConfigurationsScreen(
 	val context = LocalContext.current
 	val scope = rememberCoroutineScope()
 	val snackbarHostState = remember { SnackbarHostState() }
+	val appPrefs = remember { AppPreferences.getInstance(context) }
+	val showBoingBall by appPrefs.showBoingBall
 	val configs by viewModel.configs.collectAsState()
-	var selectedCategory by remember { mutableStateOf<ConfigCategory?>(null) }
+	var selectedCategory by remember { mutableStateOf(ConfigCategory.entries.first()) }
+	var selectedMachine by remember { mutableStateOf<AmigaModel?>(null) }
+	var showAddSheet by remember { mutableStateOf(false) }
 
-	val filteredConfigs = remember(configs, selectedCategory) {
-		if (selectedCategory == null) configs
-		else configs.filter { it.category == selectedCategory }
+	val categoryConfigs = remember(configs, selectedCategory) {
+		configs.filter { it.category == selectedCategory }
 	}
-
-	val groupedConfigs = remember(filteredConfigs) {
-		filteredConfigs.groupBy { it.category }
+	// Only offer machines that actually have a config in this category - no point showing an
+	// A4000 chip when every saved ADF config happens to be an A500.
+	val availableMachines = remember(categoryConfigs) {
+		categoryConfigs.map { it.model }.distinct().sortedBy { it.displayName }
+	}
+	// The selected machine only applies within its own category; switching category or losing
+	// the machine from the list (e.g. its config got deleted) falls back to "All".
+	LaunchedEffect(availableMachines) {
+		if (selectedMachine != null && selectedMachine !in availableMachines) {
+			selectedMachine = null
+		}
+	}
+	val filteredConfigs = remember(categoryConfigs, selectedMachine) {
+		val machine = selectedMachine
+		if (machine == null) categoryConfigs else categoryConfigs.filter { it.model == machine }
 	}
 
 	val loadFailedMessage = stringResource(R.string.msg_failed_load_config)
@@ -78,18 +96,74 @@ fun ConfigurationsScreen(
 
 	Scaffold(
 		snackbarHost = { SnackbarHost(snackbarHostState) },
+		containerColor = Color.Transparent,
 		topBar = {
-			Column {
-				TopAppBar(title = { Text(stringResource(R.string.configurations_title)) })
+			// Both filter rows share one line: categories left, machines right. Each is its own
+			// scrollable row, so a long list on either side scrolls independently rather than
+			// pushing the other off-screen.
+			Row(
+				modifier = Modifier
+					.fillMaxWidth()
+					.statusBarsPadding()
+					.padding(horizontal = 8.dp),
+				verticalAlignment = Alignment.CenterVertically
+			) {
 				CategoryFilterBar(
+					modifier = Modifier.weight(1f),
 					selected = selectedCategory,
 					onSelect = { selectedCategory = it }
 				)
+				if (availableMachines.size > 1) {
+					MachineFilterBar(
+						modifier = Modifier.weight(1f),
+						machines = availableMachines,
+						selected = selectedMachine,
+						onSelect = { selectedMachine = it }
+					)
+				}
+			}
+		},
+		floatingActionButton = {
+			// Utility icons stack directly above the + button rather than living in a bottom bar:
+			// no full-width bar means nothing reserves a strip at the bottom of the screen, so the
+			// Boing ball and the graphic EQ get the whole area to play with.
+			Column(horizontalAlignment = Alignment.CenterHorizontally) {
+				val iconTint = MaterialTheme.colorScheme.primary
+				IconButton(onClick = { navController.navigate(Screen.FileManager.route) }) {
+					Icon(Icons.Default.Folder, contentDescription = stringResource(R.string.file_manager_title), tint = iconTint)
+				}
+				IconButton(onClick = { navController.navigate(Screen.Settings.route) }) {
+					Icon(Icons.Default.SportsEsports, contentDescription = stringResource(R.string.settings_title), tint = iconTint)
+				}
+				IconButton(onClick = { navController.navigate(Screen.AppSettings.route) }) {
+					Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings_title), tint = iconTint)
+				}
+				IconButton(onClick = { navController.navigate(Screen.ModPlayer.route) }) {
+					Icon(Icons.Default.MusicNote, contentDescription = stringResource(R.string.mod_player_title), tint = iconTint)
+				}
+				IconButton(onClick = { appPrefs.setShowBoingBall(!showBoingBall) }) {
+					Icon(
+						if (showBoingBall) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+						contentDescription = stringResource(R.string.toggle_boing_ball),
+						tint = iconTint
+					)
+				}
+				Spacer(Modifier.height(8.dp))
+				FloatingActionButton(onClick = { showAddSheet = true }) {
+					Icon(Icons.Default.Add, contentDescription = stringResource(R.string.configurations_add_new))
+				}
 			}
 		}
 	) { innerPadding ->
+		// Boing ball + graphic EQ sit BEHIND the content (drawn first in the Box), so the cards
+		// stay fully interactive. Deliberately NOT inset by innerPadding: the ball should bounce
+		// around the whole screen, including behind the top bar, rather than being boxed into the
+		// content area.
+		if (showBoingBall) {
+			BoingBallOverlay(modifier = Modifier.fillMaxSize())
+		}
 		Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-			if (configs.isEmpty()) {
+			if (filteredConfigs.isEmpty()) {
 				Box(
 					modifier = Modifier
 						.fillMaxSize()
@@ -105,27 +179,20 @@ fun ConfigurationsScreen(
 							color = MaterialTheme.colorScheme.onSurfaceVariant
 						)
 						Spacer(modifier = Modifier.height(24.dp))
-						Button(onClick = { navController.navigate(Screen.QuickStart.route) }) {
+						Button(onClick = { showAddSheet = true }) {
 							Text("Start Guided Setup")
 						}
 					}
 				}
 			} else {
-				LazyColumn(
+				LazyVerticalGrid(
+					columns = GridCells.Adaptive(minSize = 148.dp),
 					contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-					verticalArrangement = Arrangement.spacedBy(8.dp)
+					horizontalArrangement = Arrangement.spacedBy(10.dp),
+					verticalArrangement = Arrangement.spacedBy(10.dp)
 				) {
-					groupedConfigs.forEach { (category, categoryConfigs) ->
-						item(key = category.name) {
-							Text(
-								text = category.name,
-								style = MaterialTheme.typography.labelLarge,
-								color = MaterialTheme.colorScheme.primary,
-								modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
-							)
-						}
-						items(categoryConfigs, key = { it.path }) { config ->
-							ConfigItem(
+					items(filteredConfigs, key = { it.path }) { config ->
+							ConfigCard(
 								config = config,
 								scope = scope,
 								snackbarHostState = snackbarHostState,
@@ -178,24 +245,99 @@ fun ConfigurationsScreen(
 									}
 								}
 							)
-						}
 					}
 				}
 			}
 		}
 	}
+
+	if (showAddSheet) {
+		AddConfigSheet(
+			onDismiss = { showAddSheet = false },
+			onSelect = { type ->
+				showAddSheet = false
+				navController.navigate(Screen.GuidedConfig.createRoute(type))
+			}
+		)
+	}
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AddConfigSheet(onDismiss: () -> Unit, onSelect: (String) -> Unit) {
+	ModalBottomSheet(onDismissRequest = onDismiss) {
+		Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+			Text(
+				text = stringResource(R.string.configurations_add_new),
+				style = MaterialTheme.typography.titleMedium,
+				fontWeight = FontWeight.Bold,
+				modifier = Modifier.padding(bottom = 16.dp)
+			)
+			val types = listOf(
+				Triple("adf", "ADF (Floppy)", Icons.Default.SdStorage),
+				Triple("cd32", "CD32", Icons.Default.Album),
+				Triple("hdf", "HDF (Hard Drive)", Icons.Default.Dns),
+				Triple("whdload", "WHDLoad", Icons.Default.Archive),
+				Triple("ags", "AGS", Icons.Default.AutoAwesome),
+				Triple("custom", "Custom", Icons.Default.Build)
+			)
+			types.forEach { (type, label, icon) ->
+				Row(
+					modifier = Modifier
+						.fillMaxWidth()
+						.clickable { onSelect(type) }
+						.padding(vertical = 14.dp),
+					verticalAlignment = Alignment.CenterVertically
+				) {
+					Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+					Spacer(Modifier.width(16.dp))
+					Text(label, style = MaterialTheme.typography.bodyLarge)
+				}
+			}
+			Spacer(Modifier.height(8.dp))
+		}
+	}
+}
+
+/** Display names for the filter tabs - the enum's own names aren't all user-friendly. */
+private fun categoryLabel(category: ConfigCategory): String = when (category) {
+	ConfigCategory.WHDLOAD -> "WHD"
+	ConfigCategory.GENERIC -> "Custom"
+	else -> category.name
 }
 
 @Composable
 private fun CategoryFilterBar(
-	selected: ConfigCategory?,
-	onSelect: (ConfigCategory?) -> Unit
+	selected: ConfigCategory,
+	onSelect: (ConfigCategory) -> Unit,
+	modifier: Modifier = Modifier
 ) {
 	LazyRow(
-		modifier = Modifier
-			.fillMaxWidth()
-			.padding(horizontal = 16.dp, vertical = 8.dp),
+		modifier = modifier.padding(vertical = 8.dp),
 		horizontalArrangement = Arrangement.spacedBy(8.dp)
+	) {
+		lazyRowItems(ConfigCategory.entries.toTypedArray()) { category ->
+			FilterChip(
+				selected = selected == category,
+				onClick = { onSelect(category) },
+				label = { Text(categoryLabel(category)) }
+			)
+		}
+	}
+}
+
+@Composable
+private fun MachineFilterBar(
+	machines: List<AmigaModel>,
+	selected: AmigaModel?,
+	onSelect: (AmigaModel?) -> Unit,
+	modifier: Modifier = Modifier
+) {
+	LazyRow(
+		modifier = modifier.padding(vertical = 8.dp),
+		// Machines are the right-hand half of the shared filter line, so pack them to the right
+		// (spacedBy with an alignment keeps normal item order, unlike reverseLayout).
+		horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
 	) {
 		item {
 			FilterChip(
@@ -204,11 +346,11 @@ private fun CategoryFilterBar(
 				label = { Text("All") }
 			)
 		}
-		items(ConfigCategory.entries.toTypedArray()) { category ->
+		lazyRowItems(machines) { machine ->
 			FilterChip(
-				selected = selected == category,
-				onClick = { onSelect(category) },
-				label = { Text(category.name) }
+				selected = selected == machine,
+				onClick = { onSelect(machine) },
+				label = { Text(machine.cmdArg) }
 			)
 		}
 	}
@@ -216,7 +358,7 @@ private fun CategoryFilterBar(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ConfigItem(
+private fun ConfigCard(
 	config: ConfigInfo,
 	scope: CoroutineScope,
 	snackbarHostState: SnackbarHostState,
@@ -228,48 +370,83 @@ private fun ConfigItem(
 	val context = LocalContext.current
 	var showMenu by remember { mutableStateOf(false) }
 	var showDeleteDialog by remember { mutableStateOf(false) }
+	val isReady = config.validationError == null
+
+	val onPlay: () -> Unit = {
+		if (isReady) {
+			EmulatorLauncher.launchWithConfig(context, config.path, skipGui = true)
+		} else {
+			scope.launch {
+				snackbarHostState.showSnackbar(
+					message = config.validationError ?: "Invalid Configuration",
+					duration = SnackbarDuration.Long,
+					actionLabel = "Edit"
+				).let { result ->
+					if (result == SnackbarResult.ActionPerformed) {
+						onLoad()
+					}
+				}
+			}
+		}
+	}
 
 	Card(
 		modifier = Modifier
 			.fillMaxWidth()
 			.dpadFocusIndicator()
 			.combinedClickable(
-				onClick = onLoad,
+				onClick = onPlay,
 				onLongClick = { showMenu = true }
 			)
 	) {
-		Row(
-			modifier = Modifier
-				.fillMaxWidth()
-				.padding(12.dp),
-			verticalAlignment = Alignment.CenterVertically
-		) {
-			// Machine Icon
-			Image(
-				painter = painterResource(artworkFor(config.model)),
-				contentDescription = config.model.displayName,
-				modifier = Modifier
-					.size(48.dp)
-					.clip(RoundedCornerShape(4.dp)),
-				contentScale = ContentScale.Fit
-			)
-			
-			Spacer(modifier = Modifier.width(16.dp))
-
-			Column(modifier = Modifier.weight(1f)) {
-				Row(verticalAlignment = Alignment.CenterVertically) {
+		Column {
+			Box {
+				Image(
+					painter = painterResource(artworkFor(config.model)),
+					contentDescription = config.model.displayName,
+					modifier = Modifier
+						.fillMaxWidth()
+						.height(88.dp),
+					contentScale = ContentScale.Crop
+				)
+				Icon(
+					if (isReady) Icons.Default.CheckCircle else Icons.Default.Cancel,
+					contentDescription = if (isReady) "Ready" else "Error",
+					tint = if (isReady) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error,
+					modifier = Modifier
+						.align(Alignment.TopEnd)
+						.padding(6.dp)
+						.size(18.dp)
+				)
+				// Amiga model (A500/A1200/...) rather than the category - the filter tabs
+				// already tell you the category, but which machine a config runs isn't
+				// otherwise visible at a glance.
+				Surface(
+					color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.9f),
+					shape = RoundedCornerShape(4.dp),
+					modifier = Modifier
+						.align(Alignment.TopStart)
+						.padding(6.dp)
+				) {
 					Text(
-						text = config.name,
-						style = MaterialTheme.typography.titleMedium,
-						modifier = Modifier.weight(1f, fill = false)
+						// cmdArg is the compact form ("A500", "A1200", "CD32"); displayName
+						// ("Amiga 500") is too wide for a corner badge on a grid card.
+						text = config.model.cmdArg,
+						style = MaterialTheme.typography.labelSmall,
+						fontWeight = FontWeight.Bold,
+						modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
 					)
-					Spacer(Modifier.width(8.dp))
-					if (config.validationError == null) {
-						Icon(Icons.Default.CheckCircle, contentDescription = "Ready", tint = Color(0xFF4CAF50), modifier = Modifier.size(16.dp))
-					} else {
-						Icon(Icons.Default.Cancel, contentDescription = "Error", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
-					}
 				}
+			}
+
+			Column(modifier = Modifier.padding(10.dp)) {
+				Text(
+					text = config.name,
+					style = MaterialTheme.typography.titleSmall,
+					fontWeight = FontWeight.Bold,
+					maxLines = 1,
+					overflow = TextOverflow.Ellipsis
+				)
 				if (config.validationError != null) {
 					Text(
 						text = config.validationError,
@@ -278,118 +455,82 @@ private fun ConfigItem(
 						maxLines = 1,
 						overflow = TextOverflow.Ellipsis
 					)
-				}
-				if (config.description.isNotEmpty()) {
+				} else if (config.description.isNotEmpty()) {
 					Text(
 						text = config.description,
 						style = MaterialTheme.typography.bodySmall,
-						color = MaterialTheme.colorScheme.onSurfaceVariant
+						color = MaterialTheme.colorScheme.onSurfaceVariant,
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis
 					)
 				}
-				Row(verticalAlignment = Alignment.CenterVertically) {
-					Surface(
-						color = MaterialTheme.colorScheme.secondaryContainer,
-						shape = RoundedCornerShape(4.dp),
-						modifier = Modifier.padding(vertical = 2.dp)
-					) {
-						Text(
-							text = config.category.name,
-							style = MaterialTheme.typography.labelSmall,
-							modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-						)
-					}
-					Spacer(modifier = Modifier.width(8.dp))
-					Text(
-						text = formatDate(config.lastModified),
-						style = MaterialTheme.typography.bodySmall,
-						color = MaterialTheme.colorScheme.onSurfaceVariant
-					)
-				}
-			}
+				Text(
+					text = formatDate(config.lastModified),
+					style = MaterialTheme.typography.labelSmall,
+					color = MaterialTheme.colorScheme.onSurfaceVariant
+				)
 
-			// Quick action buttons
-			Row(
-				modifier = Modifier.wrapContentWidth(),
-				verticalAlignment = Alignment.CenterVertically
-			) {
-				val isReady = config.validationError == null
-				IconButton(
-					onClick = {
-						if (isReady) {
-							EmulatorLauncher.launchWithConfig(context, config.path, skipGui = true)
-						} else {
-							scope.launch {
-								snackbarHostState.showSnackbar(
-									message = config.validationError ?: "Invalid Configuration",
-									duration = SnackbarDuration.Long,
-									actionLabel = "Edit"
-								).let { result ->
-									if (result == SnackbarResult.ActionPerformed) {
-										onLoad()
-									}
-								}
-							}
-						}
-					}
+				Spacer(Modifier.height(4.dp))
+
+				Row(
+					modifier = Modifier.fillMaxWidth(),
+					horizontalArrangement = Arrangement.End,
+					verticalAlignment = Alignment.CenterVertically
 				) {
-					Icon(
-						if (isReady) Icons.Default.PlayArrow else Icons.Default.Cancel,
-						contentDescription = stringResource(R.string.action_launch),
-						modifier = Modifier.size(28.dp),
-						tint = if (isReady) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
-					)
-				}
-				IconButton(onClick = onLoad) {
-					Icon(
-						Icons.Default.Edit,
-						contentDescription = stringResource(R.string.action_edit_config),
-						modifier = Modifier.size(24.dp)
-					)
-				}
-
-				// More options button (D-pad accessible alternative to long-press)
-				Box {
-					IconButton(onClick = { showMenu = true }) {
+					// Tapping the card itself now launches (see onPlay above) - no separate play
+					// icon needed. Edit (pencil) and the overflow menu remain as explicit actions.
+					IconButton(modifier = Modifier.size(36.dp), onClick = onLoad) {
 						Icon(
-							Icons.Default.MoreVert,
-							contentDescription = stringResource(R.string.more_options),
-							modifier = Modifier.size(24.dp)
+							Icons.Default.Edit,
+							contentDescription = stringResource(R.string.action_edit_config),
+							modifier = Modifier.size(20.dp)
 						)
 					}
-					DropdownMenu(
-						expanded = showMenu,
-						onDismissRequest = { showMenu = false }
-					) {
-						DropdownMenuItem(
-							text = { Text(stringResource(R.string.action_duplicate)) },
-							onClick = {
-								onDuplicate()
-								showMenu = false
-							},
-							leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) }
-						)
-						DropdownMenuItem(
-							text = { Text(stringResource(R.string.action_share)) },
-							onClick = {
-								onShare()
-								showMenu = false
-							},
-							leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
-						)
-						DropdownMenuItem(
-							text = { Text(stringResource(R.string.action_delete)) },
-							onClick = {
-								showDeleteDialog = true
-								showMenu = false
-							},
-							leadingIcon = {
-								Icon(
-									Icons.Default.Delete,
-									contentDescription = null,
-									tint = MaterialTheme.colorScheme.error
-								)
-							}
-						)
+
+					// More options button (D-pad accessible alternative to long-press)
+					Box {
+						IconButton(modifier = Modifier.size(36.dp), onClick = { showMenu = true }) {
+							Icon(
+								Icons.Default.MoreVert,
+								contentDescription = stringResource(R.string.more_options),
+								modifier = Modifier.size(20.dp)
+							)
+						}
+						DropdownMenu(
+							expanded = showMenu,
+							onDismissRequest = { showMenu = false }
+						) {
+							DropdownMenuItem(
+								text = { Text(stringResource(R.string.action_duplicate)) },
+								onClick = {
+									onDuplicate()
+									showMenu = false
+								},
+								leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) }
+							)
+							DropdownMenuItem(
+								text = { Text(stringResource(R.string.action_share)) },
+								onClick = {
+									onShare()
+									showMenu = false
+								},
+								leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+							)
+							DropdownMenuItem(
+								text = { Text(stringResource(R.string.action_delete)) },
+								onClick = {
+									showDeleteDialog = true
+									showMenu = false
+								},
+								leadingIcon = {
+									Icon(
+										Icons.Default.Delete,
+										contentDescription = null,
+										tint = MaterialTheme.colorScheme.error
+									)
+								}
+							)
+						}
 					}
 				}
 			}

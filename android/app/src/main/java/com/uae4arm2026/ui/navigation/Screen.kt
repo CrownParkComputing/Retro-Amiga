@@ -5,6 +5,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.TravelExplore
@@ -17,12 +18,15 @@ sealed class Screen(
 	@param:StringRes val titleRes: Int,
 	val icon: ImageVector
 ) {
+	// Old-school demo-style boot intro - shown once per cold start, ahead of Configurations.
+	data object Intro : Screen("intro", R.string.nav_home, Icons.Default.Home)
 	data object QuickStart : Screen("quickstart", R.string.nav_home, Icons.Default.Home)
 	data object Settings : Screen("settings", R.string.nav_settings, Icons.Default.Settings)
 	data object AppSettings : Screen("app_settings", R.string.nav_settings, Icons.Default.Settings)
 	data object FileManager : Screen("files", R.string.nav_files, Icons.Default.Folder)
 	data object FileManagerDownloads : Screen("files/downloads", R.string.file_manager_section_downloads, Icons.Default.Download)
 	data object Configurations : Screen("configs", R.string.nav_configs, Icons.Default.Save)
+	data object ModPlayer : Screen("mod_player", R.string.mod_player_title, Icons.Default.MusicNote)
 	// Not in bottom nav — shown only on first launch
 	data object Onboarding : Screen("onboarding", R.string.nav_home, Icons.Default.TravelExplore)
 	// Guided configuration wizards

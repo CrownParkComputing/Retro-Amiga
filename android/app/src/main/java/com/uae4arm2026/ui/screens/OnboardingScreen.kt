@@ -164,9 +164,7 @@ fun OnboardingScreen(navController: NavController) {
 				detectedPaths[category] = resolvedPath
 				detectedUris[category] = uri // Store the root tree URI
 				detectedCounts[category] = withContext(Dispatchers.IO) {
-					File(resolvedPath).listFiles()?.count { file ->
-						file.isFile && file.extension.lowercase() in category.extensions
-					} ?: 0
+					FileManager.countFilesInCategory(context, category, resolvedPath, uri.toString())
 				}
 			}
 
@@ -192,7 +190,7 @@ fun OnboardingScreen(navController: NavController) {
 				if (install != null) {
 					FileManager.setCategoryLibraryPath(context, FileCategory.HARD_DRIVES, install.agsDir.absolutePath)
 				}
-				navController.navigate(Screen.QuickStart.route) {
+				navController.navigate(Screen.Configurations.route) {
 					popUpTo(Screen.Onboarding.route) { inclusive = true }
 				}
 				launch(Dispatchers.IO) {
@@ -204,7 +202,7 @@ fun OnboardingScreen(navController: NavController) {
 				}
 			} catch (e: Exception) {
 				android.util.Log.e("Onboarding", "Finish setup failed", e)
-				navController.navigate(Screen.QuickStart.route) {
+				navController.navigate(Screen.Configurations.route) {
 					popUpTo(Screen.Onboarding.route) { inclusive = true }
 				}
 			}
@@ -253,7 +251,7 @@ fun OnboardingScreen(navController: NavController) {
 				)
 				Text("UAE4ARM", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
 				Text(
-					"Powered by Copperline",
+					"Powered by Amiberry",
 					style = MaterialTheme.typography.labelLarge,
 					color = MaterialTheme.colorScheme.primary
 				)

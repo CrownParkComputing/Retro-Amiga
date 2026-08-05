@@ -6,7 +6,8 @@ import com.uae4arm2026.data.model.EmulatorSettings
 import java.io.File
 import java.io.IOException
 
-enum class ConfigCategory { ADF, CD32, HDF, WHDLOAD, GENERIC }
+// Declaration order drives the Configurations screen's filter-tab order.
+enum class ConfigCategory { ADF, WHDLOAD, CD32, HDF, GENERIC }
 
 data class ConfigInfo(
 	val path: String,
@@ -100,6 +101,34 @@ class ConfigRepository(private val context: Context) {
 		} catch (_: IOException) {
 			null
 		}
+	}
+
+	/**
+	 * Controller port assignment (which real controller/mouse/on-screen control drives JOY0/JOY1)
+	 * is a per-device preference, not really a per-game one - a mismatched port assignment just
+	 * means "my controller doesn't work" in whichever game doesn't happen to match whatever was
+	 * selected when that particular config was last saved. Changing it in Settings rewrites every
+	 * saved config on disk so they all agree, rather than only the config currently being edited.
+	 * Returns the number of configs successfully updated.
+	 */
+	fun updateJoyportsForAllConfigs(joyport0: String, joyport1: String, onScreenJoystick: Boolean): Int {
+		var updated = 0
+		confDir.listFiles { f -> f.extension == "uae" && !f.name.startsWith(".") }?.forEach { file ->
+			try {
+				val parsed = ConfigParser.parse(file)
+				val patched = parsed.settings.copy(
+					joyport0 = joyport0,
+					joyport1 = joyport1,
+					onScreenJoystick = onScreenJoystick
+				)
+				if (saveConfig(patched, file.nameWithoutExtension, parsed.unknownLines, parsed.description) != null) {
+					updated++
+				}
+			} catch (_: IOException) {
+				// Skip configs that fail to parse/save - leave them untouched rather than lose data.
+			}
+		}
+		return updated
 	}
 
 	/**

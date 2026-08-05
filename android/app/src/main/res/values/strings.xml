@@ -16,6 +16,11 @@
     <string name="quick_start_title">Quick Start</string>
     <string name="file_manager_title">File Manager</string>
     <string name="configurations_title">Saved Configurations</string>
+    <string name="configurations_add_new">Add New Configuration</string>
+    <string name="msg_controller_ports_updated">Controller ports updated in %d saved configuration(s)</string>
+    <string name="mod_player_title">Mod Player</string>
+    <string name="press_back_again_to_exit">Press back again to exit</string>
+    <string name="toggle_boing_ball">Toggle Boing ball / visualiser</string>
     <string name="more_options">More options</string>
     <string name="action_start">Start</string>
     <string name="action_save">Save</string>
@@ -226,7 +231,7 @@
     <string name="clipboard_label_path">path</string>
     <string name="placeholder_none">(none)</string>
     <string name="welcome_title">Welcome to UAE4ARM</string>
-    <string name="welcome_message">UAE4ARM is an Amiga emulator. To get started, you\'ll need a Kickstart ROM file — this is the Amiga\'s operating system firmware. Import one from the Files tab, then choose an Amiga model and insert a floppy or CD image to start emulating. Powered by the Copperline engine.</string>
+    <string name="welcome_message">UAE4ARM is an Amiga emulator. To get started, you\'ll need a Kickstart ROM file — this is the Amiga\'s operating system firmware. Import one from the Files tab, then choose an Amiga model and insert a floppy or CD image to start emulating. Powered by Amiberry.</string>
     <string name="welcome_help_link">Learn more</string>
     <string name="welcome_dismiss">Got it</string>
     <string name="pause_menu_title">Emulation Paused</string>
@@ -234,6 +239,9 @@
     <string name="pause_menu_swap_df0">Swap DF0</string>
     <string name="pause_menu_swap_df1">Swap DF1</string>
     <string name="pause_menu_keyboard">Keyboard</string>
+    <string name="pause_menu_show_keyboard">Show Keyboard</string>
+    <string name="pause_menu_hide_keyboard">Hide Keyboard</string>
+    <string name="pause_menu_edit_config">Edit Configuration</string>
     <string name="pause_menu_pick_df0">Select DF0 Disk</string>
     <string name="pause_menu_pick_df1">Select DF1 Disk</string>
     <string name="pause_menu_controller">On-Screen Controller</string>
@@ -243,6 +251,8 @@
     <string name="pause_menu_controller_none">None</string>
     <string name="pause_menu_controller_joystick">Joystick</string>
     <string name="pause_menu_controller_cd32pad">CD32 Pad</string>
+    <string name="pause_menu_aspect_4_3">Aspect Ratio: 4:3 (tap for 16:9)</string>
+    <string name="pause_menu_aspect_16_9">Aspect Ratio: 16:9 (tap for 4:3)</string>
     <string name="ext_controller_title">External Controller</string>
     <string name="ext_controller_mode_joystick">Joystick (2-button)</string>
     <string name="ext_controller_mode_cd32">CD32 Pad (7-button)</string>
@@ -265,7 +275,7 @@ Tap the gamepad icon to open the controller mapping screen. Tap a CD32 button on
 AGS (Amiga Game Selector) created by Paul Vince — thank you for this amazing contribution to the Amiga community.
 
 Based on UAE/WinUAE by Bernd Schmidt, Toni Wilen, and many contributors.
-Upstream Copperline core derived from Amiberry.
+Core derived from Amiberry.
 SDL by Sam Lantinga and contributors.</string>
     <string name="crash_dialog_title">Emulator stopped unexpectedly</string>
     <string name="crash_dialog_message">The emulator process exited unexpectedly. This may have been caused by an incompatible configuration or a missing ROM file. If this keeps happening, try a different Amiga model or check your ROM files.</string>

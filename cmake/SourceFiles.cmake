@@ -298,7 +298,6 @@ set(SOURCE_FILES
 )
 
 # Suppress pragma-pack warnings for SLIRP network protocol headers
-# These are legacy headers with specific struct alignment requirements
 set(SLIRP_SOURCES
 		src/slirp_uae.cpp
 		src/slirp/bootp.cpp
@@ -324,7 +323,6 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 	set_source_files_properties(${SLIRP_SOURCES} PROPERTIES COMPILE_FLAGS "-Wno-pragma-pack")
 endif()
 
- 
 list(APPEND SOURCE_FILES ${SLIRP_SOURCES})
 
 set(IMGUI_GUI_FILES
@@ -418,45 +416,14 @@ set(PCEM_SOURCE_FILES
         src/pcem/x87_timings.cpp
 )
 
-set(IMGUI_GUI_FILES
-		src/osdep/imgui/about.cpp
-		src/osdep/imgui/chipset.cpp
-		src/osdep/imgui/adv_chipset.cpp
-		src/osdep/imgui/controller_map.cpp
-		src/osdep/imgui/configurations.cpp
-		src/osdep/imgui/cpu.cpp
-		src/osdep/imgui/custom.cpp
-		src/osdep/imgui/diskswapper.cpp
-		src/osdep/imgui/display.cpp
-		src/osdep/imgui/filter.cpp
-		src/osdep/imgui/expansions.cpp
-		src/osdep/imgui/floppy.cpp
-		src/osdep/imgui/hd.cpp
-		src/osdep/imgui/hwinfo.cpp
-		src/osdep/imgui/input.cpp
-		src/osdep/imgui/io.cpp
-		src/osdep/imgui/misc.cpp
-		src/osdep/imgui/paths.cpp
-		src/osdep/imgui/prio.cpp
-		src/osdep/imgui/quickstart.cpp
-		src/osdep/imgui/ram.cpp
-		src/osdep/imgui/rom.cpp
-		src/osdep/imgui/rtg.cpp
-		src/osdep/imgui/savestates.cpp
-		src/osdep/imgui/sound.cpp
-		src/osdep/imgui/themes.cpp
-		src/osdep/imgui/virtualkeyboard.cpp
-		src/osdep/imgui/whdload.cpp
-)
-
 # ImGui GUI (Manual control for UAE4ARM 2026)
 option(USE_IMGUI "Enable native Amiberry ImGui GUI" OFF)
 if (USE_IMGUI)
     message(STATUS "Using ImGui for GUI")
     list(APPEND SOURCE_FILES external/ImGuiFileDialog/ImGuiFileDialog.cpp)
     list(APPEND SOURCE_FILES src/osdep/gui/main_window.cpp)
+    list(APPEND SOURCE_FILES src/osdep/file_dialog.cpp)
     list(APPEND SOURCE_FILES ${IMGUI_GUI_FILES})
-    target_compile_definitions(${PROJECT_NAME} PRIVATE USE_IMGUI)
 else()
     message(STATUS "Native Amiberry GUI disabled for UAE4Arm 2026")
 endif()
@@ -473,6 +440,10 @@ list(APPEND SOURCE_FILES external/floppybridge/src/floppybridge_lib.cpp)
 
 add_library(${PROJECT_NAME} SHARED ${SOURCE_FILES})
 
+if (USE_IMGUI)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE USE_IMGUI)
+endif()
+
 # Pre-release flag (integer, usable in C if statements)
 if(VERSION_PRE_RELEASE)
     set(AMIBERRY_IS_PRE_RELEASE 1)
@@ -480,19 +451,10 @@ else()
     set(AMIBERRY_IS_PRE_RELEASE 0)
 endif()
 
-# Build date components (configure-time wall-clock timestamp)
-# Temporarily unset SOURCE_DATE_EPOCH so string(TIMESTAMP) returns the
-# real build date. Flatpak-builder sets this for reproducible builds,
-# which since CMake 3.24 causes string(TIMESTAMP) to return the epoch
-# date instead of the current date (see issue #1854).
-set(_sde_backup "$ENV{SOURCE_DATE_EPOCH}")
-unset(ENV{SOURCE_DATE_EPOCH})
 string(TIMESTAMP AMIBERRY_BUILD_YEAR "%Y")
 string(TIMESTAMP AMIBERRY_BUILD_MONTH "%m")
 string(TIMESTAMP AMIBERRY_BUILD_DAY "%d")
-if(NOT "${_sde_backup}" STREQUAL "")
-    set(ENV{SOURCE_DATE_EPOCH} "${_sde_backup}")
-endif()
+
 # Remove leading zeros for C integer literals
 math(EXPR AMIBERRY_BUILD_MONTH_INT "${AMIBERRY_BUILD_MONTH}")
 math(EXPR AMIBERRY_BUILD_DAY_INT "${AMIBERRY_BUILD_DAY}")
@@ -529,24 +491,6 @@ elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "arm")
     )
 endif ()
 
-# Apply accumulated compile/link options from StandardProjectSettings.cmake
-# These are target-specific so they don't leak into FetchContent-ed third-party builds.
-target_compile_options(${PROJECT_NAME} PRIVATE ${AMIBERRY_COMPILE_OPTIONS})
-if(AMIBERRY_LINK_OPTIONS)
-    target_link_options(${PROJECT_NAME} PRIVATE ${AMIBERRY_LINK_OPTIONS})
-endif()
-
-# Apply platform-specific include/link paths from StandardProjectSettings.cmake
-if(AMIBERRY_PLATFORM_INCLUDE_DIRS)
-    target_include_directories(${PROJECT_NAME} PRIVATE ${AMIBERRY_PLATFORM_INCLUDE_DIRS})
-endif()
-if(AMIBERRY_PLATFORM_LINK_DIRS)
-    target_link_directories(${PROJECT_NAME} PRIVATE ${AMIBERRY_PLATFORM_LINK_DIRS})
-endif()
-# AMIBERRY_PLATFORM_LIBS are linked in Dependencies.cmake after all
-# library dependencies, so Windows system libs (ws2_32, winmm, etc.)
-# come after static libs that depend on them (enet, etc.).
-
 target_include_directories(${PROJECT_NAME} PRIVATE
         src
         src/osdep
@@ -559,4 +503,3 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 # ImGui include dirs (always enabled)
 target_include_directories(${PROJECT_NAME} PRIVATE external/imgui external/ImGuiFileDialog)
-

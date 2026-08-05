@@ -101,6 +101,7 @@
 #endif
 
 // UAE4ARM 2026: Global stubs for removed GUI components
+#ifndef USE_IMGUI
 bool joystick_refresh_needed = false;
 bool gui_running = false;
 void gui_restart() {}
@@ -116,6 +117,7 @@ void target_startup_msg(const char*, const char*) {}
 // Stub with correct expected return type (std::string) to avoid collision
 std::string get_json_timestamp(const std::string&) { return ""; }
 std::string get_xml_timestamp(const std::string&) { return ""; }
+#endif
 #endif
 
 // Stubs for ImGuiFileDialog if referenced elsewhere
@@ -2299,6 +2301,15 @@ static float secondary_touch_start_x = 0.0f;
 static float secondary_touch_start_y = 0.0f;
 static bool secondary_touch_moved = false;
 static Uint64 secondary_touch_start_time = 0;
+static SDL_FingerID tertiary_touch_finger_id = 0;
+static bool tertiary_touch_active = false;
+static float tertiary_touch_start_x = 0.0f;
+static float tertiary_touch_start_y = 0.0f;
+static bool tertiary_touch_moved = false;
+static Uint64 tertiary_touch_start_time = 0;
+static bool three_finger_tap_eligible = false;
+
+#include "android_keyboard_bridge.h"
 
 static constexpr Uint64 TOUCH_TAP_MAX_DURATION = 500;
 static constexpr Uint64 TOUCH_RIGHT_CLICK_HOLD_DELAY = 350;
@@ -2397,9 +2408,33 @@ static void handle_finger_event(const SDL_Event& event)
 			secondary_touch_button_held = true;
 			setmousebuttonstate(0, 1, 1);
 		}
+		else if (!tertiary_touch_active && finger_id != primary_touch_finger_id && finger_id != secondary_touch_finger_id)
+		{
+			tertiary_touch_active = true;
+			tertiary_touch_finger_id = finger_id;
+			tertiary_touch_start_x = event.tfinger.x;
+			tertiary_touch_start_y = event.tfinger.y;
+			tertiary_touch_moved = false;
+			tertiary_touch_start_time = SDL_GetTicks();
+			three_finger_tap_eligible = true;
+		}
 	}
 	else if (event.tfinger.type == SDL_EVENT_FINGER_UP)
 	{
+		if (three_finger_tap_eligible) {
+			bool all_taps = touch_is_tap(primary_touch_start_x, primary_touch_start_y, event.tfinger.x, event.tfinger.y, primary_touch_moved, primary_touch_start_time)
+				&& touch_is_tap(secondary_touch_start_x, secondary_touch_start_y, event.tfinger.x, event.tfinger.y, secondary_touch_moved, secondary_touch_start_time)
+				&& touch_is_tap(tertiary_touch_start_x, tertiary_touch_start_y, event.tfinger.x, event.tfinger.y, tertiary_touch_moved, tertiary_touch_start_time);
+			if (all_taps) {
+#ifdef __ANDROID__
+				android_show_pause_menu();
+#else
+				gui_display(-1);
+#endif
+			}
+			three_finger_tap_eligible = false;
+		}
+
 		if (primary_touch_active && finger_id == primary_touch_finger_id)
 		{
 			if (primary_touch_held_button >= 0)
@@ -2438,6 +2473,12 @@ static void handle_finger_event(const SDL_Event& event)
 			secondary_touch_button_held = false;
 			if (!primary_touch_active)
 				primary_touch_multi_touch = false;
+		}
+		else if (tertiary_touch_active && finger_id == tertiary_touch_finger_id)
+		{
+			tertiary_touch_active = false;
+			tertiary_touch_finger_id = 0;
+			tertiary_touch_moved = false;
 		}
 	}
 }
@@ -2499,8 +2540,10 @@ static void handle_finger_motion_event(const SDL_Event& event)
 	{
 		const float dx_from_start = fabsf(event.tfinger.x - primary_touch_start_x);
 		const float dy_from_start = fabsf(event.tfinger.y - primary_touch_start_y);
-		if (dx_from_start > TOUCH_TAP_MOVE_THRESHOLD || dy_from_start > TOUCH_TAP_MOVE_THRESHOLD)
+		if (dx_from_start > TOUCH_TAP_MOVE_THRESHOLD || dy_from_start > TOUCH_TAP_MOVE_THRESHOLD) {
 			primary_touch_moved = true;
+			three_finger_tap_eligible = false;
+		}
 
 		// Keep tap gestures stable: don't move the pointer until the finger movement
 		// clearly exceeds the tap threshold.
@@ -2525,8 +2568,17 @@ static void handle_finger_motion_event(const SDL_Event& event)
 	}
 	else if (secondary_touch_active && event.tfinger.fingerID == secondary_touch_finger_id)
 	{
-		if (fabsf(event.tfinger.x - secondary_touch_start_x) > TOUCH_TAP_MOVE_THRESHOLD || fabsf(event.tfinger.y - secondary_touch_start_y) > TOUCH_TAP_MOVE_THRESHOLD)
+		if (fabsf(event.tfinger.x - secondary_touch_start_x) > TOUCH_TAP_MOVE_THRESHOLD || fabsf(event.tfinger.y - secondary_touch_start_y) > TOUCH_TAP_MOVE_THRESHOLD) {
 			secondary_touch_moved = true;
+			three_finger_tap_eligible = false;
+		}
+	}
+	else if (tertiary_touch_active && event.tfinger.fingerID == tertiary_touch_finger_id)
+	{
+		if (fabsf(event.tfinger.x - tertiary_touch_start_x) > TOUCH_TAP_MOVE_THRESHOLD || fabsf(event.tfinger.y - tertiary_touch_start_y) > TOUCH_TAP_MOVE_THRESHOLD) {
+			tertiary_touch_moved = true;
+			three_finger_tap_eligible = false;
+		}
 	}
 }
 

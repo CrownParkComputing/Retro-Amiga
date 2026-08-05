@@ -1527,6 +1527,8 @@ static int akiko_thread (void *null)
 	int tmp3;
 	int sector;
 
+	uae_set_thread_priority (NULL, 1);
+
 	while (akiko_thread_running || comm_pipe_has_data (&requests)) {
 
 		if (comm_pipe_has_data (&requests)) {
@@ -2144,6 +2146,7 @@ static void akiko_reset(int hardreset)
 	cdrom_receive_offset = 0;
 	cd_initialized = 0;
 	mediacheckcounter = 0;
+	sys_command_cd_volume(unitnum, cdrom_muted ? 0 : 0x7fff, cdrom_muted ? 0 : 0x7fff);
 }
 
 static void akiko_free(void)

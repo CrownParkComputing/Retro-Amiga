@@ -260,6 +260,185 @@ include(FetchContent)
     target_link_libraries(${PROJECT_NAME} PRIVATE ${AMIBERRY_SDL_TARGET} ${AMIBERRY_SDL_IMAGE_TARGET})
     target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
 
+    # -------------------------------------------------------------------------
+    # libopenmpt - MOD/XM/S3M/IT tracker playback for the in-app mod player and
+    # the boot intro's music. Upstream ships no top-level CMakeLists (their own
+    # build is a custom Makefile/premake setup), so this hand-builds the same
+    # source manifest as their own build/android_ndk/Android.mk "openmpt"
+    # module, minus the optional external codecs (mpg123/ogg/vorbis/minimp3/
+    # zlib) we don't need for plain tracker modules.
+    FetchContent_Declare(
+        openmpt
+        GIT_REPOSITORY https://github.com/OpenMPT/openmpt.git
+        GIT_TAG        libopenmpt-0.7.19
+    )
+    FetchContent_GetProperties(openmpt)
+    if(NOT openmpt_POPULATED)
+        FetchContent_Populate(openmpt)
+    endif()
+
+    set(OPENMPT_SOURCES
+        common/ComponentManager.cpp
+        common/Logging.cpp
+        common/mptFileIO.cpp
+        common/mptFileTemporary.cpp
+        common/mptFileType.cpp
+        common/mptPathString.cpp
+        common/mptRandom.cpp
+        common/mptStringBuffer.cpp
+        common/mptTime.cpp
+        common/Profiler.cpp
+        common/serialization_utils.cpp
+        common/version.cpp
+        libopenmpt/libopenmpt_c.cpp
+        libopenmpt/libopenmpt_cxx.cpp
+        libopenmpt/libopenmpt_impl.cpp
+        libopenmpt/libopenmpt_ext_impl.cpp
+        soundlib/AudioCriticalSection.cpp
+        soundlib/ContainerMMCMP.cpp
+        soundlib/ContainerPP20.cpp
+        soundlib/ContainerUMX.cpp
+        soundlib/ContainerXPK.cpp
+        soundlib/Dlsbank.cpp
+        soundlib/Fastmix.cpp
+        soundlib/InstrumentExtensions.cpp
+        soundlib/ITCompression.cpp
+        soundlib/ITTools.cpp
+        soundlib/Load_667.cpp
+        soundlib/Load_669.cpp
+        soundlib/Load_amf.cpp
+        soundlib/Load_ams.cpp
+        soundlib/Load_c67.cpp
+        soundlib/Load_dbm.cpp
+        soundlib/Load_digi.cpp
+        soundlib/Load_dmf.cpp
+        soundlib/Load_dsm.cpp
+        soundlib/Load_dsym.cpp
+        soundlib/Load_dtm.cpp
+        soundlib/Load_far.cpp
+        soundlib/Load_fmt.cpp
+        soundlib/Load_gdm.cpp
+        soundlib/Load_gt2.cpp
+        soundlib/Load_imf.cpp
+        soundlib/Load_it.cpp
+        soundlib/Load_itp.cpp
+        soundlib/load_j2b.cpp
+        soundlib/Load_mdl.cpp
+        soundlib/Load_med.cpp
+        soundlib/Load_mid.cpp
+        soundlib/Load_mo3.cpp
+        soundlib/Load_mod.cpp
+        soundlib/Load_mt2.cpp
+        soundlib/Load_mtm.cpp
+        soundlib/Load_mus_km.cpp
+        soundlib/Load_okt.cpp
+        soundlib/Load_plm.cpp
+        soundlib/Load_psm.cpp
+        soundlib/Load_ptm.cpp
+        soundlib/Load_s3m.cpp
+        soundlib/Load_sfx.cpp
+        soundlib/Load_stm.cpp
+        soundlib/Load_stp.cpp
+        soundlib/Load_symmod.cpp
+        soundlib/Load_ult.cpp
+        soundlib/Load_uax.cpp
+        soundlib/Load_wav.cpp
+        soundlib/Load_xm.cpp
+        soundlib/Load_xmf.cpp
+        soundlib/Message.cpp
+        soundlib/MIDIEvents.cpp
+        soundlib/MIDIMacros.cpp
+        soundlib/MixerLoops.cpp
+        soundlib/MixerSettings.cpp
+        soundlib/MixFuncTable.cpp
+        soundlib/ModChannel.cpp
+        soundlib/modcommand.cpp
+        soundlib/ModInstrument.cpp
+        soundlib/ModSample.cpp
+        soundlib/ModSequence.cpp
+        soundlib/modsmp_ctrl.cpp
+        soundlib/mod_specifications.cpp
+        soundlib/MPEGFrame.cpp
+        soundlib/OggStream.cpp
+        soundlib/OPL.cpp
+        soundlib/Paula.cpp
+        soundlib/patternContainer.cpp
+        soundlib/pattern.cpp
+        soundlib/RowVisitor.cpp
+        soundlib/S3MTools.cpp
+        soundlib/SampleFormats.cpp
+        soundlib/SampleFormatBRR.cpp
+        soundlib/SampleFormatFLAC.cpp
+        soundlib/SampleFormatMediaFoundation.cpp
+        soundlib/SampleFormatMP3.cpp
+        soundlib/SampleFormatOpus.cpp
+        soundlib/SampleFormatSFZ.cpp
+        soundlib/SampleFormatVorbis.cpp
+        soundlib/SampleIO.cpp
+        soundlib/Sndfile.cpp
+        soundlib/Snd_flt.cpp
+        soundlib/Snd_fx.cpp
+        soundlib/Sndmix.cpp
+        soundlib/SoundFilePlayConfig.cpp
+        soundlib/UMXTools.cpp
+        soundlib/UpgradeModule.cpp
+        soundlib/Tables.cpp
+        soundlib/Tagging.cpp
+        soundlib/TinyFFT.cpp
+        soundlib/tuningCollection.cpp
+        soundlib/tuning.cpp
+        soundlib/WAVTools.cpp
+        soundlib/WindowedFIR.cpp
+        soundlib/XMTools.cpp
+        soundlib/plugins/DigiBoosterEcho.cpp
+        soundlib/plugins/dmo/DMOPlugin.cpp
+        soundlib/plugins/dmo/DMOUtils.cpp
+        soundlib/plugins/dmo/Chorus.cpp
+        soundlib/plugins/dmo/Compressor.cpp
+        soundlib/plugins/dmo/Distortion.cpp
+        soundlib/plugins/dmo/Echo.cpp
+        soundlib/plugins/dmo/Flanger.cpp
+        soundlib/plugins/dmo/Gargle.cpp
+        soundlib/plugins/dmo/I3DL2Reverb.cpp
+        soundlib/plugins/dmo/ParamEq.cpp
+        soundlib/plugins/dmo/WavesReverb.cpp
+        soundlib/plugins/LFOPlugin.cpp
+        soundlib/plugins/PluginManager.cpp
+        soundlib/plugins/PlugInterface.cpp
+        soundlib/plugins/SymMODEcho.cpp
+        sounddsp/AGC.cpp
+        sounddsp/DSP.cpp
+        sounddsp/EQ.cpp
+        sounddsp/Reverb.cpp
+    )
+    list(TRANSFORM OPENMPT_SOURCES PREPEND "${openmpt_SOURCE_DIR}/")
+
+    add_library(openmpt STATIC ${OPENMPT_SOURCES})
+    target_include_directories(openmpt PRIVATE ${openmpt_SOURCE_DIR} ${openmpt_SOURCE_DIR}/src ${openmpt_SOURCE_DIR}/common)
+    target_include_directories(openmpt PUBLIC ${openmpt_SOURCE_DIR})
+    target_compile_definitions(openmpt PRIVATE LIBOPENMPT_BUILD)
+    set_target_properties(openmpt PROPERTIES
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED ON
+        POSITION_INDEPENDENT_CODE ON
+    )
+    target_compile_options(openmpt PRIVATE -fexceptions -frtti -fvisibility=hidden -Wno-unused-parameter)
+
+    # The mod player's JNI bridge is its OWN small shared library (libmodplayer.so), not part of
+    # libuae4arm.so. Uae4ArmEmulatorActivity/the emulation core run in a separate ":sdl" process
+    # (see AndroidManifest.xml) where libuae4arm.so gets loaded - MainActivity's process (where
+    # ModPlayer/the intro/Configurations actually run) never loads it. Bundling openmpt into
+    # libuae4arm.so left its JNI symbols unreachable from the process that needs them
+    # (UnsatisfiedLinkError at runtime, symbol present in the .so but never loaded). A separate
+    # library that MainActivity's process explicitly System.loadLibrary()s avoids that entirely,
+    # and keeps the whole emulation core's static init out of the main app process besides.
+    add_library(modplayer SHARED ${CMAKE_SOURCE_DIR}/src/osdep/mod_player_jni.cpp)
+    target_link_libraries(modplayer PRIVATE openmpt log)
+    set_target_properties(modplayer PROPERTIES
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED ON
+    )
+
     # Defensive: ensure we never add raw SDL3/pthread libraries or flags on Android.
     # Some transitive/legacy paths may still append plain library names or link options.
     foreach(_prop IN ITEMS LINK_LIBRARIES LINK_OPTIONS INTERFACE_LINK_LIBRARIES INTERFACE_LINK_OPTIONS)
@@ -436,8 +615,10 @@ if(DEFINED sdl3_image_SOURCE_DIR)
     target_include_directories(${PROJECT_NAME} PRIVATE "${sdl3_image_SOURCE_DIR}/include")
 endif()
 
-# ImGui is always enabled
-target_compile_definitions(${PROJECT_NAME} PRIVATE USE_IMGUI)
+# ImGui support
+if (USE_IMGUI)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE USE_IMGUI)
+endif()
 
 set(libmt32emu_SHARED FALSE)
 add_subdirectory(external/mt32emu)
@@ -502,16 +683,18 @@ list(REMOVE_ITEM AMIBERRY_LIBS SDL3 pthread)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE ${AMIBERRY_LIBS})
 
-# ImGui is always enabled
-if(USE_OPENGL)
-    set(IMGUI_USE_OPENGL ON CACHE BOOL "Build ImGui OpenGL3 backend" FORCE)
+# ImGui support
+if(USE_IMGUI)
+    if(USE_OPENGL)
+        set(IMGUI_USE_OPENGL ON CACHE BOOL "Build ImGui OpenGL3 backend" FORCE)
+    endif()
+    if(USE_VULKAN)
+        set(IMGUI_USE_VULKAN ON CACHE BOOL "Build ImGui Vulkan backend" FORCE)
+    endif()
+    set(IMGUI_USE_SDL3 ON CACHE BOOL "Build ImGui SDL3 backend" FORCE)
+    add_subdirectory(external/imgui)
+    target_link_libraries(${PROJECT_NAME} PRIVATE imgui)
 endif()
-if(USE_VULKAN)
-    set(IMGUI_USE_VULKAN ON CACHE BOOL "Build ImGui Vulkan backend" FORCE)
-endif()
-set(IMGUI_USE_SDL3 ON CACHE BOOL "Build ImGui SDL3 backend" FORCE)
-add_subdirectory(external/imgui)
-target_link_libraries(${PROJECT_NAME} PRIVATE imgui)
 
 # capsimage and floppybridge are plugins (not linked into amiberry) but are
 # copied by post-build commands. Explicit dependencies ensure they are built.

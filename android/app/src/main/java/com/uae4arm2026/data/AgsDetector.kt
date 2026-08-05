@@ -384,13 +384,8 @@ object AgsDetector {
         agsDriveAssignments(context, install.agsDir).forEach { (dev, file) ->
             val bootPri = if (dev == "DH0") 5 else BOOTPRI_NOAUTOBOOT
             val path = file.absolutePath
-            sb.appendLine("uaehf$mountIndex=hdf,rw,$dev:\"$path\",0,0,0,512,$bootPri")
-            sb.appendLine("uaehf${mountIndex}_file=$path")
-            sb.appendLine("uaehf${mountIndex}_name=$dev")
-            sb.appendLine("uaehf${mountIndex}_bootpri=$bootPri")
-            sb.appendLine("uaehf${mountIndex}_present=true")
-            sb.appendLine("uaehf${mountIndex}_blocksize=512")
-            sb.appendLine("uaehf${mountIndex}_readonly=false")
+            val controller = "ide$mountIndex"
+            sb.appendLine("hardfile2=rw,$dev:\"$path\",0,0,0,512,$bootPri,uaehf.device,$controller")
             mountIndex++
         }
 

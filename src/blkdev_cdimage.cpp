@@ -522,6 +522,8 @@ static int setstate (struct cdunit *cdu, int state, int playpos)
 
 static int cdda_unpack_func (void *v)
 {
+	uae_set_thread_priority (NULL, 1);
+
 	cdimage_unpack_thread = 1;
 	mp3decoder *mp3dec = NULL;
 
@@ -878,6 +880,8 @@ end:
 
 static int cdda_play_func (void *v)
 {
+	uae_set_thread_priority (NULL, 1);
+
 	int outpos = -1;
 	struct cdunit *cdu = (struct cdunit*)v;
 	cd_audio_mode_changed = false;
