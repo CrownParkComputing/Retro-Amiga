@@ -1,0 +1,307 @@
+name: Android Release Build
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_apk:
+        description: 'Also build and upload a release APK'
+        type: boolean
+        required: false
+        default: false
+      build_all_abis:
+        description: 'Build arm64-v8a, armeabi-v7a, and x86_64 instead of arm64-v8a only'
+        type: boolean
+        required: false
+        default: false
+  push:
+    branches:
+      - main
+      - master
+    # Tags matching v* always trigger a build (paths filter doesn't apply to tags).
+    tags:
+      - 'v*'
+    # For branch pushes: only rebuild when relevant source files change.
+    paths:
+      - 'android/**'
+      - 'src/**'
+      - 'scripts/**'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/android-release.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # NOTE: the emulator core is vendored directly under src/ in this repo, so
+      # there is no amiberry submodule to check out and no patches/ series to
+      # apply before building - C++ changes are committed in place. (The older
+      # layout pinned upstream amiberry as a submodule and kept local changes as
+      # a patch series; see the backup/pre-4.4.1-main-4.1.8 branch for that.)
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # Cache Gradle's local caches and project state to speed up subsequent runs.
+      # The key changes whenever build scripts or lock-files change.
+      - name: Cache Gradle files
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            android/.gradle
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle', 'android/gradlew', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      # Cache the C++ build outputs (CMake's per-ABI build dir). The C++ build
+      # takes 40+ minutes from scratch; this cache turns incremental rebuilds
+      # (Kotlin-only changes, or same upstream SHA + same patches) into 5-10 min.
+      # The key is keyed on the upstream submodule SHA + patches hash + the
+      # native build inputs, so any change invalidates only the affected slice.
+      - name: Cache C++ build outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            android/app/.cxx
+            android/app/build/intermediates/cxx
+            android/app/build/intermediates/cmake
+            android/app/build/intermediates/merged_native_libs
+          key: cxx-${{ runner.os }}-ndk28-cmake3.22-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ hashFiles('src/**/*.cpp', 'src/**/*.h') }}
+          restore-keys: |
+            cxx-${{ runner.os }}-ndk28-cmake3.22-
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      # Install the exact NDK, CMake, build-tools, and platform that build.gradle requires.
+      # cmake;3.22.1  →  Gradle's externalNativeBuild.cmake.version = '3.22.1'
+      - name: Install NDK, CMake and Android platform
+        run: |
+          sdkmanager --install \
+            "ndk;28.0.13004108" \
+            "cmake;3.22.1" \
+            "build-tools;36.0.0" \
+            "platforms;android-36"
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x android/gradlew
+
+      - name: Write local.properties
+        run: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+
+      - name: Detect Android release version
+        run: |
+          ACTUAL_VERSION_NAME=$(grep -oP '(?m)^\s*VERSION\s+\K[\d.]+' CMakeLists.txt | head -1)
+          echo "Building versionName=${ACTUAL_VERSION_NAME}"
+
+      - name: Delete old build artifacts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prefix = 'uae4arm_2026-v';
+            const keepCount = 10;
+            const allArtifacts = await github.paginate(
+              github.rest.actions.listArtifactsForRepo,
+              { owner: context.repo.owner, repo: context.repo.repo, per_page: 100 }
+            );
+            const matching = allArtifacts
+              .filter(a => a.name.startsWith(prefix))
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            const toDelete = matching.slice(keepCount);
+            for (const artifact of toDelete) {
+              console.log(`Deleting artifact: ${artifact.name} (id: ${artifact.id})`);
+              await github.rest.actions.deleteArtifact({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                artifact_id: artifact.id
+              });
+            }
+
+      # ── Signing ────────────────────────────────────────────────────────────
+      # Set the secret RELEASE_KEYSTORE_BASE64 (base64-encoded .jks/.keystore) and
+      # RELEASE_STORE_PASSWORD / RELEASE_KEY_ALIAS / RELEASE_KEY_PASSWORD in
+      # Settings → Secrets → Actions.  If they are absent the build is unsigned.
+      - name: Decode release keystore
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$RELEASE_KEYSTORE_BASE64" ]; then
+            echo "$RELEASE_KEYSTORE_BASE64" | base64 --decode > release.keystore
+            DECODED_SIZE=$(wc -c < release.keystore)
+            if [ "$DECODED_SIZE" -eq 0 ]; then
+              echo "::error::base64 decode produced an empty file – check RELEASE_KEYSTORE_BASE64 secret!"
+              exit 1
+            fi
+            echo "Keystore decoded: ${DECODED_SIZE} bytes at $(pwd)/release.keystore"
+            echo "KEYSTORE_AVAILABLE=true" >> $GITHUB_ENV
+          else
+            echo "::warning::RELEASE_KEYSTORE_BASE64 secret not set – build will be unsigned."
+            echo "KEYSTORE_AVAILABLE=false" >> $GITHUB_ENV
+          fi
+
+      - name: Write keystore.properties
+        run: |
+          if [ "$KEYSTORE_AVAILABLE" = "true" ]; then
+            # Use absolute path so Gradle can resolve the keystore regardless of
+            # working directory.  storeFile must point to the project root where
+            # we decoded the keystore ($(pwd) == repo root from checkout step).
+            KEYSTORE_ABS="$(pwd)/release.keystore"
+            printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+              "$KEYSTORE_ABS" \
+              "${{ secrets.RELEASE_STORE_PASSWORD }}" \
+              "${{ secrets.RELEASE_KEY_ALIAS }}" \
+              "${{ secrets.RELEASE_KEY_PASSWORD }}" \
+              > android/keystore.properties
+            echo "keystore.properties written (signed build). storeFile=$KEYSTORE_ABS"
+          else
+            echo "Skipping keystore.properties (unsigned build)."
+          fi
+
+      # ── Pre-build signing verification ─────────────────────────────────────
+      - name: Verify signing files exist
+        run: |
+          echo "Working dir: $(pwd)"
+          if [ -f release.keystore ]; then
+            echo "✓ release.keystore present ($(wc -c < release.keystore) bytes)"
+          else
+            echo "✗ release.keystore NOT FOUND – build will fail!"
+          fi
+          if [ -f android/keystore.properties ]; then
+            echo "✓ android/keystore.properties present"
+            grep '^storeFile=' android/keystore.properties
+          else
+            echo "✗ android/keystore.properties NOT FOUND"
+          fi
+
+      # ── Build ──────────────────────────────────────────────────────────────
+      # Play Store upload uses the AAB. Push builds target arm64-v8a only; the
+      # full ABI set can still be requested from workflow_dispatch when needed.
+      - name: Build Release AAB
+        run: |
+          ABI_FILTERS="arm64-v8a"
+          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.build_all_abis }}" = "true" ]; then
+            ABI_FILTERS="arm64-v8a,armeabi-v7a,x86_64"
+          fi
+          echo "Building release AAB for ABI filters: ${ABI_FILTERS}"
+          ./android/gradlew -p android --no-daemon --build-cache -PandroidAbiFilters="${ABI_FILTERS}" bundleRelease
+
+      - name: Build Release APK
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk
+        run: |
+          ABI_FILTERS="arm64-v8a"
+          if [ "${{ inputs.build_all_abis }}" = "true" ]; then
+            ABI_FILTERS="arm64-v8a,armeabi-v7a,x86_64"
+          fi
+          echo "Building release APK for ABI filters: ${ABI_FILTERS}"
+          ./android/gradlew -p android --no-daemon --build-cache -PandroidAbiFilters="${ABI_FILTERS}" assembleRelease
+
+      # ── Cleanup ────────────────────────────────────────────────────────────
+      - name: Remove keystore files
+        if: always()
+        run: rm -f release.keystore android/keystore.properties
+
+      # ── Version extraction ─────────────────────────────────────────────────
+      - name: Get version name
+        id: version
+        run: |
+          VERSION=$(grep -oP '(?m)^\s*VERSION\s+\K[\d.]+' CMakeLists.txt | head -1)
+          echo "name=${VERSION:-unknown}" >> $GITHUB_OUTPUT
+
+      # ── Artifact upload ────────────────────────────────────────────────────
+      - name: Upload Release APK
+        if: github.event_name == 'workflow_dispatch' && inputs.build_apk
+        uses: actions/upload-artifact@v4
+        with:
+          name: uae4arm_2026-v${{ steps.version.outputs.name }}-release-apk
+          path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      # ── GitHub Release ────────────────────────────────────────────────────
+      # For main branch pushes: creates/updates the rolling "latest" tag and
+      # also creates a proper versioned tag (v<versionName>) the first time a
+      # new version lands on main.  For explicit v* tag pushes the versioned
+      # release is created directly from the tag.
+      - name: Create/update latest tag
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f latest
+          git push -f origin latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create versioned tag if not present
+        if: github.ref == 'refs/heads/main'
+        run: |
+          VERSION="${{ steps.version.outputs.name }}"
+          if ! git ls-remote --tags origin "refs/tags/v${VERSION}" | grep -q .; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "v${VERSION}" -m "Release v${VERSION}"
+            git push origin "v${VERSION}"
+            echo "Created tag v${VERSION}"
+          else
+            echo "Tag v${VERSION} already exists, skipping."
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}', steps.version.outputs.name) }}
+          name: ${{ format('v{0}', steps.version.outputs.name) }}
+          files: |
+            android/app/build/outputs/apk/release/*.apk
+            android/app/build/outputs/mapping/release/mapping.txt
+          generate_release_notes: true
+          prerelease: false
+          fail_on_unmatched_files: false
+
+      # ── Google Play Store upload ──────────────────────────────────────────
+      # Requires the PLAY_STORE_SERVICE_ACCOUNT_JSON secret (JSON key for a
+      # Google Play service account with "Release manager" permissions).
+      # Set PLAY_STORE_TRACK repo variable to override the default track (internal).
+      - name: Check Play Store secret availability
+        id: play_store_check
+        if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+        env:
+          PLAY_STORE_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -n "$PLAY_STORE_SERVICE_ACCOUNT_JSON" ]; then
+            echo "available=true" >> $GITHUB_OUTPUT
+          else
+            echo "::warning::PLAY_STORE_SERVICE_ACCOUNT_JSON secret not set – skipping Play Store upload."
+            echo "available=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload AAB to Google Play
+        if: steps.play_store_check.outputs.available == 'true'
+        uses: r0adkll/upload-google-play@v1.1.3
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
+          packageName: com.uae4arm2026
+          releaseFiles: android/app/build/outputs/bundle/release/*.aab
+          track: ${{ vars.PLAY_STORE_TRACK || 'internal' }}
+          mappingFile: android/app/build/outputs/mapping/release/mapping.txt
+          status: completed
