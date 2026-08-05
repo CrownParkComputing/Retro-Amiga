@@ -1,171 +1,111 @@
-﻿# UAE4ARM 2026
+<div align="center">
 
-[![Android Release Build](https://github.com/CrownParkComputing/uae4arm_2026/actions/workflows/android-release.yml/badge.svg)](https://github.com/CrownParkComputing/uae4arm_2026/actions/workflows/android-release.yml)
+# UAE4ARM 2026
 
-**UAE4ARM 2026** is an Android-only Amiga emulator, rebuilt with Jetpack Compose and Material3 around the Copperline (WinUAE-derived) emulation core.
+### Your Amiga. In your pocket. With the Boing ball bouncing behind it.
 
----
+*Powered by Amiberry*
 
-## Overview
-
-UAE4ARM 2026 is a complete Android-first rewrite of the classic UAE4ARM Amiga emulator. This 2026 edition keeps the emulator core in-tree for Android native builds and modernises the app layer with:
-
-- **Jetpack Compose + Material3** UI — fully declarative, responsive layout
-- **Copperline emulator backend** — battle-tested UAE-based core with ARM64 JIT
-- **Drive icon tile UI** — floppy, hard disk, and CD drive slots presented as visual icon cards
-- **Dynamic hard drive slots** — up to 10 HD entries, add/remove at runtime
-- **Single-row memory layout** — Chip, Fast, and Z3 memory on one compact row
-- **UAE4ARM branding** — restored classic UAE4ARM look with 2026 artwork
+</div>
 
 ---
 
-## Codebase Structure
+Remember loading a game off a floppy, listening to the drive chatter, and waiting for that
+title screen to fade in? **UAE4ARM 2026** brings all of that back — the Amiga 500 under the
+telly, the A1200 you saved up for, the CD32 you always wanted — and puts it on your Android
+phone or handheld.
 
-```
-uae4arm_2026/
-├── android/                        # Android Kotlin/Compose app + Gradle project
-│   ├── app/
-│   │   └── src/main/
-│   │       ├── java/com/uae4arm2026/
-│   │       │   ├── data/
-│   │       │   │   ├── ConfigGenerator.kt      # Writes .uae config files
-│   │       │   │   ├── ConfigParser.kt         # Parses .uae config files
-│   │       │   │   └── model/
-│   │       │   │       └── EmulatorSettings.kt # All emulator config state
-│   │       │   └── ui/
-│   │       │       ├── screens/
-│   │       │       │   ├── Uae4ArmHomeScreen.kt     # Main home screen
-│   │       │       │   └── settings/
-│   │       │       │       ├── StorageTab.kt        # Disk/drive file pickers
-│   │       │       │       ├── SystemTab.kt         # CPU/memory settings
-│   │       │       │       └── InputTab.kt          # Controller/keyboard
-│   │       │       └── viewmodel/
-│   │       │           └── SettingsViewModel.kt     # Settings state & logic
-│   │       └── res/
-│   │           ├── drawable/                   # UAE4ARM artwork + icons
-│   │           └── mipmap-*/                   # Launcher icon variants
-│   ├── build.gradle                # App module Gradle config
-│   ├── gradle/                     # Version catalogs (libs.versions.toml)
-│   └── gradlew / gradlew.bat       # Gradle wrapper
-├── src/                            # Native emulator core built by Android externalNativeBuild
-│   ├── osdep/                      # Platform abstraction
-│   ├── jit/                        # ARM64 + x86-64 JIT compiler
-│   ├── custom.cpp                  # Amiga custom chips (Agnus/Denise/Paula)
-│   ├── newcpu.cpp                  # M68K CPU interpreter
-│   └── memory.cpp                  # Memory banking
-├── CMakeLists.txt                  # Native Android build entry point + version source of truth
-├── cmake/                          # Android-focused CMake helpers used by the native build
-├── external/                       # Vendored native dependencies
-├── amiberry-src/                   # Upstream Amiberry snapshot used for sync tracking
-└── .github/workflows/
-    └── android-release.yml         # CI: build + sign + release APK/AAB
-```
+No config files. No fiddling. Pick a machine, pick a disk, hit play.
 
 ---
 
-## Key Files
+## What it looks like
 
-| File | Purpose |
-|------|---------|
-| `android/app/src/main/java/.../ui/screens/Uae4ArmHomeScreen.kt` | Main UI — drive icon cards, launch button, recent configs |
-| `android/app/src/main/java/.../data/model/EmulatorSettings.kt` | All emulator settings including `hardDrives: List<String>` |
-| `android/app/src/main/java/.../data/ConfigParser.kt` | Parses `.uae` config files into `EmulatorSettings` |
-| `android/app/src/main/java/.../data/ConfigGenerator.kt` | Generates `.uae` config file content from `EmulatorSettings` |
-| `android/app/src/main/java/.../ui/viewmodel/SettingsViewModel.kt` | Manages settings state, generates SDL launch args |
-| `CMakeLists.txt` | `project(VERSION 4.1.1)` — single version source for app + core |
+<div align="center">
 
----
+| | |
+|:---:|:---:|
+| ![Boot intro](docs/screenshots/01-intro.png) | ![Your game shelf](docs/screenshots/02-launcher.png) |
+| **A proper demoscene boot intro** — copper bars, morphing vectors and a sine scroller | **Your game shelf** — every saved setup as a card, tap to play |
+| ![Mod player](docs/screenshots/03-modplayer.png) | ![New setup](docs/screenshots/04-newconfig.png) |
+| **Built-in mod player** — classic tracker tunes, always in the background | **Guided setup** — pick a type, follow the steps, done |
 
-## Version
-
-Version is defined once in `CMakeLists.txt`:
-
-```cmake
-project(uae4arm
-    VERSION 4.1.1
-    ...
-)
-```
-
-`android/app/build.gradle` reads this automatically and computes `versionCode` and `versionName`.
+</div>
 
 ---
 
-## Building
+## The good stuff
 
-### Prerequisites
+🕹️ **Every Amiga worth having** — A500, A500+, A600, A1000, A2000, A1200, A3000, A4000,
+CD32 and CDTV. All the machines Amiberry knows, none of the guesswork.
 
-- Android Studio or Android SDK/NDK command-line tooling
-- JDK 21 (`JAVA_HOME` = Android Studio JBR)
-- Android SDK with NDK r28.0.13004108, CMake 3.22.1, build-tools 37, platform 37
+💾 **Floppies, hard drives, CDs and WHDLoad** — ADF, HDF, CD images, WHDLoad archives and
+AGS collections. Drop the file in, the wizard works out the rest.
 
-### Debug build (local device)
+🎮 **Controls that just work** — plug in a gamepad, use the touchscreen joystick, or the
+on-screen CD32 pad with all seven buttons. Change your controller once and every saved game
+picks it up.
 
-```powershell
-$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
-cd android
-.\gradlew installDebug
-```
+🎵 **A real mod player** — genuine ProTracker modules from the Amiga demoscene playing while
+you browse, complete with a scroller crediting the tune. Because of course.
 
-### Release build
+🔴⚪ **The Boing ball** — bouncing around behind your games, rolling in whatever direction
+it's travelling, with a graphic equaliser pulsing along to the music. Poke it. It bounces.
 
-```powershell
-$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
-cd android
-.\gradlew assembleRelease
-```
-
-Release signing requires `android/keystore.properties` (git-ignored):
-
-```properties
-storeFile=../keystore/uae4arm26-upload.jks
-storePassword=<password>
-keyAlias=uae4arm26-upload
-keyPassword=<password>
-```
+⚡ **Fast where it counts** — ARM64 native, tuned so the audio stays clean and the frames
+keep coming on modest hardware.
 
 ---
 
-## CI / GitHub Actions
+## Getting started
 
-The workflow `.github/workflows/android-release.yml` triggers on:
+1. **Install the app.**
+2. **Add a Kickstart ROM.** This is the Amiga's firmware — you'll need to supply your own
+   (Cloanto's *Amiga Forever* is the usual legitimate route). Import it from the Files screen.
+3. **Tap `+`**, choose what you're loading — a floppy, a hard drive, a CD32 game — and follow
+   the wizard.
+4. **Tap the card. Play.**
 
-- Every push to `main` (when Android or core source changes)
-- Any `v*` tag push
-- Manual `workflow_dispatch`
-
-It builds both an APK and AAB, signs with the keystore decoded from the `RELEASE_KEYSTORE_BASE64` secret, uploads artifacts, and creates a GitHub Release. Required repository secrets:
-
-| Secret | Value |
-|--------|-------|
-| `RELEASE_KEYSTORE_BASE64` | Base64-encoded `.jks` keystore |
-| `RELEASE_STORE_PASSWORD` | Keystore password |
-| `RELEASE_KEY_ALIAS` | Key alias (`uae4arm26-upload`) |
-| `RELEASE_KEY_PASSWORD` | Key password |
-
-The workflow `.github/workflows/public-source-mirror.yml` publishes the latest source snapshot from this repository to the public mirror repository `CrownParkComputing/uae4arm2026p`, always overwriting the public repository's `main` branch with the newest mirrored source. It excludes `.github/workflows/` from the mirrored snapshot so the public mirror can be updated with a standard contents-write token. It requires one additional secret:
-
-| Secret | Value |
-|--------|-------|
-| `PUBLIC_MIRROR_TOKEN` | Personal access token with contents write access to `CrownParkComputing/uae4arm2026p` |
+Everything you save turns up on the shelf, sorted by type and machine.
 
 ---
 
-## Upstream Sync
+## While a game is running
 
-This repository does not consume Amiberry as a git submodule. Instead, it tracks Amiberry as an explicit git remote named `upstream`, and keeps a traceable snapshot under `amiberry-src/`.
-
-- Upstream repo: `https://github.com/BlitterStudio/amiberry.git`
-- Upstream branch: `master`
-- Comparison script: `scripts/git/compare-amiberry-upstream.ps1`
-- Sync procedure and ledger: `docs/upstream-sync.md`
-
-Use the comparison script before and after any upstream import so each sync is anchored to a specific Amiberry commit.
+- **Three-finger tap** or the **pause icon** brings up the overlay
+- **Swap disks** without leaving the game
+- **Edit the setup** and reboot straight back into it
+- **Back** always returns you to your game — never dumps you out to the phone's home screen
 
 ---
 
-## License
+## A note on ROMs and games
+
+UAE4ARM 2026 ships **no copyrighted Amiga software**. No Kickstart ROMs, no games, no disk
+images. You bring your own — from *Amiga Forever*, from your own floppies, or from the many
+titles their authors have since released freely.
+
+The mod music bundled with the app is **demoscene work**, included as a nod to the scene that
+made the Amiga what it was.
+
+---
+
+## Credits
+
+Built on **[Amiberry](https://amiberry.eu)**, the ARM-focused Amiga emulator, which in turn
+descends from **UAE/WinUAE** by Bernd Schmidt, Toni Wilén and a long list of contributors who
+have kept the Amiga alive for over thirty years.
+
+Music from **[The Mod Archive](https://modarchive.org)**. AGS by Paul Vince. SDL by Sam
+Lantinga and contributors. The original UAE4ARM project is by Chips (Georgiou Konstantinos).
 
 Licensed under the [GNU General Public License v3.0](LICENSE).
 
-UAE4ARM 2026 builds on open source work from [Copperline](https://github.com/CrownParkComputing/uae4arm_2026) (derived from Amiberry) and [WinUAE](https://www.winuae.net/). The original UAE4ARM project is by Chips (Georgiou Konstantinos).
+And to everyone still writing demos, still making music in trackers, still keeping the scene
+going — this one's for you.
+
+<div align="center">
+
+*Only Amiga makes it possible.*
+
+</div>

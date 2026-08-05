@@ -1,0 +1,5 @@
+# GitHub Pages config. Publish from the main branch /docs folder
+# (Settings -> Pages -> Source: Deploy from a branch -> main + /docs).
+title: UAE4ARM 2026
+description: Your Amiga. In your pocket. With the Boing ball bouncing behind it.
+theme: jekyll-theme-cayman
