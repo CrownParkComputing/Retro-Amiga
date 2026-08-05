@@ -36,6 +36,7 @@ import com.uae4arm2026.data.AppPreferences
 import com.uae4arm2026.data.ConfigCategory
 import com.uae4arm2026.data.ConfigInfo
 import com.uae4arm2026.data.EmulatorLauncher
+import com.uae4arm2026.data.ModPlayer
 import com.uae4arm2026.data.model.AmigaModel
 import com.uae4arm2026.ui.dpadFocusIndicator
 import com.uae4arm2026.ui.findActivity
@@ -94,6 +95,16 @@ fun ConfigurationsScreen(
 		viewModel.refresh()
 	}
 
+	// Music plays by default on the launcher screen. Only kicks off when nothing is already
+	// playing, so returning here doesn't cut off (or restart) whatever the boot intro or the Mod
+	// Player screen started - and playback is stopped again when the app leaves the foreground
+	// (MainActivity.onStop) or a game launches (EmulatorLauncher).
+	LaunchedEffect(Unit) {
+		if (ModPlayer.state.value.assetName == null) {
+			ModPlayer.randomMod(context)?.let { ModPlayer.play(context, it) }
+		}
+	}
+
 	Scaffold(
 		snackbarHost = { SnackbarHost(snackbarHostState) },
 		containerColor = Color.Transparent,
@@ -127,7 +138,15 @@ fun ConfigurationsScreen(
 			// Utility icons stack directly above the + button rather than living in a bottom bar:
 			// no full-width bar means nothing reserves a strip at the bottom of the screen, so the
 			// Boing ball and the graphic EQ get the whole area to play with.
-			Column(horizontalAlignment = Alignment.CenterHorizontally) {
+			//
+			// navigationBarsPadding is essential here: the app draws edge-to-edge, and with the
+			// bottomBar gone nothing else supplies that inset - the + button sat directly on top
+			// of the system gesture/navigation bar, so presses hit the phone's launcher gestures
+			// instead of our buttons.
+			Column(
+				modifier = Modifier.navigationBarsPadding(),
+				horizontalAlignment = Alignment.CenterHorizontally
+			) {
 				val iconTint = MaterialTheme.colorScheme.primary
 				IconButton(onClick = { navController.navigate(Screen.FileManager.route) }) {
 					Icon(Icons.Default.Folder, contentDescription = stringResource(R.string.file_manager_title), tint = iconTint)
