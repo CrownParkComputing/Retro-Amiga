@@ -1,17 +1,23 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
 import '../data/file_category.dart';
 import '../data/media_library.dart';
+import '../data/music_picks.dart';
 import '../data/music_player.dart';
 import '../theme/amiga_theme.dart';
 
-/// Every module the scan found, and a player for them.
+/// The music panel: twenty tunes worth having, and whatever else is here.
 ///
-/// The tunes are whatever is on the device. Nothing ships with the app:
-/// modules are their composers' work, and the good collections - Aminet, the
-/// Mod Archive - are a download away and belong to the person who made them.
+/// The two shelves are the point. A list of "modules found on this device"
+/// tells you nothing if the device has none; a list of the scene's ten and the
+/// games' ten tells you what to go and find, and lights up when you have it.
+/// The C64 side does the same with SIDs.
+///
+/// Nothing is bundled: these are other people's compositions, and the archives
+/// that host them - Aminet, The Mod Archive, Modland - are a download away.
 class MusicPanel extends StatefulWidget {
   const MusicPanel({super.key});
 
@@ -51,14 +57,28 @@ class _MusicPanelState extends State<MusicPanel> {
           .where((MediaFile f) => f.category == FileCategory.music)
           .toList()
         ..sort((MediaFile a, MediaFile b) =>
-            a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+            a.title.toLowerCase().compareTo(b.title.toLowerCase()));
       _loading = false;
     });
   }
 
-  Future<void> _tap(MediaFile tune) async {
-    // Tapping the tune that is already playing toggles it, which is what a
-    // second tap on a playing track means everywhere else.
+  /// The file on this device for [pick], if there is one.
+  MediaFile? _fileFor(MusicPick pick) {
+    for (final MediaFile tune in _tunes) {
+      if (pick.matches(tune.name)) return tune;
+    }
+    return null;
+  }
+
+  /// Everything that did not match one of the twenty.
+  List<MediaFile> get _others {
+    return _tunes
+        .where((MediaFile tune) =>
+            !MusicPicks.all.any((MusicPick p) => p.matches(tune.name)))
+        .toList();
+  }
+
+  Future<void> _play(MediaFile tune) async {
     if (_playingPath == tune.path && _state.playing) {
       await MusicPlayer.setPaused(!_state.paused);
       return;
@@ -76,18 +96,110 @@ class _MusicPanelState extends State<MusicPanel> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    if (_loading) return const Center(child: CircularProgressIndicator());
+
+    final List<MediaFile> others = _others;
 
     return Column(
       children: <Widget>[
         _statusBar(),
         const Divider(height: 1, color: AmigaColors.panelBorder),
         Expanded(
-          child: _tunes.isEmpty ? _empty() : _list(),
+          child: ListView(
+            padding: const EdgeInsets.only(bottom: 16),
+            children: <Widget>[
+              for (final MusicShelf shelf in MusicShelf.values) ...<Widget>[
+                _ShelfHeader(shelf: shelf, found: _foundIn(shelf)),
+                for (final MusicPick pick in MusicPicks.of(shelf))
+                  _pickTile(pick),
+              ],
+              if (others.isNotEmpty) ...<Widget>[
+                const _PlainHeader('Also on this device'),
+                for (final MediaFile tune in others) _fileTile(tune),
+              ],
+            ],
+          ),
         ),
       ],
+    );
+  }
+
+  int _foundIn(MusicShelf shelf) =>
+      MusicPicks.of(shelf).where((MusicPick p) => _fileFor(p) != null).length;
+
+  Widget _pickTile(MusicPick pick) {
+    final MediaFile? file = _fileFor(pick);
+    final bool present = file != null;
+    final bool isCurrent = present && file.path == _playingPath && _state.playing;
+
+    return ListTile(
+      dense: true,
+      enabled: present,
+      leading: Icon(
+        isCurrent
+            ? (_state.paused ? Icons.pause_circle : Icons.graphic_eq)
+            : present
+                ? Icons.play_circle_outline
+                : Icons.download_outlined,
+        color: isCurrent
+            ? AmigaColors.accent
+            : present
+                ? AmigaColors.text
+                : AmigaColors.textDim.withValues(alpha: 0.5),
+      ),
+      title: Text(
+        pick.title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: isCurrent
+              ? AmigaColors.accent
+              : present
+                  ? AmigaColors.text
+                  : AmigaColors.textDim.withValues(alpha: 0.6),
+          fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w500,
+        ),
+      ),
+      subtitle: Text(
+        present ? pick.credit : '${pick.credit}  ·  not on this device',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: 11,
+          color: AmigaColors.textDim
+              .withValues(alpha: present ? 1.0 : 0.5),
+        ),
+      ),
+      onTap: present ? () => _play(file) : null,
+    );
+  }
+
+  Widget _fileTile(MediaFile tune) {
+    final bool isCurrent = tune.path == _playingPath && _state.playing;
+    return ListTile(
+      dense: true,
+      leading: Icon(
+        isCurrent
+            ? (_state.paused ? Icons.pause_circle : Icons.graphic_eq)
+            : Icons.music_note_outlined,
+        color: isCurrent ? AmigaColors.accent : AmigaColors.textDim,
+      ),
+      title: Text(
+        tune.title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: isCurrent ? AmigaColors.accent : AmigaColors.text,
+          fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w500,
+        ),
+      ),
+      subtitle: Text(
+        tune.folder,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 11, color: AmigaColors.textDim),
+      ),
+      onTap: () => _play(tune),
     );
   }
 
@@ -104,9 +216,8 @@ class _MusicPanelState extends State<MusicPanel> {
       child: Row(
         children: <Widget>[
           IconButton(
-            onPressed: playing
-                ? () => MusicPlayer.setPaused(!_state.paused)
-                : null,
+            onPressed:
+                playing ? () => MusicPlayer.setPaused(!_state.paused) : null,
             icon: Icon(
               _state.paused || !playing ? Icons.play_arrow : Icons.pause,
             ),
@@ -156,76 +267,70 @@ class _MusicPanelState extends State<MusicPanel> {
   }
 
   /// The module's internal title where it has one, the filename where it does
-  /// not - plenty of modules were saved with the name field blank.
+  /// not - plenty were saved with the name field blank.
   String _titleOf(MusicState state) {
     if (state.title.trim().isNotEmpty) return state.title.trim();
-    final MediaFile? file = _playingPath == null
-        ? null
-        : _tunes.where((MediaFile f) => f.path == _playingPath).firstOrNull;
-    return file?.name ?? 'Playing';
+    for (final MediaFile tune in _tunes) {
+      if (tune.path == _playingPath) return tune.title;
+    }
+    return 'Playing';
   }
+}
 
-  Widget _list() {
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      itemCount: _tunes.length,
-      itemBuilder: (BuildContext context, int i) {
-        final MediaFile tune = _tunes[i];
-        final bool isCurrent = tune.path == _playingPath && _state.playing;
-        return ListTile(
-          dense: true,
-          leading: Icon(
-            isCurrent
-                ? (_state.paused ? Icons.pause_circle : Icons.graphic_eq)
-                : Icons.music_note_outlined,
-            color: isCurrent ? AmigaColors.accent : AmigaColors.textDim,
-          ),
-          title: Text(
-            tune.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: isCurrent ? AmigaColors.accent : AmigaColors.text,
-              fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w500,
+class _ShelfHeader extends StatelessWidget {
+  const _ShelfHeader({required this.shelf, required this.found});
+
+  final MusicShelf shelf;
+  final int found;
+
+  @override
+  Widget build(BuildContext context) {
+    final int total = MusicPicks.of(shelf).length;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: <Widget>[
+          Text(
+            shelf.title,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: AmigaColors.accent,
             ),
           ),
-          subtitle: Text(
-            tune.folder,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: AmigaColors.textDim, fontSize: 11),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              shelf.blurb,
+              style: const TextStyle(fontSize: 11, color: AmigaColors.textDim),
+            ),
           ),
-          onTap: () => _tap(tune),
-        );
-      },
+          Text(
+            '$found of $total',
+            style: const TextStyle(fontSize: 11, color: AmigaColors.textDim),
+          ),
+        ],
+      ),
     );
   }
+}
 
-  Widget _empty() {
-    return const Center(
-      child: Padding(
-        padding: EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Icon(Icons.music_off_outlined, size: 40, color: AmigaColors.textDim),
-            SizedBox(height: 12),
-            Text(
-              'No modules found',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: AmigaColors.text,
-              ),
-            ),
-            SizedBox(height: 6),
-            Text(
-              'Put .mod files on the device and scan again.\n'
-              'Names in the Amiga style - mod.axel_f - are found too.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: AmigaColors.textDim),
-            ),
-          ],
+class _PlainHeader extends StatelessWidget {
+  const _PlainHeader(this.title);
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 18, 14, 6),
+      child: Text(
+        title,
+        style: const TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w700,
+          color: AmigaColors.accent,
         ),
       ),
     );
@@ -243,11 +348,16 @@ class _LevelMeter extends StatelessWidget {
   final double level;
 
   static const int _bars = 24;
+  static const double _height = 10;
 
   @override
   Widget build(BuildContext context) {
+    // Square-rooted: peak level sits low most of the time, and a linear meter
+    // barely moves off the floor.
+    final double scaled = level <= 0 ? 0 : math.sqrt(level);
+
     return SizedBox(
-      height: 8,
+      height: _height,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: <Widget>[
@@ -257,7 +367,8 @@ class _LevelMeter extends StatelessWidget {
                 padding: const EdgeInsets.only(right: 2),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 110),
-                  height: (8 * level * (1 - i / (_bars * 1.6))).clamp(1.0, 8.0),
+                  height: (_height * scaled * (1 - i / (_bars * 1.5)))
+                      .clamp(1.0, _height),
                   decoration: BoxDecoration(
                     color: Color.lerp(
                       AmigaColors.tickGreen,
@@ -273,4 +384,5 @@ class _LevelMeter extends StatelessWidget {
       ),
     );
   }
+
 }
