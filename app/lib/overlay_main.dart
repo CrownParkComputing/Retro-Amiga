@@ -37,16 +37,16 @@ class OverlayPad {
         'down': down,
       });
 
-  static Future<void> button(int button, bool pressed) =>
-      _channel.invokeMethod('padButton', <String, Object?>{
-        'pad': joystick,
-        'button': button,
-        'pressed': pressed,
-      });
+  static Future<void> button(int button, bool pressed) => _channel.invokeMethod(
+    'padButton',
+    <String, Object?>{'pad': joystick, 'button': button, 'pressed': pressed},
+  );
 
   /// Called when the pad goes away mid-press, so a held direction cannot stick.
-  static Future<void> releaseAll() =>
-      _channel.invokeMethod('padReleaseAll', <String, Object?>{'pad': joystick});
+  static Future<void> releaseAll() => _channel.invokeMethod(
+    'padReleaseAll',
+    <String, Object?>{'pad': joystick},
+  );
 
   static Future<void> openMenu() => _channel.invokeMethod('openMenu');
 }
@@ -215,9 +215,7 @@ class _OverlayIconButton extends StatelessWidget {
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: Colors.black.withValues(alpha: 0.45),
-          border: Border.all(
-            color: Colors.white.withValues(alpha: 0.5),
-          ),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.5)),
         ),
         child: Icon(icon, color: Colors.white, size: 24),
       ),

@@ -18,10 +18,12 @@ class ConfigGenerator {
 
   /// Config keys shared with the core's Android compatibility layer.
   static const String keyAndroidJoyport1 = 'amiberry.android_joyport1';
-  static const String keyTouchSettingsVersion = 'amiberry.touch_settings_version';
+  static const String keyTouchSettingsVersion =
+      'amiberry.touch_settings_version';
   static const String touchSettingsVersion = '1';
   static const String keyOnScreenJoystick = 'onscreen_joystick';
-  static const String keyAmiberryOnScreenJoystick = 'amiberry.onscreen_joystick';
+  static const String keyAmiberryOnScreenJoystick =
+      'amiberry.onscreen_joystick';
   static const String keyOnScreenCd32Pad = 'onscreen_cd32pad';
   static const String keyAmiberryOnScreenCd32Pad = 'amiberry.onscreen_cd32pad';
   static const String keyVirtualKeyboardEnabled = 'vkbd_enabled';
@@ -75,8 +77,9 @@ class ConfigGenerator {
     while (normalized.toLowerCase().endsWith(',image')) {
       normalized = normalized.substring(0, normalized.length - 6);
     }
-    final String extension =
-        normalized.contains('.') ? normalized.split('.').last.toLowerCase() : '';
+    final String extension = normalized.contains('.')
+        ? normalized.split('.').last.toLowerCase()
+        : '';
     return cdImageExtensions.contains(extension) ? normalized : '';
   }
 
@@ -92,7 +95,8 @@ class ConfigGenerator {
     bool Function(String path)? isDirectoryPath,
     bool Function(String path)? hasRdb,
   }) {
-    final bool Function(String) isDir = isDirectoryPath ??
+    final bool Function(String) isDir =
+        isDirectoryPath ??
         (String path) =>
             !path.startsWith('content://') && Directory(path).existsSync();
     final bool Function(String) rdb = hasRdb ?? hasRdbSignature;
@@ -101,8 +105,9 @@ class ConfigGenerator {
     final String normalizedCdImage = _normalizeCdImageValue(settings.cdImage);
     final bool onScreenKeyboard = settings.onScreenKeyboard;
     final String androidJoyport1 = settings.joyport1;
-    final String nativeJoyport1 =
-        settings.joyport1 == 'onscreen_joy' ? 'joy1' : settings.joyport1;
+    final String nativeJoyport1 = settings.joyport1 == 'onscreen_joy'
+        ? 'joy1'
+        : settings.joyport1;
 
     out.writeln(generatedByHeader);
     out.writeln();
@@ -196,12 +201,12 @@ class ConfigGenerator {
     final int numFloppies = settings.floppy3Type != -1
         ? 4
         : settings.floppy2Type != -1
-            ? 3
-            : settings.floppy1Type != -1
-                ? 2
-                : settings.floppy0Type != -1
-                    ? 1
-                    : 0;
+        ? 3
+        : settings.floppy1Type != -1
+        ? 2
+        : settings.floppy0Type != -1
+        ? 1
+        : 0;
     out.writeln('nr_floppies=$numFloppies');
 
     // CD
@@ -243,16 +248,17 @@ class ConfigGenerator {
         final String controller = !rdbPresent
             ? 'uae$physicalUnit'
             : (settings.baseModel == AmigaModel.a600 ||
-                    settings.baseModel == AmigaModel.a1200 ||
-                    settings.baseModel == AmigaModel.a4000)
-                ? 'ide$physicalUnit'
-                : 'uae$physicalUnit';
+                  settings.baseModel == AmigaModel.a1200 ||
+                  settings.baseModel == AmigaModel.a4000)
+            ? 'ide$physicalUnit'
+            : 'uae$physicalUnit';
         // With an RDB the core detects geometry (0,0,0). Without one it needs
         // an explicit CHS to synthesise a bootable partition, otherwise the
         // mount fails with "no supported partition tables detected".
         final String geometry = rdbPresent ? '0,0,0' : '32,1,2';
         out.writeln(
-            'hardfile2=rw,DH$i:"$path",$geometry,512,$bootPri,uaehf.device,$controller');
+          'hardfile2=rw,DH$i:"$path",$geometry,512,$bootPri,uaehf.device,$controller',
+        );
       }
       physicalUnit++;
     }
@@ -267,10 +273,12 @@ class ConfigGenerator {
     out.writeln('bsdsocket_emu=true');
 
     // Display
-    final int activeWidth =
-        settings.useRtg ? settings.rtgWidth : settings.gfxWidth;
-    final int activeHeight =
-        settings.useRtg ? settings.rtgHeight : settings.gfxHeight;
+    final int activeWidth = settings.useRtg
+        ? settings.rtgWidth
+        : settings.gfxWidth;
+    final int activeHeight = settings.useRtg
+        ? settings.rtgHeight
+        : settings.gfxHeight;
     out.writeln('gfx_width=$activeWidth');
     out.writeln('gfx_height=$activeHeight');
     out.writeln('gfx_fullscreen_amiga=fullwindow');

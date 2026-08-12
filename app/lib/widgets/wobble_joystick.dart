@@ -117,19 +117,21 @@ class _WobbleJoystickState extends State<WobbleJoystick>
     return SizedBox(
       width: widget.size,
       height: widget.size,
-      child: LayoutBuilder(builder: (context, constraints) {
-        final radius = constraints.maxWidth / 2;
-        return GestureDetector(
-          onPanDown: (d) => _updateFromLocal(d.localPosition, radius),
-          onPanUpdate: (d) => _updateFromLocal(d.localPosition, radius),
-          onPanEnd: (_) => _release(),
-          onPanCancel: _release,
-          child: CustomPaint(
-            painter: _WobblePainter(knobOffset: _knobOffset, active: _active),
-            size: Size(widget.size, widget.size),
-          ),
-        );
-      }),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final radius = constraints.maxWidth / 2;
+          return GestureDetector(
+            onPanDown: (d) => _updateFromLocal(d.localPosition, radius),
+            onPanUpdate: (d) => _updateFromLocal(d.localPosition, radius),
+            onPanEnd: (_) => _release(),
+            onPanCancel: _release,
+            child: CustomPaint(
+              painter: _WobblePainter(knobOffset: _knobOffset, active: _active),
+              size: Size(widget.size, widget.size),
+            ),
+          );
+        },
+      ),
     );
   }
 }
@@ -154,7 +156,11 @@ class _WobblePainter extends CustomPainter {
     final strokeWidth = (size.width * 0.02).clamp(2.0, double.infinity);
 
     // Base ring.
-    canvas.drawCircle(center, baseRadius - strokeWidth / 2, Paint()..color = _baseFill);
+    canvas.drawCircle(
+      center,
+      baseRadius - strokeWidth / 2,
+      Paint()..color = _baseFill,
+    );
     canvas.drawCircle(
       center,
       baseRadius - strokeWidth / 2,
@@ -202,7 +208,10 @@ class _WobblePainter extends CustomPainter {
     canvas.drawCircle(
       knobCenter,
       knobRadius,
-      Paint()..shader = gradient.createShader(Rect.fromCircle(center: knobCenter, radius: knobRadius)),
+      Paint()
+        ..shader = gradient.createShader(
+          Rect.fromCircle(center: knobCenter, radius: knobRadius),
+        ),
     );
     canvas.drawCircle(
       knobCenter,

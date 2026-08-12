@@ -1,4 +1,3 @@
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../data/amiga_model.dart';
@@ -7,6 +6,7 @@ import '../data/emulator_settings.dart';
 import '../data/file_category.dart';
 import '../emulator.dart';
 import '../widgets/amiga_logo.dart';
+import '../widgets/media_chooser.dart';
 
 /// What the user said they were setting up. It decides which machines are
 /// offered, where the wizard starts, and which steps it skips.
@@ -32,14 +32,14 @@ enum WizardMode {
         return <AmigaModel>[
           AmigaModel.a1200,
           AmigaModel.a4000,
-          AmigaModel.a600
+          AmigaModel.a600,
         ];
       case WizardMode.hardDrive:
         return <AmigaModel>[
           AmigaModel.a1200,
           AmigaModel.a4000,
           AmigaModel.a3000,
-          AmigaModel.a600
+          AmigaModel.a600,
         ];
       default:
         return AmigaModel.values;
@@ -86,12 +86,15 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
   @override
   void initState() {
     super.initState();
-    _settings = widget.initialSettings ??
+    _settings =
+        widget.initialSettings ??
         EmulatorSettings.fromModel(widget.mode.initialModel);
     _name.text = widget.initialName ?? '';
     // An existing setup already has a machine, so re-asking is a pointless tap
     // and risks resetting CPU and chipset if a model is tapped again.
-    _step = widget.mode == WizardMode.edit ? WizardStep.tailor : WizardStep.machine;
+    _step = widget.mode == WizardMode.edit
+        ? WizardStep.tailor
+        : WizardStep.machine;
   }
 
   @override
@@ -152,39 +155,11 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
     setState(() => _step = route[next]);
   }
 
-  Future<void> _pick(FileCategory category, void Function(String path) apply) async {
-    try {
-      final FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.any,
-        allowMultiple: false,
-      );
-      final String? path = result?.files.single.path;
-      if (path == null) return;
-
-      final FileCategory? actual = FileCategory.fromPath(path);
-      if (actual != null &&
-          actual != category &&
-          actual != FileCategory.archives) {
-        // Say what was picked rather than silently doing nothing.
-        setState(() => _error =
-            'That looks like ${actual.displayName.toLowerCase()}, not ${category.displayName.toLowerCase()}.');
-        return;
-      }
-      setState(() {
-        _error = null;
-        apply(path);
-      });
-    } on Exception catch (e) {
-      setState(() => _error = 'Could not open the picker: $e');
-    }
-  }
-
   Future<void> _finish({required bool launch}) async {
     try {
       await ConfigStore.save(_settings, _name.text);
       if (launch) {
-        final String path =
-            (await ConfigStore.saveCurrent(_settings)).path;
+        final String path = (await ConfigStore.saveCurrent(_settings)).path;
         await Emulator.launchConfig(path);
       }
       if (mounted) Navigator.of(context).pop(true);
@@ -201,9 +176,11 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.mode == WizardMode.edit
-            ? 'Edit setup'
-            : 'New ${widget.mode.title.toLowerCase()}'),
+        title: Text(
+          widget.mode == WizardMode.edit
+              ? 'Edit setup'
+              : 'New ${widget.mode.title.toLowerCase()}',
+        ),
       ),
       body: Column(
         children: <Widget>[
@@ -213,9 +190,12 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
               width: double.infinity,
               color: Theme.of(context).colorScheme.errorContainer,
               padding: const EdgeInsets.all(12),
-              child: Text(_error!,
-                  style: TextStyle(
-                      color: Theme.of(context).colorScheme.onErrorContainer)),
+              child: Text(
+                _error!,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onErrorContainer,
+                ),
+              ),
             ),
           Expanded(child: _buildStep()),
           SafeArea(
@@ -231,8 +211,9 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
                   const Spacer(),
                   if (last)
                     OutlinedButton(
-                      onPressed:
-                          _canAdvance ? () => _finish(launch: false) : null,
+                      onPressed: _canAdvance
+                          ? () => _finish(launch: false)
+                          : null,
                       child: const Text('Save'),
                     ),
                   if (last) const SizedBox(width: 12),
@@ -272,72 +253,70 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
         );
 
       case WizardStep.rom:
-        return _PickStep(
+        return _ChooseStep(
           title: 'Kickstart ROM',
           blurb:
               'Firmware for the ${_settings.baseModel.displayName}. You supply your own.',
-          value: _settings.romFile,
-          buttonLabel: 'Choose ROM',
-          onPick: () => _pick(FileCategory.roms,
-              (String p) => _settings = _settings.copyWith(romFile: p)),
+          category: FileCategory.roms,
+          selected: _settings.romFile,
+          onSelected: (String p) =>
+              setState(() => _settings = _settings.copyWith(romFile: p)),
         );
 
       case WizardStep.mediaPrimary:
         switch (widget.mode) {
           case WizardMode.cd:
-            return _PickStep(
+            return _ChooseStep(
               title: 'CD image',
               blurb: 'ISO, CUE, CCD, MDS, NRG or CHD.',
-              value: _settings.cdImage,
-              buttonLabel: 'Choose disc',
-              onPick: () => _pick(FileCategory.cdImages,
-                  (String p) => _settings = _settings.copyWith(cdImage: p)),
+              category: FileCategory.cdImages,
+              selected: _settings.cdImage,
+              onSelected: (String p) =>
+                  setState(() => _settings = _settings.copyWith(cdImage: p)),
             );
           case WizardMode.hardDrive:
-            return _PickStep(
+            return _ChooseStep(
               title: 'Hard drive',
-              blurb: 'An HDF image, or a folder to mount as a drive.',
-              value: _settings.hardDrives.firstWhere((String d) => d.isNotEmpty,
-                  orElse: () => ''),
-              buttonLabel: 'Choose hard drive',
-              onPick: () => _pick(
-                  FileCategory.hardDrives,
-                  (String p) =>
-                      _settings = _settings.copyWith(hardDrives: <String>[p])),
+              blurb: 'An HDF image to mount as a drive.',
+              category: FileCategory.hardDrives,
+              selected: _settings.hardDrives.firstWhere(
+                (String d) => d.isNotEmpty,
+                orElse: () => '',
+              ),
+              onSelected: (String p) => setState(
+                () => _settings = _settings.copyWith(hardDrives: <String>[p]),
+              ),
             );
           case WizardMode.whdload:
-            return _PickStep(
+            return _ChooseStep(
               title: 'WHDLoad archive',
               blurb: 'The .lha the game ships in.',
-              value: _settings.whdloadFilename,
-              buttonLabel: 'Choose archive',
-              onPick: () => _pick(
-                  FileCategory.whdloadGames,
-                  (String p) =>
-                      _settings = _settings.copyWith(whdloadFilename: p)),
+              category: FileCategory.whdloadGames,
+              selected: _settings.whdloadFilename,
+              onSelected: (String p) => setState(
+                () => _settings = _settings.copyWith(whdloadFilename: p),
+              ),
             );
           default:
-            return _PickStep(
+            return _ChooseStep(
               title: 'Floppy in DF0',
               blurb: 'ADF, ADZ, IPF, DMS and the rest.',
-              value: _settings.floppy0,
-              buttonLabel: 'Choose disk',
-              onPick: () => _pick(FileCategory.floppies,
-                  (String p) => _settings = _settings.copyWith(floppy0: p)),
+              category: FileCategory.floppies,
+              selected: _settings.floppy0,
+              onSelected: (String p) =>
+                  setState(() => _settings = _settings.copyWith(floppy0: p)),
             );
         }
 
       case WizardStep.mediaOptional:
-        return _PickStep(
+        return _ChooseStep(
           title: 'Second floppy (optional)',
           blurb: 'Many games ask for disk 2. Skip if there is only one.',
-          value: _settings.floppy1,
-          buttonLabel: 'Choose disk for DF1',
-          optional: true,
-          onPick: () => _pick(
-              FileCategory.floppies,
-              (String p) => _settings =
-                  _settings.copyWith(floppy1: p, floppy1Type: 0)),
+          category: FileCategory.floppies,
+          selected: _settings.floppy1,
+          onSelected: (String p) => setState(
+            () => _settings = _settings.copyWith(floppy1: p, floppy1Type: 0),
+          ),
         );
 
       case WizardStep.tailor:
@@ -347,7 +326,11 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
         );
 
       case WizardStep.save:
-        return _SaveStep(controller: _name, settings: _settings, onChanged: () => setState(() {}));
+        return _SaveStep(
+          controller: _name,
+          settings: _settings,
+          onChanged: () => setState(() {}),
+        );
     }
   }
 }
@@ -399,8 +382,7 @@ class _MachineStep extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       children: <Widget>[
-        Text('Which Amiga?',
-            style: Theme.of(context).textTheme.titleLarge),
+        Text('Which Amiga?', style: Theme.of(context).textTheme.titleLarge),
         const SizedBox(height: 8),
         const Text('The machine decides the chipset, CPU and memory.'),
         const SizedBox(height: 16),
@@ -415,9 +397,12 @@ class _MachineStep extends StatelessWidget {
               leading: SizedBox(
                 width: 88,
                 height: 56,
-                child: Image.asset(model.artworkPath,
-                    fit: BoxFit.contain,
-                    errorBuilder: (BuildContext c, Object e, StackTrace? s) => const AmigaLogo(height: 28)),
+                child: Image.asset(
+                  model.artworkPath,
+                  fit: BoxFit.contain,
+                  errorBuilder: (BuildContext c, Object e, StackTrace? s) =>
+                      const AmigaLogo(height: 28),
+                ),
               ),
               title: Text(model.displayName),
               subtitle: Text(model.description),
@@ -431,22 +416,21 @@ class _MachineStep extends StatelessWidget {
   }
 }
 
-class _PickStep extends StatelessWidget {
-  const _PickStep({
+/// A step that offers what the scan found, with the title above it.
+class _ChooseStep extends StatelessWidget {
+  const _ChooseStep({
     required this.title,
     required this.blurb,
-    required this.value,
-    required this.buttonLabel,
-    required this.onPick,
-    this.optional = false,
+    required this.category,
+    required this.selected,
+    required this.onSelected,
   });
 
   final String title;
   final String blurb;
-  final String value;
-  final String buttonLabel;
-  final VoidCallback onPick;
-  final bool optional;
+  final FileCategory category;
+  final String selected;
+  final ValueChanged<String> onSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -456,29 +440,16 @@ class _PickStep extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           Text(title, style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 4),
+          Text(blurb, style: Theme.of(context).textTheme.bodySmall),
           const SizedBox(height: 8),
-          Text(blurb),
-          const SizedBox(height: 24),
-          OutlinedButton.icon(
-            onPressed: onPick,
-            icon: const Icon(Icons.folder_open),
-            label: Text(buttonLabel),
+          Expanded(
+            child: MediaChooser(
+              category: category,
+              selected: selected,
+              onSelected: onSelected,
+            ),
           ),
-          const SizedBox(height: 16),
-          if (value.isNotEmpty)
-            Row(
-              children: <Widget>[
-                const Icon(Icons.check_circle, size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(value.split(RegExp(r'[/\\]')).last,
-                      overflow: TextOverflow.ellipsis),
-                ),
-              ],
-            )
-          else
-            Text(optional ? 'Nothing chosen. That is fine.' : 'Nothing chosen yet.',
-                style: Theme.of(context).textTheme.bodySmall),
         ],
       ),
     );
@@ -499,16 +470,20 @@ class _TailorStep extends StatelessWidget {
       children: <Widget>[
         Text('Tailor it', style: Theme.of(context).textTheme.titleLarge),
         const SizedBox(height: 8),
-        Text('${settings.baseModel.displayName} · ${settings.baseModel.description}'),
+        Text(
+          '${settings.baseModel.displayName} · ${settings.baseModel.description}',
+        ),
         const SizedBox(height: 16),
         if (canJit)
           SwitchListTile(
             title: const Text('JIT acceleration'),
             subtitle: const Text(
-                'Much faster on 68020 and above. Some timing-sensitive games dislike it.'),
+              'Much faster on 68020 and above. Some timing-sensitive games dislike it.',
+            ),
             value: settings.jitCacheSize > 0,
             onChanged: (bool on) => onChanged(
-                settings.copyWith(jitCacheSize: on ? 16384 : 0, jitFpu: on)),
+              settings.copyWith(jitCacheSize: on ? 16384 : 0, jitFpu: on),
+            ),
           ),
         if (canJit)
           SwitchListTile(
@@ -526,7 +501,9 @@ class _TailorStep extends StatelessWidget {
         if (settings.baseModel == AmigaModel.cd32)
           SwitchListTile(
             title: const Text('FMV cartridge'),
-            subtitle: const Text('The MPEG video add-on a few CD32 titles need.'),
+            subtitle: const Text(
+              'The MPEG video add-on a few CD32 titles need.',
+            ),
             value: settings.cd32Fmv,
             onChanged: (bool on) => onChanged(settings.copyWith(cd32Fmv: on)),
           ),
@@ -584,15 +561,20 @@ class _SaveStep extends StatelessWidget {
                     SizedBox(
                       width: 72,
                       height: 48,
-                      child: Image.asset(settings.baseModel.artworkPath,
-                          fit: BoxFit.contain,
-                          errorBuilder: (BuildContext c, Object e, StackTrace? s) =>
-                              const AmigaLogo(height: 24)),
+                      child: Image.asset(
+                        settings.baseModel.artworkPath,
+                        fit: BoxFit.contain,
+                        errorBuilder:
+                            (BuildContext c, Object e, StackTrace? s) =>
+                                const AmigaLogo(height: 24),
+                      ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: Text(settings.baseModel.displayName,
-                          style: Theme.of(context).textTheme.titleMedium),
+                      child: Text(
+                        settings.baseModel.displayName,
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
                     ),
                   ],
                 ),
@@ -607,7 +589,8 @@ class _SaveStep extends StatelessWidget {
                   Text('CD: ${settings.cdImage.split(RegExp(r'[/\\]')).last}'),
                 if (settings.whdloadFilename.isNotEmpty)
                   Text(
-                      'WHDLoad: ${settings.whdloadFilename.split(RegExp(r'[/\\]')).last}'),
+                    'WHDLoad: ${settings.whdloadFilename.split(RegExp(r'[/\\]')).last}',
+                  ),
                 if (settings.jitCacheSize > 0) const Text('JIT on'),
                 if (settings.useRtg) const Text('RTG on'),
               ],

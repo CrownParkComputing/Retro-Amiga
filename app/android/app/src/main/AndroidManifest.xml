@@ -18,6 +18,15 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
+    <!-- Scanning for Kickstarts, disk images and hard drives means walking
+         whole folders the user points at, which scoped storage cannot do: it
+         hands back one file at a time through a picker. All-files access is
+         what makes a library scan possible, and it is the permission other
+         emulator front-ends use for the same reason. Requested at runtime and
+         explained before asking; the app works without it, one file at a
+         time. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+
     <!-- Bluetooth controller support (Steam Controller BLE, HID devices) -->
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />

@@ -26,27 +26,21 @@
 enum FileCategory {
   roms('roms', 'Kickstarts / ROMs', <String>{'rom', 'kick', 'key', 'bin'}),
 
-  floppies(
-      'floppies',
-      'Floppy Images',
-      <String>{
-        // zfile.cpp diskimages[]
-        'adf', 'adz', 'ipf', 'scp', 'fdi', 'dms', 'wrp', 'dsq', 'pkd', 'ima',
-        // raw types disk.cpp will take
-        'img', 'st', 'dsk',
-      }),
+  floppies('floppies', 'Floppy Images', <String>{
+    // zfile.cpp diskimages[]
+    'adf', 'adz', 'ipf', 'scp', 'fdi', 'dms', 'wrp', 'dsq', 'pkd', 'ima',
+    // raw types disk.cpp will take
+    'img', 'st', 'dsk',
+  }),
 
   hardDrives('harddrives', 'Hard Drives', <String>{'hdf', 'hdz', 'vhd', 'hdi'}),
 
-  cdImages(
-      'cd-images',
-      'CD / ISO Images',
-      <String>{
-        // parsers in blkdev_cdimage.cpp
-        'cue', 'ccd', 'mds', 'nrg', 'chd',
-        // no parser needed: mounted through the raw-image fallback
-        'iso',
-      }),
+  cdImages('cd-images', 'CD / ISO Images', <String>{
+    // parsers in blkdev_cdimage.cpp
+    'cue', 'ccd', 'mds', 'nrg', 'chd',
+    // no parser needed: mounted through the raw-image fallback
+    'iso',
+  }),
 
   whdloadGames('lha', 'WHDLoad Games', <String>{'lha', 'lzx', 'lzh'}),
 
@@ -76,6 +70,8 @@ enum FileCategory {
 
   /// Archives can hold any of the above, so a picker for [category] should
   /// offer them too rather than hide a zipped disk image.
-  static Set<String> pickerExtensionsFor(FileCategory category) =>
-      <String>{...category.extensions, ...archives.extensions};
+  static Set<String> pickerExtensionsFor(FileCategory category) => <String>{
+    ...category.extensions,
+    ...archives.extensions,
+  };
 }

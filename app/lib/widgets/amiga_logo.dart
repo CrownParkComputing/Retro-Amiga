@@ -20,9 +20,7 @@ class AmigaLogo extends StatelessWidget {
       height: height,
       width: height * _AmigaCheckPainter.aspect,
       child: CustomPaint(
-        painter: _AmigaCheckPainter(
-          front: frontColour ?? Colors.white,
-        ),
+        painter: _AmigaCheckPainter(front: frontColour ?? Colors.white),
       ),
     );
   }

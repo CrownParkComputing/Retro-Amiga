@@ -141,13 +141,20 @@ class _DpadPainter extends CustomPainter {
       ..color = Colors.white.withValues(alpha: 0.35);
 
     Rect vertical = Rect.fromCenter(
-        center: centre, width: arm, height: size.height * 0.92);
+      center: centre,
+      width: arm,
+      height: size.height * 0.92,
+    );
     Rect horizontal = Rect.fromCenter(
-        center: centre, width: size.width * 0.92, height: arm);
+      center: centre,
+      width: size.width * 0.92,
+      height: arm,
+    );
     final cross = Path()
       ..addRRect(RRect.fromRectAndRadius(vertical, const Radius.circular(10)))
       ..addRRect(
-          RRect.fromRectAndRadius(horizontal, const Radius.circular(10)));
+        RRect.fromRectAndRadius(horizontal, const Radius.circular(10)),
+      );
 
     canvas.drawPath(cross, fill);
     canvas.drawPath(cross, stroke);
@@ -157,37 +164,64 @@ class _DpadPainter extends CustomPainter {
     void arm4(bool on, Rect rect) {
       if (!on) return;
       canvas.drawRRect(
-          RRect.fromRectAndRadius(rect, const Radius.circular(10)), pressed);
+        RRect.fromRectAndRadius(rect, const Radius.circular(10)),
+        pressed,
+      );
     }
 
     final half = size.height * 0.46;
     arm4(up, Rect.fromLTWH(r - arm / 2, r - half, arm, half - arm * 0.2));
-    arm4(down, Rect.fromLTWH(r - arm / 2, r + arm * 0.2, arm, half - arm * 0.2));
+    arm4(
+      down,
+      Rect.fromLTWH(r - arm / 2, r + arm * 0.2, arm, half - arm * 0.2),
+    );
     arm4(left, Rect.fromLTWH(r - half, r - arm / 2, half - arm * 0.2, arm));
-    arm4(right,
-        Rect.fromLTWH(r + arm * 0.2, r - arm / 2, half - arm * 0.2, arm));
+    arm4(
+      right,
+      Rect.fromLTWH(r + arm * 0.2, r - arm / 2, half - arm * 0.2, arm),
+    );
 
     // Arrow glyphs, drawn last so they stay visible on a pressed arm.
     final tri = Paint()..color = Colors.white.withValues(alpha: 0.75);
     void arrow(Offset tip, Offset a, Offset b) {
       canvas.drawPath(
-          Path()
-            ..moveTo(tip.dx, tip.dy)
-            ..lineTo(a.dx, a.dy)
-            ..lineTo(b.dx, b.dy)
-            ..close(),
-          tri);
+        Path()
+          ..moveTo(tip.dx, tip.dy)
+          ..lineTo(a.dx, a.dy)
+          ..lineTo(b.dx, b.dy)
+          ..close(),
+        tri,
+      );
     }
 
     final s = size.width * 0.055;
     final o = size.width * 0.30;
-    arrow(Offset(r, r - o - s), Offset(r - s, r - o + s), Offset(r + s, r - o + s));
-    arrow(Offset(r, r + o + s), Offset(r - s, r + o - s), Offset(r + s, r + o - s));
-    arrow(Offset(r - o - s, r), Offset(r - o + s, r - s), Offset(r - o + s, r + s));
-    arrow(Offset(r + o + s, r), Offset(r + o - s, r - s), Offset(r + o - s, r + s));
+    arrow(
+      Offset(r, r - o - s),
+      Offset(r - s, r - o + s),
+      Offset(r + s, r - o + s),
+    );
+    arrow(
+      Offset(r, r + o + s),
+      Offset(r - s, r + o - s),
+      Offset(r + s, r + o - s),
+    );
+    arrow(
+      Offset(r - o - s, r),
+      Offset(r - o + s, r - s),
+      Offset(r - o + s, r + s),
+    );
+    arrow(
+      Offset(r + o + s, r),
+      Offset(r + o - s, r - s),
+      Offset(r + o - s, r + s),
+    );
   }
 
   @override
   bool shouldRepaint(_DpadPainter old) =>
-      old.up != up || old.down != down || old.left != left || old.right != right;
+      old.up != up ||
+      old.down != down ||
+      old.left != left ||
+      old.right != right;
 }

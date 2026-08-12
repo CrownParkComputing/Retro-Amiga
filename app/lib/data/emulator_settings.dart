@@ -134,77 +134,85 @@ class EmulatorSettings {
     switch (model) {
       case AmigaModel.a500:
         return EmulatorSettings(
-            baseModel: model,
-            cpuModel: 68000,
-            chipset: 'ocs',
-            chipRam: 1,
-            slowRam: 2,
-            cycleExact: true);
+          baseModel: model,
+          cpuModel: 68000,
+          chipset: 'ocs',
+          chipRam: 1,
+          slowRam: 2,
+          cycleExact: true,
+        );
       case AmigaModel.a500Plus:
         return EmulatorSettings(
-            baseModel: model,
-            cpuModel: 68000,
-            chipset: 'ecs',
-            chipRam: 2,
-            slowRam: 0,
-            cycleExact: true);
+          baseModel: model,
+          cpuModel: 68000,
+          chipset: 'ecs',
+          chipRam: 2,
+          slowRam: 0,
+          cycleExact: true,
+        );
       case AmigaModel.a600:
         return EmulatorSettings(
-            baseModel: model,
-            cpuModel: 68000,
-            chipset: 'ecs',
-            chipRam: 2,
-            slowRam: 0,
-            cycleExact: true);
+          baseModel: model,
+          cpuModel: 68000,
+          chipset: 'ecs',
+          chipRam: 2,
+          slowRam: 0,
+          cycleExact: true,
+        );
       case AmigaModel.a1000:
         return EmulatorSettings(
-            baseModel: model,
-            cpuModel: 68000,
-            chipset: 'ocs',
-            chipRam: 1,
-            slowRam: 0,
-            cycleExact: true);
+          baseModel: model,
+          cpuModel: 68000,
+          chipset: 'ocs',
+          chipRam: 1,
+          slowRam: 0,
+          cycleExact: true,
+        );
       case AmigaModel.a2000:
         return EmulatorSettings(
-            baseModel: model,
-            cpuModel: 68000,
-            chipset: 'ocs',
-            chipRam: 1,
-            slowRam: 2,
-            cycleExact: true);
+          baseModel: model,
+          cpuModel: 68000,
+          chipset: 'ocs',
+          chipRam: 1,
+          slowRam: 2,
+          cycleExact: true,
+        );
       case AmigaModel.a1200:
         return EmulatorSettings(
-            baseModel: model,
-            cpuModel: 68020,
-            chipset: 'aga',
-            chipRam: 4,
-            slowRam: 0,
-            address24Bit: false,
-            cpuSpeed: 'max',
-            cycleExact: false);
+          baseModel: model,
+          cpuModel: 68020,
+          chipset: 'aga',
+          chipRam: 4,
+          slowRam: 0,
+          address24Bit: false,
+          cpuSpeed: 'max',
+          cycleExact: false,
+        );
       case AmigaModel.a3000:
         return EmulatorSettings(
-            baseModel: model,
-            cpuModel: 68030,
-            chipset: 'ecs',
-            chipRam: 4,
-            slowRam: 0,
-            fastRam: 8,
-            address24Bit: false,
-            cpuSpeed: 'max');
+          baseModel: model,
+          cpuModel: 68030,
+          chipset: 'ecs',
+          chipRam: 4,
+          slowRam: 0,
+          fastRam: 8,
+          address24Bit: false,
+          cpuSpeed: 'max',
+        );
       case AmigaModel.a4000:
         return EmulatorSettings(
-            baseModel: model,
-            cpuModel: 68040,
-            chipset: 'aga',
-            chipRam: 4,
-            slowRam: 0,
-            fastRam: 8,
-            address24Bit: false,
-            fpuModel: 68040,
-            cpuSpeed: 'max',
-            jitCacheSize: 16384,
-            jitFpu: true);
+          baseModel: model,
+          cpuModel: 68040,
+          chipset: 'aga',
+          chipRam: 4,
+          slowRam: 0,
+          fastRam: 8,
+          address24Bit: false,
+          fpuModel: 68040,
+          cpuSpeed: 'max',
+          jitCacheSize: 16384,
+          jitFpu: true,
+        );
       case AmigaModel.cd32:
         // Real CD32 hardware: 68EC020, so 24-bit addressing, AGA, 2MB chip,
         // no fast RAM and no floppy. Deliberately no JIT - CD32 titles are
@@ -213,24 +221,26 @@ class EmulatorSettings {
         // trade: not the slow cycle-exact model, but still a real 68020.
         // Booting needs the CD32 kickstart plus its extended ROM.
         return EmulatorSettings(
-            baseModel: model,
-            cpuModel: 68020,
-            chipset: 'aga',
-            chipRam: 4,
-            slowRam: 0,
-            address24Bit: true,
-            cpuSpeed: 'real',
-            cycleExact: false,
-            floppy0Type: -1);
+          baseModel: model,
+          cpuModel: 68020,
+          chipset: 'aga',
+          chipRam: 4,
+          slowRam: 0,
+          address24Bit: true,
+          cpuSpeed: 'real',
+          cycleExact: false,
+          floppy0Type: -1,
+        );
       case AmigaModel.cdtv:
         return EmulatorSettings(
-            baseModel: model,
-            cpuModel: 68000,
-            chipset: 'ocs',
-            chipRam: 2,
-            slowRam: 0,
-            cycleExact: true,
-            floppy0Type: -1);
+          baseModel: model,
+          cpuModel: 68000,
+          chipset: 'ocs',
+          chipRam: 2,
+          slowRam: 0,
+          cycleExact: true,
+          floppy0Type: -1,
+        );
     }
   }
 

@@ -11,7 +11,9 @@ class Emulator {
 
   /// Starts emulation. [args] is passed through verbatim to the core.
   static Future<void> launch(List<String> args) async {
-    await _channel.invokeMethod<bool>('launch', <String, Object?>{'args': args});
+    await _channel.invokeMethod<bool>('launch', <String, Object?>{
+      'args': args,
+    });
   }
 
   /// Which host implementation answered, for showing platform-specific UI.
@@ -43,4 +45,3 @@ class Emulator {
     return launch(<String>['--rescan-roms', '--config', configPath, '-G']);
   }
 }
-

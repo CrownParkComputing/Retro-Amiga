@@ -46,8 +46,9 @@ class ConfigStore {
 
   static String _sanitise(String name) {
     final String trimmed = name.trim();
-    final String cleaned =
-        trimmed.replaceAll(RegExp(r'[^A-Za-z0-9 ._-]'), '_').trim();
+    final String cleaned = trimmed
+        .replaceAll(RegExp(r'[^A-Za-z0-9 ._-]'), '_')
+        .trim();
     return cleaned.isEmpty ? 'Untitled' : cleaned;
   }
 
@@ -84,16 +85,20 @@ class ConfigStore {
       } on Exception {
         continue;
       }
-      configs.add(SavedConfig(
-        name: name.substring(0, name.length - 4),
-        path: entity.path,
-        model: _modelFrom(text),
-        summary: _summaryFrom(text),
-      ));
+      configs.add(
+        SavedConfig(
+          name: name.substring(0, name.length - 4),
+          path: entity.path,
+          model: _modelFrom(text),
+          summary: _summaryFrom(text),
+        ),
+      );
     }
 
-    configs.sort((SavedConfig a, SavedConfig b) =>
-        a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    configs.sort(
+      (SavedConfig a, SavedConfig b) =>
+          a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+    );
     return configs;
   }
 
