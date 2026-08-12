@@ -81,6 +81,39 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
   late EmulatorSettings _settings;
   late WizardStep _step;
   final TextEditingController _name = TextEditingController();
+
+  /// True while the name is still the one we suggested, so that changing the
+  /// machine or the disk updates it - and false the moment the user edits it,
+  /// so we never overwrite their words.
+  bool _nameIsAutomatic = true;
+
+  /// `<media> (<machine>)`, from whatever media the setup has.
+  String get _suggestedName {
+    String basename(String path) {
+      if (path.isEmpty) return '';
+      final int slash = path.lastIndexOf('/');
+      final String name = slash < 0 ? path : path.substring(slash + 1);
+      final int dot = name.lastIndexOf('.');
+      return dot <= 0 ? name : name.substring(0, dot);
+    }
+
+    final String media = <String>[
+      _settings.floppy0,
+      _settings.cdImage,
+      _settings.whdloadFilename,
+      ..._settings.hardDrives,
+    ].map(basename).firstWhere((String s) => s.isNotEmpty, orElse: () => '');
+
+    final String machine = _settings.baseModel.displayName;
+    if (media.isEmpty) return machine;
+    return '$media ($machine)';
+  }
+
+  void _refreshSuggestedName() {
+    if (!_nameIsAutomatic) return;
+    final String suggestion = _suggestedName;
+    if (_name.text != suggestion) _name.text = suggestion;
+  }
   String? _error;
 
   @override
@@ -90,6 +123,11 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
         widget.initialSettings ??
         EmulatorSettings.fromModel(widget.mode.initialModel);
     _name.text = widget.initialName ?? '';
+    // Whatever the user has not typed themselves follows the media and the
+    // machine, so a shelf of setups reads "Lotus Turbo Challenge (A500)"
+    // rather than a column of "Untitled". Recomputed as they go, until they
+    // type something of their own.
+    _nameIsAutomatic = true;
     // An existing setup already has a machine, so re-asking is a pointless tap
     // and risks resetting CPU and chipset if a model is tapped again.
     _step = widget.mode == WizardMode.edit
@@ -170,6 +208,7 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
 
   @override
   Widget build(BuildContext context) {
+    _refreshSuggestedName();
     final List<WizardStep> route = _route;
     final int index = route.indexOf(_step);
     final bool last = _step == WizardStep.save;
@@ -329,7 +368,7 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
         return _SaveStep(
           controller: _name,
           settings: _settings,
-          onChanged: () => setState(() {}),
+          onChanged: () => setState(() => _nameIsAutomatic = false),
         );
     }
   }

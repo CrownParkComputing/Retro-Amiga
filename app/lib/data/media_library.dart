@@ -44,6 +44,12 @@ class MediaFile {
     return dot <= 0 ? base : base.substring(0, dot);
   }
 
+  /// The full path of the directory holding it.
+  String get directory {
+    final int slash = path.lastIndexOf(RegExp(r'[/\\]'));
+    return slash <= 0 ? '' : path.substring(0, slash);
+  }
+
   /// The folder it sits in, shown to tell two files of the same name apart.
   String get folder {
     final int slash = path.lastIndexOf(RegExp(r'[/\\]'));
@@ -89,15 +95,15 @@ class MediaIndex {
   final List<String> roots;
   final List<MediaFile> files;
 
+  /// Only files of that kind. Archives are never offered.
+  ///
+  /// They used to be, on the reasoning that only a zip's contents say what it
+  /// holds. On a real device that reasoning collapses: this handheld has 1800
+  /// zips of Spectrum and C64 games, so "pick a WHDLoad archive" listed 1849
+  /// entries of which 49 were WHDLoad archives. A zip is not Amiga media until
+  /// something opens it, and nothing here opens it.
   List<MediaFile> of(FileCategory category) {
-    // Archives are offered alongside whatever was asked for: only a zip's
-    // contents say what it holds, so hiding them would hide zipped disks.
-    return files
-        .where(
-          (MediaFile f) =>
-              f.category == category || f.category == FileCategory.archives,
-        )
-        .toList();
+    return files.where((MediaFile f) => f.category == category).toList();
   }
 
   int countOf(FileCategory category) =>

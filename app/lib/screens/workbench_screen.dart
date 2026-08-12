@@ -11,6 +11,7 @@ import 'configurations_screen.dart';
 import 'history_screen.dart';
 import 'library_panel.dart';
 import 'music_panel.dart';
+import 'settings_panel.dart';
 
 /// The home screen: a nav rail and one content panel, floating over the boing
 /// ball.
@@ -139,8 +140,9 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
         return const AboutPanel();
       case WorkbenchSection.music:
         return const MusicPanel();
-      case WorkbenchSection.resume:
       case WorkbenchSection.settings:
+        return const SettingsPanel();
+      case WorkbenchSection.resume:
         return _Placeholder(section: _section);
     }
   }

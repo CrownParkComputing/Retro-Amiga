@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 import 'file_category.dart';
 import 'media_library.dart';
+import 'media_root.dart';
 
 /// What WHDLoad support looks like right now.
 class WhdloadStatus {
@@ -116,6 +117,40 @@ class WhdloadSupport {
     );
   }
 
+  /// Directories that already hold a WHDLoad boot tree, in order of
+  /// preference.
+  ///
+  /// The scan cannot find these: it skips Android/data, which is exactly where
+  /// another Amiberry-derived app keeps its copy, and it only indexes media
+  /// extensions anyway. So they are looked at directly.
+  static Future<List<Directory>> _knownBootTrees() async {
+    final List<Directory> candidates = <Directory>[];
+
+    // The media folder first, since that is where the user's own files live
+    // and where an import would have put this one.
+    final String root = await MediaRoot.path();
+    final List<String> paths = <String>[
+      '$root/WHDBoot',
+      '$root/whdboot',
+      '/sdcard/Amiga/WHDBoot',
+      '/sdcard/UAE4Arm/whdboot',
+      '/sdcard/WHDBoot',
+    ];
+
+    // Deliberately NOT another app's Android/data directory. Since Android 11
+    // that is unreadable by anything but its owner, all-files access
+    // included, so the copy the previous launcher keeps there cannot be used
+    // however visible it looks over adb.
+
+    for (final String path in paths) {
+      final Directory tree = Directory(path);
+      if (File('${tree.path}/boot-data.zip').existsSync()) {
+        candidates.add(tree);
+      }
+    }
+    return candidates;
+  }
+
   /// The boot archive somewhere on this device, if the scan saw one.
   static MediaFile? findBootArchive(MediaIndex index) {
     for (final MediaFile file in index.files) {
@@ -134,6 +169,61 @@ class WhdloadSupport {
       }
     }
     return null;
+  }
+
+  /// Installs everything the booter needs, from wherever it can be found.
+  ///
+  /// Returns the resulting status. Three things get installed, and the game
+  /// will not boot without all of them:
+  ///
+  ///  * boot-data.zip - the WHDLoad system files, mounted as DH3
+  ///  * game-data/whdload_db.xml - per-game settings, without which the booter
+  ///    falls back to defaults that suit few games
+  ///  * save-data/Kickstarts - the .RTB relocation tables that ship with
+  ///    skick, plus the actual ROMs, which do not ship with anything and are
+  ///    copied out of the user's own collection under the names the booter
+  ///    symlinks
+  static Future<WhdloadStatus> install(MediaIndex index) async {
+    final Directory? target = await _whdBootDirectory();
+    if (target == null) return status();
+
+    // A whole tree beats a bare zip: it brings the database and the relocation
+    // tables with it.
+    for (final Directory tree in await _knownBootTrees()) {
+      _copyTree(tree, target);
+      break;
+    }
+
+    // Otherwise, whatever the scan turned up.
+    if (!File('${target.path}/boot-data.zip').existsSync()) {
+      final MediaFile? archive = findBootArchive(index);
+      if (archive != null) {
+        await installBootArchive(archive.path);
+      }
+    }
+
+    await installKickstarts(index);
+    return status();
+  }
+
+  /// Copies a directory, skipping anything already there: an existing file is
+  /// either the same file or one the user put there deliberately.
+  static void _copyTree(Directory from, Directory to) {
+    for (final FileSystemEntity entry in from.listSync(recursive: true)) {
+      final String relative = entry.path.substring(from.path.length + 1);
+      final String destination = '${to.path}/$relative';
+      try {
+        if (entry is Directory) {
+          Directory(destination).createSync(recursive: true);
+        } else if (entry is File) {
+          if (File(destination).existsSync()) continue;
+          Directory(File(destination).parent.path).createSync(recursive: true);
+          entry.copySync(destination);
+        }
+      } on FileSystemException {
+        // One unreadable file should not stop the rest.
+      }
+    }
   }
 
   /// Copies [sourcePath] into place as the boot archive.

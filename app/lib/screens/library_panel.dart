@@ -40,7 +40,6 @@ class _LibraryPanelState extends State<LibraryPanel> {
     FileCategory.hardDrives,
     FileCategory.cdImages,
     FileCategory.roms,
-    FileCategory.archives,
   ];
 
   /// null means "All".
@@ -104,13 +103,15 @@ class _LibraryPanelState extends State<LibraryPanel> {
     return _files.where((MediaFile file) {
       // Music has its own panel, so it never appears here.
       if (file.category == FileCategory.music) return false;
-      // Kickstarts and archives appear only on their own tabs. Mixed into
-      // "All" they bury the games: a ROM is not a game, and a device with a
-      // few thousand zips of other machines' software - normal on a handheld -
-      // hides the Amiga media completely.
-      if ((file.category == FileCategory.roms ||
-              file.category == FileCategory.archives) &&
-          _selected != file.category) {
+      // Archives are not listed at all. A zip is not Amiga media until
+      // something opens it, and on a handheld the great majority are other
+      // machines' games - 1800 of them here, against 115 Amiga files. They
+      // are still offered inside the wizard, where the folder they sit in
+      // says whether they belong.
+      if (file.category == FileCategory.archives) return false;
+      // Kickstarts appear only on their own tab: a ROM is not a game.
+      if (file.category == FileCategory.roms &&
+          _selected != FileCategory.roms) {
         return false;
       }
       if (_selected != null && file.category != _selected) return false;

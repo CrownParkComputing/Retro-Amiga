@@ -3,6 +3,7 @@ import 'dart:io';
 import 'amiga_model.dart';
 import 'config_generator.dart';
 import 'host_paths.dart';
+import 'media_root.dart';
 import 'emulator_settings.dart';
 
 /// A saved setup on the shelf.
@@ -109,16 +110,64 @@ class ConfigStore {
     final File file = File(configPath);
     if (!file.existsSync()) return configPath;
 
-    final String text = file.readAsStringSync();
+    String text = file.readAsStringSync();
+    final String original = text;
+
     final String container = File(await HostPaths.documents()).parent.path;
-    final String repaired = text.replaceAllMapped(
+    text = text.replaceAllMapped(
       _containerPrefix,
       (Match m) => '$container/',
     );
-    if (repaired != text) {
-      file.writeAsStringSync(repaired);
+
+    text = await _relocateMissingMedia(text);
+
+    if (text != original) {
+      file.writeAsStringSync(text);
     }
     return configPath;
+  }
+
+  /// Re-points paths whose file has moved to wherever that file is now.
+  ///
+  /// Importing files them into the media folder, which means a setup made
+  /// before an import names a path that no longer exists. The core does not
+  /// treat that as an error - it reports "No disk in drive 0" and sits on the
+  /// insert-disk screen - so the game simply never starts and nothing says
+  /// why.
+  ///
+  /// Matching is by filename under the media folder, because that is what the
+  /// import preserves: it moves a file between folders, never renames it.
+  static Future<String> _relocateMissingMedia(String text) async {
+    final String root = await MediaRoot.path();
+    if (!Directory(root).existsSync()) return text;
+
+    String result = text;
+    for (final String path in mediaPathsIn(text)) {
+      if (File(path).existsSync()) continue;
+
+      final int slash = path.lastIndexOf('/');
+      final String name = slash < 0 ? path : path.substring(slash + 1);
+
+      final String? found = _findUnder(Directory(root), name);
+      if (found != null) {
+        result = result.replaceAll(path, found);
+      }
+    }
+    return result;
+  }
+
+  /// Looks for [name] directly in [root] and one level down, which is the
+  /// whole of the media folder's layout. A full walk would be slow and could
+  /// match something in a game's own directory tree.
+  static String? _findUnder(Directory root, String name) {
+    for (final FileSystemEntity entry in root.listSync()) {
+      if (entry is File && entry.path.endsWith('/$name')) return entry.path;
+      if (entry is Directory) {
+        final File candidate = File('${entry.path}/$name');
+        if (candidate.existsSync()) return candidate.path;
+      }
+    }
+    return null;
   }
 
   /// Matches everything up to and including the container UUID's slash, so the

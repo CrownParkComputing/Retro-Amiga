@@ -6,8 +6,8 @@ import 'package:flutter/material.dart';
 import '../data/amiga_model.dart';
 import '../data/app_prefs.dart';
 import '../data/file_category.dart';
-import '../data/host_paths.dart';
 import '../data/media_library.dart';
+import '../data/media_root.dart';
 import '../data/whdload_support.dart';
 import '../widgets/amiga_logo.dart';
 
@@ -36,6 +36,41 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   /// A Kickstart is the one thing that cannot be worked around later.
   bool get _hasRom => _index.countOf(FileCategory.roms) > 0;
 
+  String _root = '';
+  bool _importing = false;
+  ImportResult? _imported;
+
+  /// Chooses where media lives, and files everything into it.
+  ///
+  /// The root is suggested from the scan rather than imposed: a device that
+  /// has been running the old launcher already has a collection, and adopting
+  /// that folder means the import moves nothing at all. Files outside it are
+  /// moved rather than copied - within a volume that is a rename, so a 2GB
+  /// collection is filed instantly instead of being duplicated on a handheld
+  /// that may not have room for two copies.
+  Future<void> _fileIntoRoot() async {
+    setState(() => _importing = true);
+    final ImportResult result = await MediaImporter.import(_index);
+    // What moved is now somewhere else, so the index has to be rebuilt.
+    final MediaIndex rescanned = await MediaLibrary.scan();
+    if (!mounted) return;
+    setState(() {
+      _imported = result;
+      _index = rescanned;
+      _importing = false;
+    });
+  }
+
+  Future<void> _chooseRoot() async {
+    final String? chosen = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) => _RootDialog(initial: _root),
+    );
+    if (chosen == null || chosen.trim().isEmpty) return;
+    await MediaRoot.setPath(chosen.trim());
+    if (mounted) setState(() => _root = chosen.trim());
+  }
+
   WhdloadStatus _whdload = const WhdloadStatus(
     bootArchiveInstalled: false,
     kickstartCount: 0,
@@ -55,22 +90,16 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       _whdloadNotice = null;
     });
 
-    final MediaFile? archive = WhdloadSupport.findBootArchive(_index);
-    bool installed = _whdload.bootArchiveInstalled;
-    if (archive != null) {
-      installed = await WhdloadSupport.installBootArchive(archive.path);
-    }
-    await WhdloadSupport.installKickstarts(_index);
-    final WhdloadStatus status = await WhdloadSupport.status();
+    final WhdloadStatus status = await WhdloadSupport.install(_index);
 
     if (!mounted) return;
     setState(() {
       _whdload = status;
       _installingWhdload = false;
-      _whdloadNotice = archive == null && !installed
-          ? 'No WHDLoad boot archive on this device. Copy boot-data.zip '
-              '(or your whdload boot zip) onto it and scan again.'
-          : null;
+      _whdloadNotice = status.bootArchiveInstalled
+          ? null
+          : 'No WHDLoad boot archive on this device. Copy boot-data.zip '
+              '(or your whdload boot zip) onto it and scan again.';
     });
   }
 
@@ -134,9 +163,21 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
     try {
       final MediaIndex index = await MediaLibrary.scan();
+
+      // Adopt the folder the collection already lives in, unless the user has
+      // chosen one. A device that has been running the old launcher keeps its
+      // library where it is, and the import then has nothing to move.
+      String root = await MediaRoot.path();
+      final String? suggestion = MediaRoot.suggestFrom(index);
+      if (suggestion != null && root == await MediaRoot.defaultPath()) {
+        root = suggestion;
+        await MediaRoot.setPath(root);
+      }
+
       if (mounted) {
         setState(() {
           _index = index;
+          _root = root;
           _scanning = false;
           _scanned = true;
         });
@@ -164,14 +205,17 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       if (result == null || result.files.isEmpty) return;
 
       setState(() => _scanning = true);
-      final Directory documents = Directory(await HostPaths.documents());
       int copied = 0;
       for (final PlatformFile picked in result.files) {
         final String? path = picked.path;
         if (path == null) continue;
-        if (FileCategory.fromPath(path) == null) continue;
+        // Filed by kind on the way in, so an imported disk lands with the
+        // other disks rather than in a flat heap.
+        final FileCategory? category = FileCategory.fromPath(path);
+        if (category == null) continue;
         try {
-          File(path).copySync('${documents.path}/${picked.name}');
+          final Directory target = await MediaRoot.folderFor(category);
+          File(path).copySync('${target.path}/${picked.name}');
           copied++;
         } on FileSystemException {
           // Skip the one file rather than abandoning the import.
@@ -179,7 +223,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       }
 
       final MediaIndex index = await MediaLibrary.scan(
-        roots: <String>[...await MediaLibrary.defaultRoots(), documents.path],
+        roots: <String>[
+          ...await MediaLibrary.defaultRoots(),
+          await MediaRoot.path(),
+        ],
       );
       if (mounted) {
         setState(() {
@@ -331,7 +378,68 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               const SizedBox(height: 16),
             ],
 
-            const _SectionHeader('2', 'WHDLoad support'),
+            const _SectionHeader('2', 'Where media lives'),
+            const SizedBox(height: 8),
+            Text(
+              MediaRoot.canChoose
+                  ? 'Everything is filed here, in a folder per kind. It can be '
+                      'anywhere you can write - a collection you already have '
+                      'stays put, and survives this app being uninstalled.'
+                  : 'iOS only lets the app read its own Documents folder, so '
+                      'that is where media lives. It is reachable from the '
+                      'Files app.',
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: Column(
+                children: <Widget>[
+                  ListTile(
+                    leading: const Icon(Icons.folder_outlined),
+                    title: Text(_root.isEmpty ? 'Choosing...' : _root),
+                    subtitle: const Text('Media folder'),
+                    trailing: MediaRoot.canChoose
+                        ? TextButton(
+                            onPressed: _chooseRoot,
+                            child: const Text('Change'),
+                          )
+                        : null,
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.drive_file_move_outlined),
+                    title: Text(
+                      _imported == null
+                          ? 'File everything into it'
+                          : '${_imported!.moved} moved, '
+                              '${_imported!.alreadyInPlace} already in place'
+                              '${_imported!.failed > 0 ? ', ${_imported!.failed} failed' : ''}',
+                    ),
+                    subtitle: const Text(
+                      'Moves what is elsewhere into Floppies, HardDrives, '
+                      'CDROMs, LHA and Kickstarts.',
+                    ),
+                    trailing: _importing
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : TextButton(
+                            onPressed: _scanning ? null : _fileIntoRoot,
+                            child: const Text('Import'),
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // WHDLoad setup is Android only. The boot archive has to be found
+            // on the device, and iOS gives the app nothing to search: no
+            // shared storage, and the sandbox holds only what has been handed
+            // to it. Rather than show a step that can only ever say "not
+            // found", iOS does not offer one.
+            if (Platform.isAndroid) ...<Widget>[
+            const _SectionHeader('3', 'WHDLoad support'),
             const SizedBox(height: 8),
             const Text(
               'WHDLoad games are .lha archives that need WHDLoad itself to '
@@ -376,8 +484,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               ),
             ),
             const SizedBox(height: 24),
+            ],
 
-            const _SectionHeader('3', 'Pick your usual Amiga'),
+            _SectionHeader(Platform.isAndroid ? '4' : '3', 'Pick your usual Amiga'),
             const SizedBox(height: 8),
             const Text('New setups start from this machine.'),
             const SizedBox(height: 12),
@@ -479,6 +588,78 @@ class _SectionHeader extends StatelessWidget {
         ),
         const SizedBox(width: 10),
         Text(title, style: Theme.of(context).textTheme.titleMedium),
+      ],
+    );
+  }
+}
+
+
+/// Where media should live. A text field rather than a folder picker: the
+/// picker Android offers returns a content:// tree the emulator core cannot
+/// open, since the core takes plain paths.
+class _RootDialog extends StatefulWidget {
+  const _RootDialog({required this.initial});
+
+  final String initial;
+
+  @override
+  State<_RootDialog> createState() => _RootDialogState();
+}
+
+class _RootDialogState extends State<_RootDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Media folder'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            decoration: const InputDecoration(
+              hintText: '/sdcard/Amiga',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Suggestions:',
+            style: TextStyle(fontWeight: FontWeight.w600),
+          ),
+          for (final String path in const <String>[
+            '/sdcard/Amiga',
+            '/sdcard/UAE4Arm',
+            '/sdcard/Roms/Amiga',
+          ])
+            TextButton(
+              onPressed: () => _controller.text = path,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(path),
+              ),
+            ),
+        ],
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_controller.text),
+          child: const Text('Use this'),
+        ),
       ],
     );
   }
