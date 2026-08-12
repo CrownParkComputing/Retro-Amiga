@@ -40,7 +40,7 @@
     </queries>
 
     <application
-        android:label="UAE4ARM 2026"
+        android:label="Amiga-Retro"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:banner="@drawable/tv_banner"
