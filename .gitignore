@@ -168,3 +168,7 @@ build-debug/
 .cache/
 # Local Gradle user home used by the Android build (multi-GB dependency cache)
 android/.gradle_home/
+
+# iOS cross-build trees (dependency sources and object files)
+native/ios/build/
+native/ios/out/

@@ -120,11 +120,12 @@ void ShowMessageBox(const char*, const char*) {}
 void ShowDiskInfo(const char*, const std::vector<std::string>&) {}
 void target_startup_msg(const char*, const char*) {}
 
-#ifdef AMIBERRY_HAS_CURL
-// Correct return type (std::string) so these do not collide with the real ones.
+// These are the only definitions in the tree; the self-updater that would have
+// supplied real ones went with the ImGui GUI. They were guarded on
+// AMIBERRY_HAS_CURL, which compiled them out on exactly the platforms without
+// curl - iOS - while their callers below stayed, leaving them undefined at link.
 std::string get_json_timestamp(const std::string&) { return ""; }
 std::string get_xml_timestamp(const std::string&) { return ""; }
-#endif
 
 #ifdef USE_GPIOD
 #include <gpiod.h>

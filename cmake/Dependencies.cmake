@@ -589,6 +589,12 @@ if(ANDROID)
     endif()
 
 elseif(IOS)
+    # sysconfig.h derives this from TargetConditionals.h, but only in
+    # translation units that include it. Headers such as gl_platform.h test
+    # AMIBERRY_IOS on their own and would otherwise take the Android/Linux
+    # branch, so define it for the whole target.
+    target_compile_definitions(${PROJECT_NAME} PRIVATE AMIBERRY_IOS)
+
     # SDL3 and SDL3_image must be pre-built and reachable via CMAKE_FIND_ROOT_PATH.
     # Most optional codecs and network libraries are unavailable or pointless here:
     # no FLAC or mpg123 (no CD audio ripping on a phone) and no CURL (self-update
@@ -596,10 +602,14 @@ elseif(IOS)
     find_package(SDL3 CONFIG REQUIRED)
     find_package(SDL3_image CONFIG REQUIRED)
     find_package(ZLIB REQUIRED)
-    find_package(PNG QUIET)
-    if(PNG_FOUND)
-        target_link_libraries(${PROJECT_NAME} PRIVATE PNG::PNG)
-    endif()
+    # Required, not optional: specialmonitors.cpp includes png.h unconditionally.
+    find_package(PNG REQUIRED)
+    target_link_libraries(${PROJECT_NAME} PRIVATE PNG::PNG)
+
+    # CHD CD images carry FLAC-compressed audio tracks and archivers/chd
+    # includes <FLAC/all.h> unconditionally, so this is required for CD32 and
+    # CDTV support rather than for ripping.
+    find_package(FLAC REQUIRED)
 
     find_package(nlohmann_json CONFIG QUIET)
     if(NOT nlohmann_json_FOUND)

@@ -411,9 +411,18 @@ endif()
 # FloppyBridge plugin source
 list(APPEND SOURCE_FILES external/floppybridge/src/floppybridge_lib.cpp)
 
-if(ANDROID)
-    # The Android app loads the core as a library from its SDL activity.
+if(ANDROID OR IOS)
+    # Mobile hosts load the core as a library rather than launching a binary:
+    # the Flutter app owns the process, and the emulator runs inside it.
     add_library(${PROJECT_NAME} SHARED ${SOURCE_FILES})
+    if(IOS)
+        # Without this the install name is the absolute build path, which does
+        # not exist on the device: the loader has to find the dylib next to the
+        # app binary in Frameworks/ instead.
+        set_target_properties(${PROJECT_NAME} PROPERTIES
+            INSTALL_NAME_DIR "@rpath"
+            BUILD_WITH_INSTALL_NAME_DIR TRUE)
+    endif()
 elseif(APPLE)
     add_executable(${PROJECT_NAME} MACOSX_BUNDLE ${SOURCE_FILES})
 else()

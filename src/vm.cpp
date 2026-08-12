@@ -334,7 +334,10 @@ bool uae_vm_free(void *address, size_t size)
 
 void uae_vm_jit_write_protect(bool enable_execute_mode)
 {
-#if defined(__APPLE__) && defined(CPU_AARCH64)
+// macOS on Apple silicon needs the W^X toggle around JIT writes. iOS has no
+// JIT at all (sysconfig.h leaves it undefined for AMIBERRY_IOS) and marks
+// pthread_jit_write_protect_np unavailable, so there is nothing to protect.
+#if defined(__APPLE__) && defined(CPU_AARCH64) && !defined(AMIBERRY_IOS)
 	pthread_jit_write_protect_np(enable_execute_mode ? 1 : 0);
 #else
 	(void)enable_execute_mode;
