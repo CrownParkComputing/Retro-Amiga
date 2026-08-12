@@ -18,6 +18,7 @@
 #include <dirent.h>
 #include <cstdlib>
 #include <ctime>
+#include <cmath>
 #include <csignal>
 #include <iostream>
 #include <fstream>

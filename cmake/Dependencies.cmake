@@ -1,7 +1,18 @@
 if (USE_OPENGL)
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_OPENGL)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE USE_GLES3)
-    target_link_libraries(${PROJECT_NAME} PRIVATE GLESv3 EGL)
+    if(IOS)
+        # OpenGLES comes in as a framework via AMIBERRY_PLATFORM_LIBS.
+        target_compile_definitions(${PROJECT_NAME} PRIVATE USE_GLES3)
+    elseif(ANDROID)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE USE_GLES3)
+        target_link_libraries(${PROJECT_NAME} PRIVATE GLESv3 EGL)
+    elseif(USE_GLES)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE USE_GLES3)
+        target_link_libraries(${PROJECT_NAME} PRIVATE GLESv2 EGL)
+    else()
+        find_package(OpenGL REQUIRED)
+        target_link_libraries(${PROJECT_NAME} PRIVATE OpenGL::GL)
+    endif()
 endif ()
 
 if (USE_VULKAN)
@@ -15,12 +26,22 @@ if (USE_VULKAN)
     endif()
 endif ()
 
+# SDL3's static lib exports a dependency on -lGLESv2, a Linux library name.
+# iOS provides GLES as -framework OpenGLES (linked via AMIBERRY_PLATFORM_LIBS),
+# so give the linker an empty target of that name to resolve against.
+if(IOS AND NOT TARGET GLESv2)
+    add_library(GLESv2 INTERFACE IMPORTED)
+endif()
+
+include(FindHelper)
+
 # SDL3
 target_compile_definitions(${PROJECT_NAME} PRIVATE USE_SDL3)
 message(STATUS "Using SDL3")
 
 include(FetchContent)
 
+if(ANDROID)
     # Android doesn't provide ALSA. Disable ALSA backends in bundled deps that try to detect it.
     set(SDL_ALSA OFF CACHE BOOL "Disable ALSA for Android" FORCE)
     set(SDL_ALSA_SHARED OFF CACHE BOOL "Disable ALSA shared loading for Android" FORCE)
@@ -566,31 +587,119 @@ include(FetchContent)
             target_include_directories(${PROJECT_NAME} PRIVATE "${libserialport_SOURCE_DIR}")
         endif()
     endif()
-    
+
+elseif(IOS)
+    # SDL3 and SDL3_image must be pre-built and reachable via CMAKE_FIND_ROOT_PATH.
+    # Most optional codecs and network libraries are unavailable or pointless here:
+    # no FLAC or mpg123 (no CD audio ripping on a phone) and no CURL (self-update
+    # is disabled, and the App Store would not allow it anyway).
+    find_package(SDL3 CONFIG REQUIRED)
+    find_package(SDL3_image CONFIG REQUIRED)
+    find_package(ZLIB REQUIRED)
+    find_package(PNG QUIET)
+    if(PNG_FOUND)
+        target_link_libraries(${PROJECT_NAME} PRIVATE PNG::PNG)
+    endif()
+
+    find_package(nlohmann_json CONFIG QUIET)
+    if(NOT nlohmann_json_FOUND)
+        FetchContent_Declare(json
+            GIT_REPOSITORY https://github.com/nlohmann/json.git
+            GIT_TAG v3.11.3
+            GIT_SHALLOW TRUE
+        )
+        set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(json)
+    endif()
+    target_link_libraries(${PROJECT_NAME} PRIVATE nlohmann_json::nlohmann_json)
+    target_link_libraries(${PROJECT_NAME} PRIVATE SDL3::SDL3 SDL3_image::SDL3_image)
+
+else()
+    # Desktop: system packages, as provided by apt, Homebrew or vcpkg.
+    find_package(SDL3 CONFIG REQUIRED)
+    find_package(SDL3_image CONFIG REQUIRED)
+    # FLAC's exported config names Threads::Threads in its link interface, so
+    # the target has to exist before find_package(FLAC) pulls that config in.
+    find_package(Threads REQUIRED)
+    find_package(FLAC REQUIRED)
+    if(USE_MPG123)
+        find_package(mpg123 REQUIRED)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_MPG123)
+    endif()
+    find_package(PNG REQUIRED)
+    find_package(ZLIB REQUIRED)
+    find_package(CURL REQUIRED)
+    find_package(nlohmann_json CONFIG REQUIRED)
+    target_link_libraries(${PROJECT_NAME} PRIVATE SDL3::SDL3)
+endif()
+
 if (USE_ZSTD)
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_ZSTD)
 
-    if(TARGET libzstd_static)
-        target_include_directories(${PROJECT_NAME} PRIVATE "${zstd_SOURCE_DIR}/lib")
-        target_link_libraries(${PROJECT_NAME} PRIVATE libzstd_static)
-    elseif(TARGET zstd)
-        target_include_directories(${PROJECT_NAME} PRIVATE "${zstd_SOURCE_DIR}/lib")
-        target_link_libraries(${PROJECT_NAME} PRIVATE zstd)
+    if(ANDROID)
+        # Built from source via FetchContent above.
+        if(TARGET libzstd_static)
+            target_include_directories(${PROJECT_NAME} PRIVATE "${zstd_SOURCE_DIR}/lib")
+            target_link_libraries(${PROJECT_NAME} PRIVATE libzstd_static)
+        elseif(TARGET zstd)
+            target_include_directories(${PROJECT_NAME} PRIVATE "${zstd_SOURCE_DIR}/lib")
+            target_link_libraries(${PROJECT_NAME} PRIVATE zstd)
+        else()
+            message(STATUS "ZSTD enabled but zstd target was not created - CHD compressed disk images will not be supported")
+        endif()
     else()
-        message(STATUS "ZSTD enabled but zstd target was not created - CHD compressed disk images will not be supported")
+        find_helper(ZSTD libzstd zstd.h zstd)
+        if(NOT ZSTD_FOUND)
+            message(STATUS "ZSTD library not found - CHD compressed disk images will not be supported")
+        else()
+            target_include_directories(${PROJECT_NAME} PRIVATE ${ZSTD_INCLUDE_DIRS})
+            target_link_libraries(${PROJECT_NAME} PRIVATE ${ZSTD_LIBRARIES})
+        endif()
     endif()
 endif ()
 
+# On Android these three are built via FetchContent above and linked through
+# their CMake targets; running find_helper there would inject a raw -l flag
+# that the NDK cannot resolve.
 if (USE_LIBSERIALPORT)
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_LIBSERIALPORT)
+    if(NOT ANDROID)
+        find_helper(LIBSERIALPORT libserialport libserialport.h serialport)
+        if(TARGET serialport)
+            target_link_libraries(${PROJECT_NAME} PRIVATE serialport)
+        elseif(LIBSERIALPORT_FOUND AND LIBSERIALPORT_LIBRARIES)
+            target_link_libraries(${PROJECT_NAME} PRIVATE ${LIBSERIALPORT_LIBRARIES})
+        else()
+            message(STATUS "LibSerialPort enabled but library was not found")
+        endif()
+    endif()
 endif ()
 
 if (USE_PORTMIDI)
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_PORTMIDI)
+    if(NOT ANDROID)
+        find_helper(PORTMIDI portmidi portmidi.h portmidi)
+        if(TARGET portmidi)
+            target_link_libraries(${PROJECT_NAME} PRIVATE portmidi)
+        elseif(PORTMIDI_FOUND AND PORTMIDI_LIBRARIES)
+            target_link_libraries(${PROJECT_NAME} PRIVATE ${PORTMIDI_LIBRARIES})
+        else()
+            message(STATUS "PortMidi enabled but library was not found")
+        endif()
+    endif()
 endif ()
 
 if (USE_LIBENET)
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_LIBENET)
+    if(NOT ANDROID)
+        find_helper(LIBENET libenet enet/enet.h enet)
+        if(NOT LIBENET_FOUND)
+            message(STATUS "LibENET library not found - network emulation will not be supported")
+        else()
+            target_include_directories(${PROJECT_NAME} PRIVATE ${LIBENET_INCLUDE_DIRS})
+            target_link_libraries(${PROJECT_NAME} PRIVATE ${LIBENET_LIBRARIES})
+        endif()
+    endif()
 endif ()
 
 if (USE_PCEM)
@@ -610,18 +719,24 @@ if(_SDL_INCLUDE_DIRS)
     target_include_directories(${PROJECT_NAME} PRIVATE ${_SDL_INCLUDE_DIRS})
 endif()
 
-# SDL3_image include dirs: FetchContent builds need the include path for <SDL3_image/SDL_image.h>.
-if(DEFINED sdl3_image_SOURCE_DIR)
+# SDL3_image include dirs: the Android FetchContent build needs the include path
+# for <SDL3_image/SDL_image.h>; packaged builds carry it on the imported target.
+if(ANDROID AND DEFINED sdl3_image_SOURCE_DIR)
     target_include_directories(${PROJECT_NAME} PRIVATE "${sdl3_image_SOURCE_DIR}/include")
 endif()
 
 set(libmt32emu_SHARED FALSE)
 add_subdirectory(external/mt32emu)
-add_subdirectory(external/floppybridge)
+if(NOT IOS)
+    # FloppyBridge is a dlopen'd plugin; iOS forbids loading unsigned code.
+    add_subdirectory(external/floppybridge)
+endif()
 add_subdirectory(external/capsimage)
 
-# SDL3_image is already linked via the FetchContent target above.
-if(TARGET SDL3_image::SDL3_image)
+# On Android SDL3_image is already linked via the FetchContent target above.
+if(ANDROID)
+    set(_SDL_IMAGE_LIB "")
+elseif(TARGET SDL3_image::SDL3_image)
     set(_SDL_IMAGE_LIB SDL3_image::SDL3_image)
 elseif(SDL3_IMAGE_LIBRARIES)
     set(_SDL_IMAGE_LIB ${SDL3_IMAGE_LIBRARIES})
@@ -641,10 +756,17 @@ set(AMIBERRY_LIBS
 if(TARGET CURL::libcurl)
     list(APPEND AMIBERRY_LIBS CURL::libcurl)
     target_compile_definitions(${PROJECT_NAME} PRIVATE AMIBERRY_HAS_CURL)
+elseif(CURL_FOUND)
+    list(APPEND AMIBERRY_LIBS ${CURL_LIBRARIES})
+    target_compile_definitions(${PROJECT_NAME} PRIVATE AMIBERRY_HAS_CURL)
 endif()
 
-if(TARGET FLAC)
+if(TARGET FLAC::FLAC)
+    list(APPEND AMIBERRY_LIBS FLAC::FLAC)
+elseif(TARGET FLAC)
     list(APPEND AMIBERRY_LIBS FLAC)
+elseif(FLAC_FOUND)
+    list(APPEND AMIBERRY_LIBS ${FLAC_LIBRARIES})
 endif()
 
 if(TARGET PNG::PNG)
@@ -661,6 +783,10 @@ if(TARGET MPG123::libmpg123)
     list(APPEND AMIBERRY_LIBS MPG123::libmpg123)
 elseif(TARGET libmpg123)
     list(APPEND AMIBERRY_LIBS libmpg123)
+elseif(mpg123_FOUND)
+    list(APPEND AMIBERRY_LIBS ${mpg123_LIBRARIES})
+elseif(MPG123_FOUND)
+    list(APPEND AMIBERRY_LIBS ${MPG123_LIBRARIES})
 endif()
 
 if(TARGET libzstd_static)
@@ -671,16 +797,31 @@ elseif(ZSTD_FOUND)
     list(APPEND AMIBERRY_LIBS ${ZSTD_LIBRARIES})
 endif()
 
-list(APPEND AMIBERRY_LIBS log android)
+if(ANDROID)
+    list(APPEND AMIBERRY_LIBS log android)
+elseif(NOT WIN32)
+    list(APPEND AMIBERRY_LIBS pthread)
+else()
+    # llvm-mingw (clang) on Windows does not auto-link winpthread.
+    list(APPEND AMIBERRY_LIBS winpthread)
+endif()
 
-# Do not add SDL as a raw library name; Android must link SDL via the CMake target above.
-list(REMOVE_ITEM AMIBERRY_LIBS SDL3 pthread)
+# Never link SDL by raw library name: every platform links it via its CMake
+# target, and a stray -lSDL3 picks up the wrong one (or nothing) at link time.
+list(REMOVE_ITEM AMIBERRY_LIBS SDL3)
+if(ANDROID)
+    list(REMOVE_ITEM AMIBERRY_LIBS pthread)
+endif()
 
 target_link_libraries(${PROJECT_NAME} PRIVATE ${AMIBERRY_LIBS})
 
 # capsimage and floppybridge are plugins (not linked into amiberry) but are
 # copied by post-build commands. Explicit dependencies ensure they are built.
-add_dependencies(${PROJECT_NAME} floppybridge capsimage)
+if(IOS)
+    add_dependencies(${PROJECT_NAME} capsimage)
+else()
+    add_dependencies(${PROJECT_NAME} floppybridge capsimage)
+endif()
 
 # Platform system libraries must come AFTER all other dependencies so that
 # static libs (enet, etc.) can resolve their system library references.

@@ -397,7 +397,14 @@ endif()
 # FloppyBridge plugin source
 list(APPEND SOURCE_FILES external/floppybridge/src/floppybridge_lib.cpp)
 
-add_library(${PROJECT_NAME} SHARED ${SOURCE_FILES})
+if(ANDROID)
+    # The Android app loads the core as a library from its SDL activity.
+    add_library(${PROJECT_NAME} SHARED ${SOURCE_FILES})
+elseif(APPLE)
+    add_executable(${PROJECT_NAME} MACOSX_BUNDLE ${SOURCE_FILES})
+else()
+    add_executable(${PROJECT_NAME} ${SOURCE_FILES})
+endif()
 
 # Pre-release flag (integer, usable in C if statements)
 if(VERSION_PRE_RELEASE)

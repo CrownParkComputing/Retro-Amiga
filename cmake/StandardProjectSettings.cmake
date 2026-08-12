@@ -96,3 +96,27 @@ endif()
 set(AMIBERRY_PLATFORM_INCLUDE_DIRS "")
 set(AMIBERRY_PLATFORM_LINK_DIRS "")
 set(AMIBERRY_PLATFORM_LIBS "")
+
+if(IOS)
+    # No Homebrew paths, and a different framework set to macOS: UIKit rather
+    # than AppKit, and no IOKit/DiskArbitration.
+    list(APPEND AMIBERRY_PLATFORM_LIBS
+        "-framework Foundation" "-framework CoreFoundation"
+        "-framework UIKit" "-framework OpenGLES" "iconv")
+elseif(CMAKE_SYSTEM_NAME MATCHES "Darwin")
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64")
+        list(APPEND AMIBERRY_PLATFORM_INCLUDE_DIRS "/opt/homebrew/include")
+        list(APPEND AMIBERRY_PLATFORM_LINK_DIRS "/opt/homebrew/lib")
+    else()
+        list(APPEND AMIBERRY_PLATFORM_INCLUDE_DIRS "/usr/local/include")
+        list(APPEND AMIBERRY_PLATFORM_LINK_DIRS "/usr/local/lib")
+    endif()
+    list(APPEND AMIBERRY_PLATFORM_LIBS
+        "-framework IOKit" "-framework AppKit" "-framework Foundation"
+        "-framework CoreFoundation" "-framework DiskArbitration" "iconv")
+endif()
+
+if(WIN32)
+    list(APPEND AMIBERRY_PLATFORM_LIBS
+        ws2_32 winmm imm32 version setupapi shlwapi advapi32 iphlpapi)
+endif()
