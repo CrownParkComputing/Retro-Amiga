@@ -5,12 +5,18 @@ import 'package:flutter/material.dart';
 import '../theme/amiga_theme.dart';
 
 /// The panels the workbench can show, in rail order.
+///
+/// Setups first, and first on opening, because a setup is the thing you can
+/// actually play: it names the machine, the memory and the Kickstart as well
+/// as the disk. The file list sits lower down and is called Files, because
+/// that is what it is - a list of what is on the device, and a place to make a
+/// setup from one of them.
 enum WorkbenchSection {
-  resume('Resume', Icons.play_circle_outline),
-  games('Games', Icons.videogame_asset_outlined),
   setups('Setups', Icons.tune),
+  resume('Resume', Icons.play_circle_outline),
   music('Music', Icons.music_note_outlined),
   history('History', Icons.history_edu_outlined),
+  files('Files', Icons.folder_open_outlined),
   settings('Settings', Icons.settings_outlined),
   about('About', Icons.info_outline);
 

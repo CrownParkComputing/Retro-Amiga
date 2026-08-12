@@ -3,6 +3,8 @@ import 'dart:io';
 import 'amiga_model.dart';
 import 'config_generator.dart';
 import 'host_paths.dart';
+import 'file_category.dart';
+import 'media_library.dart';
 import 'media_root.dart';
 import 'emulator_settings.dart';
 
@@ -32,6 +34,17 @@ class SavedConfig {
   final List<String> mediaPaths;
 
   bool uses(String path) => mediaPaths.contains(path);
+
+  /// The WHDLoad archive this setup runs, if it is a WHDLoad setup. The core
+  /// needs it as an argument, not just as a config key - see
+  /// Emulator.launchConfig.
+  String get whdloadArchive {
+    for (final String path in mediaPaths) {
+      final String lower = path.toLowerCase();
+      if (lower.endsWith('.lha') || lower.endsWith('.lzx')) return path;
+    }
+    return '';
+  }
 }
 
 /// Where saved setups live, and how they get there.
@@ -120,11 +133,46 @@ class ConfigStore {
     );
 
     text = await _relocateMissingMedia(text);
+    text = await _addMissingRoms(text);
 
     if (text != original) {
       file.writeAsStringSync(text);
     }
     return configPath;
+  }
+
+  /// Fills in ROMs a config was saved without.
+  ///
+  /// Setups written before the wizard asked CD consoles for their ROMs have
+  /// neither a Kickstart nor an extended ROM, and the core does not report
+  /// that: it starts, maps no ROM and shows nothing. Rather than make the user
+  /// rebuild the setup, the ROMs are chosen the same way the wizard now
+  /// chooses them.
+  static Future<String> _addMissingRoms(String text) async {
+    final AmigaModel? model = _modelFrom(text);
+    if (model == null) return text;
+
+    final bool hasKickstart =
+        RegExp(r'^kickstart_rom_file=\S', multiLine: true).hasMatch(text);
+    final bool hasExtended =
+        RegExp(r'^kickstart_ext_rom_file=\S', multiLine: true).hasMatch(text);
+    if (hasKickstart && (!model.needsExtendedRom || hasExtended)) return text;
+
+    final MediaIndex index = await MediaLibrary.cached();
+    final List<MediaFile> roms = index.of(FileCategory.roms);
+    if (roms.isEmpty) return text;
+
+    final StringBuffer added = StringBuffer();
+    if (!hasKickstart) {
+      final MediaFile? rom = RomPicker.kickstartFor(model, roms);
+      if (rom != null) added.writeln('kickstart_rom_file=${rom.path}');
+    }
+    if (model.needsExtendedRom && !hasExtended) {
+      final MediaFile? ext = RomPicker.extendedRomFor(model, roms);
+      if (ext != null) added.writeln('kickstart_ext_rom_file=${ext.path}');
+    }
+    if (added.isEmpty) return text;
+    return '$added$text';
   }
 
   /// Re-points paths whose file has moved to wherever that file is now.

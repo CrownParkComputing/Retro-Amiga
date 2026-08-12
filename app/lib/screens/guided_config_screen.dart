@@ -245,7 +245,10 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
       await ConfigStore.save(_settings, _name.text);
       if (launch) {
         final String path = (await ConfigStore.saveCurrent(_settings)).path;
-        await Emulator.launchConfig(path);
+        await Emulator.launchConfig(
+          path,
+          whdloadArchive: _settings.whdloadFilename,
+        );
       }
       if (mounted) Navigator.of(context).pop(true);
     } on Exception catch (e) {

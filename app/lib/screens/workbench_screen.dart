@@ -31,7 +31,7 @@ class WorkbenchScreen extends StatefulWidget {
 class _WorkbenchScreenState extends State<WorkbenchScreen> {
   static const Duration _idleDelay = Duration(seconds: 30);
 
-  WorkbenchSection _section = WorkbenchSection.games;
+  WorkbenchSection _section = WorkbenchSection.setups;
   bool _idle = false;
   Timer? _idleTimer;
 
@@ -130,7 +130,7 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
 
   Widget _panel() {
     switch (_section) {
-      case WorkbenchSection.games:
+      case WorkbenchSection.files:
         return const LibraryPanel();
       case WorkbenchSection.setups:
         return const ConfigurationsScreen(embedded: true);

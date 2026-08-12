@@ -41,7 +41,20 @@ class Emulator {
   }
 
   /// Runs a saved .uae configuration.
-  static Future<void> launchConfig(String configPath) {
-    return launch(<String>['--rescan-roms', '--config', configPath, '-G']);
+  ///
+  /// [whdloadArchive] is passed separately because a config cannot start a
+  /// WHDLoad game. The core's booter is triggered by --autoload (or by the
+  /// .lha arriving as a bare argument), not by the whdload_filename key: with
+  /// only the key set the machine boots to Workbench and the game never runs,
+  /// and nothing in the log mentions WHDLoad at all.
+  static Future<void> launchConfig(String configPath,
+      {String whdloadArchive = ''}) {
+    return launch(<String>[
+      '--rescan-roms',
+      '--config',
+      configPath,
+      if (whdloadArchive.isNotEmpty) ...<String>['--autoload', whdloadArchive],
+      '-G',
+    ]);
   }
 }

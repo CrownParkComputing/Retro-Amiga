@@ -78,17 +78,25 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 		}
 		setupOverlayContainer();
 		ensureVirtualKeyboardOverlay();
+
+		// Only what is worth reaching for mid-game, in the order it is wanted.
+		//
+		// The column used to hold eight buttons - keyboard, controller, aspect,
+		// floppy, pause, edit config, reboot, quit - which is a menu pretending
+		// to be a toolbar. Aspect, reboot and edit belong to the setup that
+		// launched the game: changing them here means changing them again next
+		// time, in the place they are actually stored.
+		//
+		// What is left is what a session needs: the pad, the keyboard, a disk
+		// swap when there is more than one disk, and a way out.
+		ensureControllerButtonOverlay();
 		if (shouldShowKeyboardButton()) {
 			ensureKeyboardButtonOverlay();
 		}
-		ensureControllerButtonOverlay();
-		ensureAspectButtonOverlay();
 		if (configHasFloppyDrive(0)) {
 			ensureFloppyButtonOverlay();
 		}
 		ensurePauseButtonOverlay();
-		ensureEditConfigButtonOverlay();
-		ensureRebootButtonOverlay();
 		ensureQuitButtonOverlay();
 		enterImmersiveMode();
 		registerBackHandler();

@@ -242,7 +242,10 @@ class _LibraryPanelState extends State<LibraryPanel> {
     // Heals paths written by a previous install before the core is handed the
     // file; see ConfigStore.repairConfigFile.
     await ConfigStore.repairConfigFile(config.path);
-    await Emulator.launchConfig(config.path);
+    await Emulator.launchConfig(
+      config.path,
+      whdloadArchive: config.whdloadArchive,
+    );
   }
 
   /// Opens the wizard with the file already in the right drive. The wizard is

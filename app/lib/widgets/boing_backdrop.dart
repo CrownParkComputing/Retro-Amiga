@@ -142,9 +142,18 @@ class _BoingPainter extends CustomPainter {
     // The whole screen is the room. The ball travels the full width, and
     // bounces from just under the top to just above the bottom, staying a
     // radius inside on every side so it never clips off.
+    //
+    // The sweep is a triangle wave, not a sine: a sine slows to a stop at each
+    // wall, so the chequer wound down to nothing and unwound again, which
+    // reads as the texture snapping back. A ball crossing a room travels at
+    // one speed and reverses when it hits something, and that is what a
+    // triangle gives - constant speed, so constant roll, with the direction
+    // flipping at the wall.
     final double travel = size.width - radius * 2;
-    final double sweep = math.sin(seconds * 0.62);
-    final double cx = radius + (0.5 + sweep * 0.5) * travel;
+    const double crossingsPerSecond = 0.22;
+    final double phase = (seconds * crossingsPerSecond * 2) % 2.0;
+    final double sweep = phase < 1 ? phase : 2 - phase; // 0..1..0
+    final double cx = radius + sweep * travel;
 
     final double top = radius + size.height * 0.04;
     final double floor = size.height - radius - size.height * 0.10;
@@ -164,10 +173,11 @@ class _BoingPainter extends CustomPainter {
     );
 
     // Rolling without slipping: the rotation angle follows distance
-    // travelled. Negative because increasing the spin moves the face of the
-    // ball left, so travelling right needs it to decrease.
-    const double turnsPerSweep = 6.0;
-    _paintBall(canvas, Offset(cx, cy), radius, -sweep * turnsPerSweep);
+    // travelled, which the triangle sweep already is. Negative because
+    // increasing the spin moves the face of the ball left, so travelling right
+    // needs it to decrease.
+    const double turnsPerCrossing = 8.0;
+    _paintBall(canvas, Offset(cx, cy), radius, -sweep * turnsPerCrossing);
 
     _paintScroller(canvas, size);
   }

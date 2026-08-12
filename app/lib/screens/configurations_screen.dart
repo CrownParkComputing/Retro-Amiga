@@ -103,7 +103,10 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
       // Heals paths written by a previous install before the core is handed
       // the file; see ConfigStore.repairConfigFile.
       await ConfigStore.repairConfigFile(config.path);
-      await Emulator.launchConfig(config.path);
+      await Emulator.launchConfig(
+        config.path,
+        whdloadArchive: config.whdloadArchive,
+      );
     } on Exception catch (e) {
       if (mounted) setState(() => _error = '$e');
     }
