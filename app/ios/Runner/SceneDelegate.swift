@@ -65,12 +65,10 @@ class SceneDelegate: FlutterSceneDelegate {
       return
     }
 
-    // Register the plugins here for the same reason the channel lives here:
-    // our AppDelegate is not the one that runs, so its
-    // GeneratedPluginRegistrant.register call never happens and every plugin
-    // channel is left with no handler. A call into one then never returns -
-    // path_provider simply hangs rather than failing - so this is why.
-    GeneratedPluginRegistrant.register(with: controller.engine)
+    // Deliberately NOT registering plugins here. iosbox's substituted
+    // AppDelegate already does it, and a second pass aborts the app with
+    // "Duplicate plugin key". On an Xcode build our own AppDelegate covers it,
+    // so both paths are handled without this.
 
     let channel = FlutterMethodChannel(
       name: SceneDelegate.channelName,
@@ -80,6 +78,21 @@ class SceneDelegate: FlutterSceneDelegate {
       switch call.method {
       case "platformName":
         result("ios")
+
+      // Asked of the host rather than path_provider. That package's iOS
+      // implementation binds through package:objective_c FFI, whose native
+      // symbols the iosbox build does not link, and the failure surfaces as
+      // "Couldn't resolve native function 'DOBJC_initializeApi'" on the first
+      // call. These two paths are all it was being used for.
+      case "appSupportDirectory":
+        result(
+          NSSearchPathForDirectoriesInDomains(
+            .applicationSupportDirectory, .userDomainMask, true).first)
+
+      case "documentsDirectory":
+        result(
+          NSSearchPathForDirectoriesInDomains(
+            .documentDirectory, .userDomainMask, true).first)
 
       case "launch":
         guard let args = (call.arguments as? [String: Any])?["args"] as? [String] else {

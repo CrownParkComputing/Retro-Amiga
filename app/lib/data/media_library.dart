@@ -2,11 +2,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 
-import 'package:path_provider/path_provider.dart';
 
 import 'package:flutter/services.dart';
 
 import 'file_category.dart';
+import 'host_paths.dart';
 
 /// One file the scan found.
 class MediaFile {
@@ -106,8 +106,7 @@ class MediaLibrary {
     if (Platform.isAndroid) {
       return <String>['/sdcard'];
     }
-    final Directory documents = await getApplicationDocumentsDirectory();
-    return <String>[documents.path];
+    return <String>[await HostPaths.documents()];
   }
 
   /// Asked of the host rather than a plugin: this is two Android calls, and
@@ -243,8 +242,7 @@ class MediaLibrary {
   }
 
   static Future<File> _indexPath() async {
-    final Directory base = await getApplicationSupportDirectory();
-    return File('${base.path}/$_indexFile');
+    return File('${await HostPaths.appSupport()}/$_indexFile');
   }
 
   static Future<void> _persist(MediaIndex index) async {

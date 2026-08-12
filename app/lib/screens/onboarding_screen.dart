@@ -2,11 +2,11 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../data/amiga_model.dart';
 import '../data/app_prefs.dart';
 import '../data/file_category.dart';
+import '../data/host_paths.dart';
 import '../data/media_library.dart';
 import '../widgets/amiga_logo.dart';
 
@@ -121,7 +121,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       if (result == null || result.files.isEmpty) return;
 
       setState(() => _scanning = true);
-      final Directory documents = await getApplicationDocumentsDirectory();
+      final Directory documents = Directory(await HostPaths.documents());
       int copied = 0;
       for (final PlatformFile picked in result.files) {
         final String? path = picked.path;

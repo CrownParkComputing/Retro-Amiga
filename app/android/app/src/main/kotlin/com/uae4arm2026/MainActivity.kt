@@ -37,6 +37,14 @@ class MainActivity : FlutterActivity() {
 					}
 					"platformName" -> result.success("android")
 
+					// Served here rather than by path_provider, whose iOS
+					// implementation pulls in an FFI package the iosbox build
+					// cannot link. Keeping both platforms on the same channel
+					// keeps the Dart side identical.
+					"appSupportDirectory" -> result.success(filesDir.absolutePath)
+
+					"documentsDirectory" -> result.success(filesDir.absolutePath)
+
 					// Scanning for media means walking folders, which scoped
 					// storage cannot do - it hands back one file at a time
 					// through a picker. All-files access is the only way to

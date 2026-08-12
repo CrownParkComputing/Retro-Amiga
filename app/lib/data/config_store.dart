@@ -1,9 +1,8 @@
 import 'dart:io';
 
-import 'package:path_provider/path_provider.dart';
-
 import 'amiga_model.dart';
 import 'config_generator.dart';
+import 'host_paths.dart';
 import 'emulator_settings.dart';
 
 /// A saved setup on the shelf.
@@ -36,8 +35,7 @@ class ConfigStore {
   static const String currentSettingsFile = '.current_settings.uae';
 
   static Future<Directory> configDirectory() async {
-    final Directory base = await getApplicationSupportDirectory();
-    final Directory dir = Directory('${base.path}/conf');
+    final Directory dir = Directory('${await HostPaths.appSupport()}/conf');
     if (!dir.existsSync()) {
       dir.createSync(recursive: true);
     }
