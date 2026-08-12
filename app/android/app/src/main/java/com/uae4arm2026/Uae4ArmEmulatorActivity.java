@@ -69,7 +69,13 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 		cleanCache();
 		super.onCreate(savedInstanceState);
 		currentConfigPath = extractConfigPath(getIntent());
-		attachFlutterOverlay();
+		// The overlay can be switched off from adb - `--ez noOverlay true` -
+		// so a display problem can be bisected on the device without two
+		// builds. It is a second Flutter engine and a second SurfaceView over
+		// SDL's, which is a lot of machinery to have to rule out by guesswork.
+		if (!getIntent().getBooleanExtra("noOverlay", false)) {
+			attachFlutterOverlay();
+		}
 		setupOverlayContainer();
 		ensureVirtualKeyboardOverlay();
 		if (shouldShowKeyboardButton()) {

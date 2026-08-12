@@ -32,6 +32,19 @@ final class EmulatorOverlay {
 	/** Dart entry point, annotated @pragma('vm:entry-point') in overlay_main.dart. */
 	private static final String ENTRYPOINT = "emulatorOverlayMain";
 
+	/**
+	 * The library that entry point lives in.
+	 *
+	 * Not optional. The two-argument DartEntrypoint looks for the function in
+	 * lib/main.dart and nowhere else, so leaving this out fails with "Could not
+	 * resolve main entrypoint function" - and the failure is quiet in the worst
+	 * way: the engine does not start, the FlutterView is left stacked over
+	 * SDL's surface drawing nothing, and the emulator runs invisibly behind an
+	 * overlay that never paints.
+	 */
+	private static final String ENTRYPOINT_LIBRARY =
+		"package:uae4arm2026/overlay_main.dart";
+
 	private final Activity activity;
 	private FlutterEngine engine;
 	private FlutterView view;
@@ -55,7 +68,16 @@ final class EmulatorOverlay {
 			engine.getDartExecutor().executeDartEntrypoint(
 				new DartExecutor.DartEntrypoint(
 					io.flutter.FlutterInjector.instance().flutterLoader().findAppBundlePath(),
+					ENTRYPOINT_LIBRARY,
 					ENTRYPOINT));
+
+			// If Dart did not start there is nothing to show, and an attached
+			// view would hide the emulator rather than decorate it.
+			if (!engine.getDartExecutor().isExecutingDart()) {
+				Log.e(TAG, "the overlay engine did not start; running without it");
+				detach();
+				return;
+			}
 
 			new MethodChannel(engine.getDartExecutor().getBinaryMessenger(), CHANNEL)
 				.setMethodCallHandler((call, result) -> {

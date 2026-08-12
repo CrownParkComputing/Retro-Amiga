@@ -1,8 +1,20 @@
 import 'package:flutter/material.dart';
 
+// Imported so the emulator overlay's entry point exists in the compiled
+// bundle. The kernel contains only what is reachable from main(), and nothing
+// else references this library - it is entered by name from the emulator
+// Activity. Without the import the engine fails with "Could not resolve main
+// entrypoint function", the overlay never paints, and because its surface sits
+// over SDL's the emulator runs invisibly behind it.
+import 'overlay_main.dart' show emulatorOverlayMain;
+
 import 'data/app_prefs.dart';
 import 'screens/workbench_screen.dart';
 import 'screens/onboarding_screen.dart';
+
+/// Keeps the tear-off above from being treated as an unused import.
+// ignore: unused_element
+const Object _overlayEntryPoint = emulatorOverlayMain;
 
 void main() {
   runApp(const AmigaRetroApp());
