@@ -1,60 +1,62 @@
 import 'package:flutter/material.dart';
 
-/// The Amiga check mark, drawn rather than shipped as a bitmap so it stays
-/// crisp at any size and on any screen density.
+/// The Amiga tick, drawn rather than shipped as a bitmap so it stays crisp at
+/// any size and density.
 ///
-/// Two overlapping ticks, the front one white and the one behind it red,
-/// offset up and to the right — the mark Commodore put on the machines.
+/// The colours are the AmigaOS boot tick's, sampled from the artwork the
+/// launcher used: red at the top of the long arm running down through orange
+/// and yellow into green at the elbow. Not the red-and-white Commodore
+/// wordmark tick - this is the one people picture when they think of an Amiga
+/// booting.
 class AmigaLogo extends StatelessWidget {
-  const AmigaLogo({super.key, this.height = 44, this.frontColour});
+  const AmigaLogo({super.key, this.height = 44});
 
   final double height;
-
-  /// The front tick. Defaults to white, which reads on a dark background;
-  /// pass something darker when the backdrop is light.
-  final Color? frontColour;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       height: height,
-      width: height * _AmigaCheckPainter.aspect,
-      child: CustomPaint(
-        painter: _AmigaCheckPainter(front: frontColour ?? Colors.white),
-      ),
+      width: height * _AmigaTickPainter.aspect,
+      child: const CustomPaint(painter: _AmigaTickPainter()),
     );
   }
 }
 
-class _AmigaCheckPainter extends CustomPainter {
-  const _AmigaCheckPainter({required this.front});
+class _AmigaTickPainter extends CustomPainter {
+  const _AmigaTickPainter();
 
-  final Color front;
+  /// Width relative to height: the tick leans right, so it needs the room.
+  static const double aspect = 1.1;
 
-  /// Width relative to height, chosen so the two ticks and the offset fit
-  /// without clipping.
-  static const double aspect = 1.35;
+  /// Sampled from the original artwork, ordered along the tick.
+  static const List<Color> _bands = <Color>[
+    Color(0xFFFE3814), // red, top of the long arm
+    Color(0xFFFE8801), // orange
+    Color(0xFFFED802), // yellow
+    Color(0xFFEEEF00), // yellow-green
+    Color(0xFF5CE468), // green
+    Color(0xFF17CE76), // green-cyan, into the elbow
+  ];
 
-  static const Color _behind = Color(0xFFE1122F);
+  static const Color _outline = Color(0xFF182C48);
 
-  /// The tick as a closed path in a unit square, so it scales by multiply.
-  Path _tick(Size size, double dx, double dy) {
+  Path _tick(Size size) {
     final double w = size.width;
     final double h = size.height;
-    // Points run: outer top of the long arm, down to the elbow, out to the
-    // short arm's tip, and back up the inside edge.
-    final List<Offset> points = <Offset>[
-      Offset(0.62, 0.02),
-      Offset(0.99, 0.02),
-      Offset(0.34, 0.98),
-      Offset(0.01, 0.55),
-      Offset(0.19, 0.36),
-      Offset(0.36, 0.60),
+    // Long arm down from top right, elbow bottom left, short arm back up.
+    const List<Offset> points = <Offset>[
+      Offset(0.72, 0.04),
+      Offset(0.99, 0.16),
+      Offset(0.40, 0.96),
+      Offset(0.02, 0.56),
+      Offset(0.16, 0.40),
+      Offset(0.41, 0.66),
     ];
     final Path path = Path();
     for (int i = 0; i < points.length; i++) {
-      final double x = (points[i].dx + dx) * w;
-      final double y = (points[i].dy + dy) * h;
+      final double x = points[i].dx * w;
+      final double y = points[i].dy * h;
       if (i == 0) {
         path.moveTo(x, y);
       } else {
@@ -67,16 +69,32 @@ class _AmigaCheckPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // The unit paths are drawn into a square region; the extra width in the
-    // box is what the rear tick's offset uses.
-    final Size square = Size(size.height, size.height);
-    final Paint paint = Paint()..isAntiAlias = true;
+    final Path path = _tick(size);
 
-    canvas.drawPath(_tick(square, 0.26, -0.02), paint..color = _behind);
-    canvas.drawPath(_tick(square, 0.0, 0.02), paint..color = front);
+    // The bands run down the tick rather than across, which is what makes it
+    // read as the Amiga one and not a generic rainbow.
+    final Paint fill = Paint()
+      ..isAntiAlias = true
+      ..shader = const LinearGradient(
+        begin: Alignment.topRight,
+        end: Alignment.bottomLeft,
+        colors: _bands,
+      ).createShader(Offset.zero & size);
+
+    canvas.drawPath(path, fill);
+
+    // A dark edge, as the original has: without it the yellow disappears on a
+    // light background.
+    canvas.drawPath(
+      path,
+      Paint()
+        ..isAntiAlias = true
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = size.height * 0.045
+        ..color = _outline,
+    );
   }
 
   @override
-  bool shouldRepaint(_AmigaCheckPainter oldDelegate) =>
-      oldDelegate.front != front;
+  bool shouldRepaint(_AmigaTickPainter oldDelegate) => false;
 }
