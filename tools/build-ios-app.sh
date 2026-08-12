@@ -47,6 +47,15 @@ IPA="$REPO_ROOT/app/build/iosbox/Runner.ipa"
 # to add link flags to the Runner target. The core is copied in afterwards and
 # found at runtime through @rpath, and the IPA is repacked because iosbox has
 # already zipped one without it.
+# iosbox cannot compile Assets.xcassets - actool is macOS-only - so the app
+# bundle comes out with no icon at all. Loose PNGs in the bundle root, named by
+# CFBundleIconFiles in Info.plist, are the mechanism that predates asset
+# catalogues and iOS still honours it.
+if [ -d "$REPO_ROOT/app/ios/Runner/LooseIcons" ]; then
+    echo "==> bundling the launcher icon"
+    cp "$REPO_ROOT/app/ios/Runner/LooseIcons/"*.png "$APP/" 2>/dev/null || true
+fi
+
 if [ -f "$CORE" ]; then
     echo "==> bundling the emulator core"
     mkdir -p "$APP/Frameworks"
