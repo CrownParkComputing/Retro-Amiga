@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:path_provider/path_provider.dart';
 
@@ -158,6 +159,11 @@ class MediaLibrary {
 
   /// Walks [roots] and returns everything recognisable.
   ///
+  /// The walk runs in its own isolate. It is deliberately synchronous inside
+  /// there - listSync is far quicker than the async variant for a deep tree -
+  /// and on the UI isolate that combination freezes the app mid-scan, which
+  /// looks exactly like a spinner that never stops.
+  ///
   /// [maxDepth] keeps a stray symlink or a deep collection from turning this
   /// into a full-disk crawl. Unreadable directories are skipped rather than
   /// aborting the scan: on Android plenty of them are unreadable by design.
@@ -167,9 +173,38 @@ class MediaLibrary {
     int fileLimit = 5000,
   }) async {
     final List<String> scanRoots = roots ?? await defaultRoots();
-    final List<MediaFile> found = <MediaFile>[];
 
-    Future<void> walk(Directory dir, int depth) async {
+    // Only sendable values cross the isolate boundary, so the walk returns
+    // plain maps and they are turned back into MediaFiles here.
+    final List<Map<String, Object>> raw = await Isolate.run(
+      () => _walk(scanRoots, maxDepth, fileLimit),
+    );
+
+    final List<MediaFile> found = <MediaFile>[];
+    for (final Map<String, Object> entry in raw) {
+      final MediaFile? file = MediaFile.fromJson(entry);
+      if (file != null) found.add(file);
+    }
+
+    found.sort(
+      (MediaFile a, MediaFile b) =>
+          a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+    );
+
+    final MediaIndex index = MediaIndex(roots: scanRoots, files: found);
+    await _persist(index);
+    return index;
+  }
+
+  /// Runs inside the scan isolate. Top-level work only: no plugins, no UI.
+  static List<Map<String, Object>> _walk(
+    List<String> roots,
+    int maxDepth,
+    int fileLimit,
+  ) {
+    final List<Map<String, Object>> found = <Map<String, Object>>[];
+
+    void walkDir(Directory dir, int depth) {
       if (depth > maxDepth || found.length >= fileLimit) return;
       List<FileSystemEntity> entries;
       try {
@@ -181,7 +216,7 @@ class MediaLibrary {
         if (found.length >= fileLimit) return;
         if (_shouldSkip(entry.path)) continue;
         if (entry is Directory) {
-          await walk(entry, depth + 1);
+          walkDir(entry, depth + 1);
         } else if (entry is File) {
           final FileCategory? category = FileCategory.fromPath(entry.path);
           if (category == null) continue;
@@ -191,26 +226,20 @@ class MediaLibrary {
           } on FileSystemException {
             continue;
           }
-          found.add(
-            MediaFile(path: entry.path, category: category, size: size),
-          );
+          found.add(<String, Object>{
+            'path': entry.path,
+            'category': category.name,
+            'size': size,
+          });
         }
       }
     }
 
-    for (final String root in scanRoots) {
+    for (final String root in roots) {
       final Directory dir = Directory(root);
-      if (dir.existsSync()) await walk(dir, 0);
+      if (dir.existsSync()) walkDir(dir, 0);
     }
-
-    found.sort(
-      (MediaFile a, MediaFile b) =>
-          a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-    );
-
-    final MediaIndex index = MediaIndex(roots: scanRoots, files: found);
-    await _persist(index);
-    return index;
+    return found;
   }
 
   static Future<File> _indexPath() async {

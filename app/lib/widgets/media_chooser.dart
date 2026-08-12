@@ -42,7 +42,16 @@ class _MediaChooserState extends State<MediaChooser> {
   }
 
   Future<void> _loadCached() async {
-    final MediaIndex index = await MediaLibrary.cached();
+    MediaIndex index = const MediaIndex.empty();
+    try {
+      index = await MediaLibrary.cached();
+    } on Object catch (e) {
+      // Catching Object, not Exception: an Error here would otherwise leave
+      // _loaded false and the spinner up for ever.
+      if (mounted) {
+        setState(() => _notice = 'Could not read the media index: $e');
+      }
+    }
     if (!mounted) return;
     setState(() {
       _index = index;
@@ -83,7 +92,7 @@ class _MediaChooserState extends State<MediaChooser> {
               : null;
         });
       }
-    } on Exception catch (e) {
+    } on Object catch (e) {
       if (mounted) {
         setState(() {
           _scanning = false;
