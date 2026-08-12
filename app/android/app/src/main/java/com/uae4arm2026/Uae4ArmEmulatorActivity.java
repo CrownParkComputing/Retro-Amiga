@@ -69,6 +69,7 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 		cleanCache();
 		super.onCreate(savedInstanceState);
 		currentConfigPath = extractConfigPath(getIntent());
+		attachFlutterOverlay();
 		setupOverlayContainer();
 		ensureVirtualKeyboardOverlay();
 		if (shouldShowKeyboardButton()) {
@@ -829,6 +830,12 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 	public static native void nativeSetExternalControllerMode(int mode);
 	public static native void nativeApplyControllerMapping(int[] sdlToTarget);
 
+	// Host-drawn touch controls, fed by the Flutter overlay.
+	public static native void nativePadAttach(int pad);
+	public static native void nativePadDirection(int pad, boolean left, boolean right, boolean up, boolean down);
+	public static native void nativePadButton(int pad, int button, boolean pressed);
+	public static native void nativePadReleaseAll(int pad);
+
 	private void registerBackHandler() {
 		if (Build.VERSION.SDK_INT >= 33) {
 			backCallback = this::handleBackPress;
@@ -842,8 +849,34 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 		handleBackPress();
 	}
 
+	private EmulatorOverlay flutterOverlay;
+
+	/** Stacks the Flutter-drawn controls over SDL's surface. */
+	private void attachFlutterOverlay() {
+		flutterOverlay = new EmulatorOverlay(this);
+		flutterOverlay.attach(new EmulatorOverlay.PadListener() {
+			@Override public void onAttach(int pad) { nativePadAttach(pad); }
+
+			@Override public void onDirection(int pad, boolean left, boolean right, boolean up, boolean down) {
+				nativePadDirection(pad, left, right, up, down);
+			}
+
+			@Override public void onButton(int pad, int button, boolean pressed) {
+				nativePadButton(pad, button, pressed);
+			}
+
+			@Override public void onReleaseAll(int pad) { nativePadReleaseAll(pad); }
+
+			@Override public void onMenuRequested() { runOnUiThread(() -> showPauseMenu()); }
+		});
+	}
+
 	@Override
 	protected void onDestroy() {
+		if (flutterOverlay != null) {
+			flutterOverlay.detach();
+			flutterOverlay = null;
+		}
 		isRunning = false;
 		resumeFromPauseMenuIfNeeded();
 		if (Build.VERSION.SDK_INT >= 33 && backCallback != null) {

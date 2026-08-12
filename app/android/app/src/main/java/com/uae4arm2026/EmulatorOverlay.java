@@ -1,0 +1,127 @@
+package com.uae4arm2026;
+
+import android.app.Activity;
+import android.util.Log;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+
+import io.flutter.embedding.android.FlutterSurfaceView;
+import io.flutter.embedding.android.FlutterView;
+import io.flutter.embedding.engine.FlutterEngine;
+import io.flutter.embedding.engine.dart.DartExecutor;
+import io.flutter.plugin.common.MethodChannel;
+
+/**
+ * The in-game controls, drawn by Flutter on top of the emulator.
+ *
+ * SDL renders straight into its own SurfaceView, which is what keeps the
+ * emulation path zero-copy, so the controls cannot be part of the launcher's
+ * widget tree. Instead a second Flutter engine runs a transparent FlutterView
+ * stacked over that SurfaceView in the same Activity: Flutter draws the pad,
+ * SDL draws the Amiga, and neither has to know about the other.
+ *
+ * Touches on the pad come back over a MethodChannel and go straight into the
+ * emulated joystick through the native pad API, so a drawn pad is
+ * indistinguishable from a physical one.
+ */
+final class EmulatorOverlay {
+
+	private static final String TAG = "Uae4Arm-Overlay";
+	private static final String CHANNEL = "uae4arm2026/overlay";
+
+	/** Dart entry point, annotated @pragma('vm:entry-point') in overlay_main.dart. */
+	private static final String ENTRYPOINT = "emulatorOverlayMain";
+
+	private final Activity activity;
+	private FlutterEngine engine;
+	private FlutterView view;
+
+	interface PadListener {
+		void onAttach(int pad);
+		void onDirection(int pad, boolean left, boolean right, boolean up, boolean down);
+		void onButton(int pad, int button, boolean pressed);
+		void onReleaseAll(int pad);
+		void onMenuRequested();
+	}
+
+	EmulatorOverlay(Activity activity) {
+		this.activity = activity;
+	}
+
+	/** Builds the engine and stacks a transparent FlutterView over the emulator. */
+	void attach(PadListener listener) {
+		try {
+			engine = new FlutterEngine(activity);
+			engine.getDartExecutor().executeDartEntrypoint(
+				new DartExecutor.DartEntrypoint(
+					io.flutter.FlutterInjector.instance().flutterLoader().findAppBundlePath(),
+					ENTRYPOINT));
+
+			new MethodChannel(engine.getDartExecutor().getBinaryMessenger(), CHANNEL)
+				.setMethodCallHandler((call, result) -> {
+					switch (call.method) {
+						case "padAttach":
+							listener.onAttach(arg(call.argument("pad"), 1));
+							result.success(true);
+							break;
+						case "padDirection":
+							listener.onDirection(
+								arg(call.argument("pad"), 1),
+								Boolean.TRUE.equals(call.argument("left")),
+								Boolean.TRUE.equals(call.argument("right")),
+								Boolean.TRUE.equals(call.argument("up")),
+								Boolean.TRUE.equals(call.argument("down")));
+							result.success(true);
+							break;
+						case "padButton":
+							listener.onButton(
+								arg(call.argument("pad"), 1),
+								arg(call.argument("button"), 0),
+								Boolean.TRUE.equals(call.argument("pressed")));
+							result.success(true);
+							break;
+						case "padReleaseAll":
+							listener.onReleaseAll(arg(call.argument("pad"), 1));
+							result.success(true);
+							break;
+						case "openMenu":
+							listener.onMenuRequested();
+							result.success(true);
+							break;
+						default:
+							result.notImplemented();
+					}
+				});
+
+			// renderTransparently=true is the whole trick: without it the
+			// FlutterView paints an opaque background and hides the emulator.
+			final FlutterSurfaceView surfaceView = new FlutterSurfaceView(activity, true);
+			view = new FlutterView(activity, surfaceView);
+			view.attachToFlutterEngine(engine);
+
+			activity.addContentView(view, new FrameLayout.LayoutParams(
+				ViewGroup.LayoutParams.MATCH_PARENT,
+				ViewGroup.LayoutParams.MATCH_PARENT));
+
+			engine.getLifecycleChannel().appIsResumed();
+		} catch (Exception e) {
+			Log.e(TAG, "could not attach the Flutter overlay", e);
+			detach();
+		}
+	}
+
+	private static int arg(Integer value, int fallback) {
+		return value == null ? fallback : value;
+	}
+
+	void detach() {
+		if (view != null) {
+			view.detachFromFlutterEngine();
+			view = null;
+		}
+		if (engine != null) {
+			engine.destroy();
+			engine = null;
+		}
+	}
+}

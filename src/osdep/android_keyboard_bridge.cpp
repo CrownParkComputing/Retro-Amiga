@@ -136,6 +136,35 @@ Java_com_uae4arm2026_Uae4ArmEmulatorActivity_nativeSetExternalControllerMode(JNI
 	uae4arm_host_set_external_controller_mode(static_cast<int>(mode));
 }
 
+/* Host-drawn touch controls. The Flutter overlay owns the pad and feeds the
+   emulated one through these; see uae4arm_host.h. */
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_uae4arm2026_Uae4ArmEmulatorActivity_nativePadAttach(JNIEnv*, jclass, jint pad)
+{
+	uae4arm_host_pad_attach(static_cast<int>(pad));
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_uae4arm2026_Uae4ArmEmulatorActivity_nativePadDirection(JNIEnv*, jclass, jint pad,
+	jboolean left, jboolean right, jboolean up, jboolean down)
+{
+	uae4arm_host_pad_direction(static_cast<int>(pad), left, right, up, down);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_uae4arm2026_Uae4ArmEmulatorActivity_nativePadButton(JNIEnv*, jclass, jint pad,
+	jint button, jboolean pressed)
+{
+	uae4arm_host_pad_button(static_cast<int>(pad), static_cast<int>(button), pressed);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_uae4arm2026_Uae4ArmEmulatorActivity_nativePadReleaseAll(JNIEnv*, jclass, jint pad)
+{
+	uae4arm_host_pad_release_all(static_cast<int>(pad));
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_uae4arm2026_Uae4ArmEmulatorActivity_nativeApplyControllerMapping(JNIEnv* env, jclass, jintArray sdlToTarget)
 {
