@@ -44,7 +44,13 @@ enum FileCategory {
 
   whdloadGames('lha', 'WHDLoad Games', <String>{'lha', 'lzx', 'lzh'}),
 
-  archives('archives', 'Archives', <String>{'zip', '7z', 'rar', 'tar', 'gz'});
+  archives('archives', 'Archives', <String>{'zip', '7z', 'rar', 'tar', 'gz'}),
+
+  /// Tracker music, played by the launcher's own replayer rather than the
+  /// core. "mod.name" is the Amiga's own convention and is still how most of
+  /// the archives store them, so the prefix counts as much as the suffix -
+  /// see [fromPath].
+  music('music', 'Music', <String>{'mod', 'med', 'mdl', 'xm', 's3m', 'it'});
 
   const FileCategory(this.folder, this.displayName, this.extensions);
 
@@ -63,9 +69,21 @@ enum FileCategory {
   }
 
   static FileCategory? fromPath(String path) {
-    final int dot = path.lastIndexOf('.');
-    if (dot < 0 || dot == path.length - 1) return null;
-    return fromExtension(path.substring(dot + 1));
+    final int slash = path.lastIndexOf(RegExp(r'[/\\]'));
+    final String name = slash < 0 ? path : path.substring(slash + 1);
+
+    // Amiga modules are named the other way round - mod.axel_f, not
+    // axel_f.mod - because AmigaDOS had no extensions. Both are still in
+    // circulation, and a scan that only looked at the suffix would miss half
+    // of any real collection.
+    final String lower = name.toLowerCase();
+    if (lower.startsWith('mod.') || lower.startsWith('med.')) {
+      return FileCategory.music;
+    }
+
+    final int dot = name.lastIndexOf('.');
+    if (dot < 0 || dot == name.length - 1) return null;
+    return fromExtension(name.substring(dot + 1));
   }
 
   /// Archives can hold any of the above, so a picker for [category] should

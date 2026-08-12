@@ -211,6 +211,8 @@ set(SOURCE_FILES
         src/osdep/fsdb_host.cpp
         src/osdep/clipboard.cpp
         src/osdep/uae4arm_host.cpp
+        src/osdep/protracker.cpp
+        src/osdep/music_player.cpp
         src/atonce.cpp
         src/zz9000.cpp
         src/fpp_softfloat.cpp

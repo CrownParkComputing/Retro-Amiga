@@ -84,6 +84,24 @@ bool uae4arm_host_get_correct_aspect(void);
 /* sdl_to_target maps SDL button indices onto target button indices. */
 void uae4arm_host_apply_controller_mapping(const int* sdl_to_target, int count);
 
+/* ---- music ------------------------------------------------------------- */
+/*
+ * The launcher's own music, which is a ProTracker replayer on its own audio
+ * device - see protracker.h. It runs whether or not anything is emulating, so
+ * a host may call these before the emulator has ever started.
+ */
+
+bool uae4arm_host_music_play(const char* path);
+void uae4arm_host_music_stop(void);
+void uae4arm_host_music_set_paused(bool paused);
+bool uae4arm_host_music_is_paused(void);
+bool uae4arm_host_music_is_playing(void);
+/* Valid until the next call; copy it if you need to keep it. */
+const char* uae4arm_host_music_title(void);
+/* 0..1 peak level, for a visualiser. */
+float uae4arm_host_music_level(void);
+void uae4arm_host_music_set_volume(float volume);
+
 /* ---- inbound: host-drawn controls ------------------------------------- */
 /*
  * Lets a host that draws its own touch controls feed the emulation directly.

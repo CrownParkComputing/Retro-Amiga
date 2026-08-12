@@ -112,6 +112,27 @@ class SceneDelegate: FlutterSceneDelegate {
                               details: nil))
         }
 
+      case "musicPlay":
+        let path = (call.arguments as? [String: Any])?["path"] as? String ?? ""
+        result(EmulatorHost.shared.musicPlay(path: path))
+
+      case "musicStop":
+        EmulatorHost.shared.musicStop()
+        result(nil)
+
+      case "musicSetPaused":
+        let paused = (call.arguments as? [String: Any])?["paused"] as? Bool ?? false
+        EmulatorHost.shared.musicSetPaused(paused)
+        result(nil)
+
+      case "musicSetVolume":
+        let volume = (call.arguments as? [String: Any])?["volume"] as? Double ?? 1
+        EmulatorHost.shared.musicSetVolume(volume)
+        result(nil)
+
+      case "musicState":
+        result(EmulatorHost.shared.musicState())
+
       default:
         result(FlutterMethodNotImplemented)
       }

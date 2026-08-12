@@ -25,6 +25,14 @@ class MediaFile {
     return slash < 0 ? path : path.substring(slash + 1);
   }
 
+  /// The name without its extension, which is what a setup should be called:
+  /// "Lotus Turbo Challenge", not "Lotus Turbo Challenge.adf".
+  String get title {
+    final String base = name;
+    final int dot = base.lastIndexOf('.');
+    return dot <= 0 ? base : base.substring(0, dot);
+  }
+
   /// The folder it sits in, shown to tell two files of the same name apart.
   String get folder {
     final int slash = path.lastIndexOf(RegExp(r'[/\\]'));

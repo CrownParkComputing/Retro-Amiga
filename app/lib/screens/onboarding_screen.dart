@@ -56,6 +56,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       case FileCategory.whdloadGames:
         return 'assets/machines/a1200.png';
       case FileCategory.archives:
+      case FileCategory.music:
         return 'assets/machines/default.png';
     }
   }

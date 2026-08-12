@@ -100,6 +100,69 @@ final class EmulatorHost {
     }
   }
 
+  // MARK: - Music
+  //
+  // The launcher's ProTracker player lives in the same dylib but is
+  // independent of emulation: it opens its own audio device and runs whether
+  // or not a machine is running. So these load the core without starting it.
+
+  private typealias PlayFn = @convention(c) (UnsafePointer<CChar>?) -> Bool
+  private typealias VoidFn = @convention(c) () -> Void
+  private typealias BoolFn = @convention(c) () -> Bool
+  private typealias SetBoolFn = @convention(c) (Bool) -> Void
+  private typealias FloatFn = @convention(c) () -> Float
+  private typealias SetFloatFn = @convention(c) (Float) -> Void
+  private typealias StringFn = @convention(c) () -> UnsafePointer<CChar>?
+
+  private func symbol(_ name: String) -> UnsafeMutableRawPointer? {
+    guard let handle = load() else { return nil }
+    return dlsym(handle, name)
+  }
+
+  func musicPlay(path: String) -> Bool {
+    guard let fn = symbol("uae4arm_host_music_play") else { return false }
+    return path.withCString { unsafeBitCast(fn, to: PlayFn.self)($0) }
+  }
+
+  func musicStop() {
+    guard let fn = symbol("uae4arm_host_music_stop") else { return }
+    unsafeBitCast(fn, to: VoidFn.self)()
+  }
+
+  func musicSetPaused(_ paused: Bool) {
+    guard let fn = symbol("uae4arm_host_music_set_paused") else { return }
+    unsafeBitCast(fn, to: SetBoolFn.self)(paused)
+  }
+
+  func musicSetVolume(_ volume: Double) {
+    guard let fn = symbol("uae4arm_host_music_set_volume") else { return }
+    unsafeBitCast(fn, to: SetFloatFn.self)(Float(volume))
+  }
+
+  /// Everything the music UI polls, in one call - it asks several times a
+  /// second and a channel round trip per field would be wasteful.
+  func musicState() -> [String: Any] {
+    func flag(_ name: String) -> Bool {
+      guard let fn = symbol(name) else { return false }
+      return unsafeBitCast(fn, to: BoolFn.self)()
+    }
+    var title = ""
+    if let fn = symbol("uae4arm_host_music_title"),
+       let raw = unsafeBitCast(fn, to: StringFn.self)() {
+      title = String(cString: raw)
+    }
+    var level: Double = 0
+    if let fn = symbol("uae4arm_host_music_level") {
+      level = Double(unsafeBitCast(fn, to: FloatFn.self)())
+    }
+    return [
+      "playing": flag("uae4arm_host_music_is_playing"),
+      "paused": flag("uae4arm_host_music_is_paused"),
+      "title": title,
+      "level": level,
+    ]
+  }
+
   enum HostError: Error {
     case message(String)
   }

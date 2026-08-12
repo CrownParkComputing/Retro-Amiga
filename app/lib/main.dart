@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'data/app_prefs.dart';
-import 'screens/configurations_screen.dart';
+import 'screens/workbench_screen.dart';
 import 'screens/onboarding_screen.dart';
 
 void main() {
@@ -63,7 +63,7 @@ class _RootState extends State<_Root> {
     if (_setupComplete == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    if (_setupComplete!) return const ConfigurationsScreen();
+    if (_setupComplete!) return const WorkbenchScreen();
     return OnboardingScreen(
       onFinished: () => setState(() => _setupComplete = true),
     );

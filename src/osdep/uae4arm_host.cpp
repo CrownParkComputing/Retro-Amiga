@@ -15,6 +15,7 @@
 #include "inputdevice.h"
 #include "target.h"
 #include "amiberry_input.h"
+#include "protracker.h"
 
 extern void uae_restart(struct uae_prefs* p, int opengui, const TCHAR* cfgfile);
 extern int amiberry_main(int argc, char* argv[]);
@@ -126,6 +127,50 @@ void uae4arm_host_apply_controller_mapping(const int* sdl_to_target, int count)
 	if (!sdl_to_target || count <= 0)
 		return;
 	apply_android_controller_remap(sdl_to_target, count);
+}
+
+/* ---- music ------------------------------------------------------------- */
+/* Straight pass-through; the player owns all the state. Kept here so a host
+   binds one header rather than two. */
+
+bool uae4arm_host_music_play(const char* path)
+{
+	return music_player_play(path);
+}
+
+void uae4arm_host_music_stop(void)
+{
+	music_player_stop();
+}
+
+void uae4arm_host_music_set_paused(bool paused)
+{
+	music_player_set_paused(paused);
+}
+
+bool uae4arm_host_music_is_paused(void)
+{
+	return music_player_is_paused();
+}
+
+bool uae4arm_host_music_is_playing(void)
+{
+	return music_player_is_playing();
+}
+
+const char* uae4arm_host_music_title(void)
+{
+	return music_player_title();
+}
+
+float uae4arm_host_music_level(void)
+{
+	return music_player_level();
+}
+
+void uae4arm_host_music_set_volume(float volume)
+{
+	music_player_set_volume(volume);
 }
 
 /* ---- inbound: host-drawn controls ------------------------------------- */

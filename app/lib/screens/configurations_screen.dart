@@ -7,7 +7,12 @@ import 'guided_config_screen.dart';
 
 /// The shelf: every saved setup as a card, tap to play.
 class ConfigurationsScreen extends StatefulWidget {
-  const ConfigurationsScreen({super.key});
+  const ConfigurationsScreen({super.key, this.embedded = false});
+
+  /// True when this sits inside the workbench panel rather than being the
+  /// whole screen. The workbench already shows the masthead and owns the
+  /// background, so an embedded shelf drops both and keeps only the list.
+  final bool embedded;
 
   @override
   State<ConfigurationsScreen> createState() => _ConfigurationsScreenState();
@@ -112,15 +117,18 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: widget.embedded ? Colors.transparent : null,
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _newSetup,
         icon: const Icon(Icons.add),
         label: const Text('New setup'),
       ),
       body: SafeArea(
+        // The workbench panel has already inset and clipped this.
+        top: !widget.embedded,
         child: Column(
           children: <Widget>[
-            const _Masthead(),
+            if (!widget.embedded) const _Masthead(),
             if (_error != null)
               Container(
                 width: double.infinity,
