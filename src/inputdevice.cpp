@@ -46,9 +46,6 @@
 #include "ar.h"
 #include "gui.h"
 #include "disk.h"
-#ifdef __ANDROID__
-#include "osdep/android_keyboard_bridge.h"
-#endif
 #include "sounddep/sound.h"
 #include "savestate.h"
 #ifdef ARCADIA
@@ -4885,11 +4882,7 @@ static bool inputdevice_handle_inputcode2(int monid, int code, int state, const 
 	switch (code)
 	{
 	case AKS_ENTERGUI:
-#ifdef __ANDROID__
-		android_show_pause_menu();
-#else
 		gui_display (-1);
-#endif
 		setsystime ();
 		break;
 	case AKS_SCREENSHOT_FILE:

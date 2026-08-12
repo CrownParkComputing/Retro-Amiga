@@ -210,6 +210,7 @@ set(SOURCE_FILES
         src/osdep/dpi_handler.cpp
         src/osdep/fsdb_host.cpp
         src/osdep/clipboard.cpp
+        src/osdep/uae4arm_host.cpp
         src/osdep/android_keyboard_bridge.cpp
         src/uae4arm/upstream_overrides.cpp
         src/osdep/amiberry_hardfile.cpp

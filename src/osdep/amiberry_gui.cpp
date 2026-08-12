@@ -51,7 +51,7 @@
 #endif
 #endif
 
-#include "android_keyboard_bridge.h"
+#include "uae4arm_host.h"
 
 int emulating = 0;
 bool config_loaded = false;
@@ -854,14 +854,7 @@ void gui_update()
    presents the menu and drives the core back through the host command API. */
 void gui_display(int shortcut)
 {
-#ifdef __ANDROID__
-	if (shortcut == -1)
-	{
-		android_show_pause_menu();
-	}
-#else
-	(void)shortcut;
-#endif
+	uae4arm_host_show_menu(shortcut);
 }
 
 static void gui_flicker_led2(int led, int unitnum, int status)

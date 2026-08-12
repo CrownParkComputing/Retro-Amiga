@@ -2293,8 +2293,6 @@ static bool tertiary_touch_moved = false;
 static Uint64 tertiary_touch_start_time = 0;
 static bool three_finger_tap_eligible = false;
 
-#include "android_keyboard_bridge.h"
-
 static constexpr Uint64 TOUCH_TAP_MAX_DURATION = 500;
 static constexpr Uint64 TOUCH_RIGHT_CLICK_HOLD_DELAY = 350;
 static constexpr float TOUCH_TAP_MOVE_THRESHOLD = 0.02f;
@@ -2410,11 +2408,7 @@ static void handle_finger_event(const SDL_Event& event)
 				&& touch_is_tap(secondary_touch_start_x, secondary_touch_start_y, event.tfinger.x, event.tfinger.y, secondary_touch_moved, secondary_touch_start_time)
 				&& touch_is_tap(tertiary_touch_start_x, tertiary_touch_start_y, event.tfinger.x, event.tfinger.y, tertiary_touch_moved, tertiary_touch_start_time);
 			if (all_taps) {
-#ifdef __ANDROID__
-				android_show_pause_menu();
-#else
 				gui_display(-1);
-#endif
 			}
 			three_finger_tap_eligible = false;
 		}
@@ -8407,6 +8401,9 @@ int amiberry_main(int argc, char* argv[])
 		write_log("SDL_Init(0) failed: %s\n", SDL_GetError());
 	}
 #endif
+	// Wire the core to its host UI before anything can ask for a menu.
+	android_install_host_callbacks();
+
 	settings_dir.clear();
 	amiberry_conf_file.clear();
 	amiberry_ini_file.clear();
