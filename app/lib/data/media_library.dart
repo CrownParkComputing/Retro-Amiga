@@ -195,6 +195,52 @@ class MediaLibrary {
     return index;
   }
 
+  /// Whether a file categorised as a ROM is actually an Amiga Kickstart.
+  ///
+  /// Needed because `bin` is a Kickstart extension and also every other
+  /// emulator's ROM extension: without this the ROM list on a shared device is
+  /// mostly other machines' files. A Kickstart opens with the ROM identifier
+  /// word - 0x1111 for 256K, 0x1114 for 512K, which is the word memory.cpp
+  /// itself tests - followed by the 68k reset jump, 0x4EF9. Cloanto's encrypted
+  /// ROMs carry a text header instead and are accepted on that, since the core
+  /// decrypts them given a rom.key.
+  static bool looksLikeKickstart(File file) {
+    try {
+      final RandomAccessFile handle = file.openSync();
+      try {
+        final List<int> head = handle.readSync(11);
+        if (head.length < 4) return false;
+
+        final int identifier = (head[0] << 8) | head[1];
+        final int resetJump = (head[2] << 8) | head[3];
+        if ((identifier == 0x1111 || identifier == 0x1114) &&
+            resetJump == 0x4EF9) {
+          return true;
+        }
+
+        // "AMIROMTYPE1", Cloanto's encrypted ROM header.
+        const List<int> amiromtype1 = <int>[
+          0x41, 0x4D, 0x49, 0x52, 0x4F, 0x4D, 0x54, 0x59, 0x50, 0x45, 0x31,
+        ];
+        if (head.length >= amiromtype1.length) {
+          bool matched = true;
+          for (int i = 0; i < amiromtype1.length; i++) {
+            if (head[i] != amiromtype1[i]) {
+              matched = false;
+              break;
+            }
+          }
+          if (matched) return true;
+        }
+        return false;
+      } finally {
+        handle.closeSync();
+      }
+    } on FileSystemException {
+      return false;
+    }
+  }
+
   /// Runs inside the scan isolate. Top-level work only: no plugins, no UI.
   static List<Map<String, Object>> _walk(
     List<String> roots,
@@ -223,6 +269,11 @@ class MediaLibrary {
           try {
             size = entry.lengthSync();
           } on FileSystemException {
+            continue;
+          }
+          // Only ROMs are checked by content: the extension is ambiguous for
+          // those and good enough for the rest.
+          if (category == FileCategory.roms && !looksLikeKickstart(entry)) {
             continue;
           }
           found.add(<String, Object>{
