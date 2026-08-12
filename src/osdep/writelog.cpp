@@ -922,7 +922,11 @@ void write_log(const char* format, ...)
 	va_list parms;
 	const bool has_libretro_log = false;
 
-#ifndef __ANDROID__
+/* iOS is bracketed with Android here for the same reason: neither platform has
+   a console to turn on, so without this every write_log call is dropped and a
+   failure to boot leaves no trace anywhere. Both route to the system log
+   below. */
+#if !defined(__ANDROID__) && !defined(AMIBERRY_IOS)
 	if (!has_libretro_log && !amiberry_options.write_logfile && !console_logging && !debugfile)
 		return;
 #endif
@@ -950,11 +954,16 @@ void write_log(const char* format, ...)
 		count++;
 #if defined(__ANDROID__)
 		__android_log_print(ANDROID_LOG_INFO, "Amiberry", "%s", bufp);
+#elif defined(AMIBERRY_IOS)
+		/* stderr rather than os_log: it is what a debugserver launch captures,
+		   which is the only way to read this on a device. */
+		fprintf(stderr, "Amiberry: %s", bufp);
+		fflush(stderr);
 #endif
 	if (SHOW_CONSOLE || console_logging) {
 		if (lfdetected && ts)
 			writeconsole(ts);
-#if !defined(__ANDROID__)
+#if !defined(__ANDROID__) && !defined(AMIBERRY_IOS)
 		writeconsole(bufp);
 #endif
 	}

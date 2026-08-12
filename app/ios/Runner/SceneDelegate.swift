@@ -101,13 +101,16 @@ class SceneDelegate: FlutterSceneDelegate {
                               details: nil))
           return
         }
-        // Not wired yet. The core dylib ships in the bundle with its host API
-        // exported, but starting SDL inside a Flutter-owned UIApplication
-        // still needs the run-loop work, so say so rather than fail silently.
-        result(FlutterError(code: "unimplemented",
-                            message: "The iOS emulator host is not wired up yet "
-                                   + "(\(args.count) arguments were ready to pass).",
-                            details: nil))
+        do {
+          try EmulatorHost.shared.launch(args: args)
+          result(nil)
+        } catch EmulatorHost.HostError.message(let message) {
+          result(FlutterError(code: "launch_failed", message: message, details: nil))
+        } catch {
+          result(FlutterError(code: "launch_failed",
+                              message: error.localizedDescription,
+                              details: nil))
+        }
 
       default:
         result(FlutterMethodNotImplemented)

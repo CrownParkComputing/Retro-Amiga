@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/services.dart';
 
 /// Where the app may write, asked of the host.
@@ -40,4 +42,42 @@ class HostPaths {
     _documents = path;
     return path;
   }
+
+  /// Rewrites a path saved by an earlier install so it points at this one.
+  ///
+  /// iOS hands the app a fresh data container UUID on every install, so an
+  /// absolute path stored during setup - /var/mobile/Containers/Data/
+  /// Application/`<UUID>`/Documents/kick13.rom - is dead the next time the app
+  /// is installed. The file is still there; only the UUID moved. Nothing
+  /// reports this: the config loads, the core cannot open the Kickstart, and
+  /// the Amiga sits on a black screen.
+  ///
+  /// A path that still resolves is returned untouched, so this is a no-op on
+  /// Android and for anything outside the container.
+  static Future<String> repair(String stored) async {
+    if (stored.isEmpty) return stored;
+    if (FileSystemEntity.typeSync(stored) != FileSystemEntityType.notFound) {
+      return stored;
+    }
+
+    final Match? match = _containerPath.firstMatch(stored);
+    if (match == null) return stored;
+
+    // documents() is <container>/Documents, so its parent is the container we
+    // are running in now.
+    final String container =
+        File(await documents()).parent.path; // trims /Documents
+    final String repaired = '$container/${match.group(1)}';
+    if (FileSystemEntity.typeSync(repaired) == FileSystemEntityType.notFound) {
+      // Nothing recovered; leave the original so the failure names the path
+      // the user actually chose.
+      return stored;
+    }
+    return repaired;
+  }
+
+  /// Captures whatever follows the container UUID, e.g. "Documents/kick13.rom".
+  static final RegExp _containerPath = RegExp(
+    r'/Containers/Data/Application/[0-9A-Fa-f-]{36}/(.+)$',
+  );
 }

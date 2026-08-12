@@ -1398,7 +1398,11 @@ bool doInit(AmigaMonitor* mon)
 	write_log(_T("SDL video driver: %hs\n"), drv ? drv : "unknown");
 
 	// Detect GLES-only drivers (e.g., KMSDRM on Raspberry Pi)
-#ifdef __ANDROID__
+	// iOS belongs with Android: there is no desktop GL there at all, so asking
+	// for a 3.3 Core context still returns a context - an ES 2.0 one - and the
+	// failure only shows up later as "version '300' is not supported" when the
+	// shader generator, which correctly detected ES, emits #version 300 es.
+#if defined(__ANDROID__) || defined(AMIBERRY_IOS)
 	const bool likely_gles_only = true;
 #else
 	const bool likely_gles_only = (drv && (strcmp(drv, "KMSDRM") == 0));

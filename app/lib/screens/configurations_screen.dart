@@ -95,6 +95,9 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
 
   Future<void> _play(SavedConfig config) async {
     try {
+      // Heals paths written by a previous install before the core is handed
+      // the file; see ConfigStore.repairConfigFile.
+      await ConfigStore.repairConfigFile(config.path);
       await Emulator.launchConfig(config.path);
     } on Exception catch (e) {
       if (mounted) setState(() => _error = '$e');

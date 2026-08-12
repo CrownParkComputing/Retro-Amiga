@@ -17,9 +17,15 @@
 #include "amiberry_input.h"
 
 extern void uae_restart(struct uae_prefs* p, int opengui, const TCHAR* cfgfile);
+extern int amiberry_main(int argc, char* argv[]);
 extern void apply_android_controller_remap(const int* sdl_to_target, int count);
 
 static uae4arm_host_callbacks host_callbacks;
+
+int uae4arm_host_run(int argc, char** argv)
+{
+	return amiberry_main(argc, argv);
+}
 
 void uae4arm_host_set_callbacks(const uae4arm_host_callbacks* callbacks)
 {

@@ -41,6 +41,18 @@ typedef struct uae4arm_host_callbacks
  * not keep it alive. */
 void uae4arm_host_set_callbacks(const uae4arm_host_callbacks* callbacks);
 
+/* ---- starting the emulator -------------------------------------------- */
+
+/*
+ * Runs the emulator. Takes the same argv the command line does and does not
+ * return until emulation ends.
+ *
+ * This exists so a host that loads the core as a library has a stable C name
+ * to call. amiberry_main is C++ and exports mangled, which a dlsym'ing host
+ * would have to hardcode.
+ */
+int uae4arm_host_run(int argc, char** argv);
+
 /* ---- outbound: core -> host ------------------------------------------- */
 
 void uae4arm_host_show_menu(int shortcut);
