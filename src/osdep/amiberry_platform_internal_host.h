@@ -30,6 +30,22 @@ static inline bool osdep_platform_init_sdl()
 		return false;
 	}
 
+	// SDL 3.2.x KMSDRM's default triple-buffer path leaves interval-0 page flips
+	// asynchronous, avoiding the immediate drain imposed by the double-buffer
+	// hint. Keep that lower-latency path; the shared-window terminal guard avoids
+	// submitting another GUI flip after the exit decision.
+	// SDL 3.4+ uses the hint for its existing blocking atomic presentation path.
+	const char* video_driver = SDL_GetCurrentVideoDriver();
+	if (video_driver && SDL_strcasecmp(video_driver, "kmsdrm") == 0) {
+		if (SDL_GetVersion() < SDL_VERSIONNUM(3, 4, 0)) {
+			write_log("KMSDRM: using SDL 3.2.x default triple-buffered presentation\n");
+		} else if (SDL_SetHintWithPriority(SDL_HINT_VIDEO_DOUBLE_BUFFER, "1", SDL_HINT_OVERRIDE)) {
+			write_log("KMSDRM: enabled double-buffered blocking atomic presentation\n");
+		} else {
+			write_log("KMSDRM: failed to enable double-buffered presentation: %s\n", SDL_GetError());
+		}
+	}
+
 	// Enable native IME for international text input
 	SDL_SetHint(SDL_HINT_IME_IMPLEMENTED_UI, "1");
 
@@ -57,14 +73,18 @@ static inline void osdep_platform_shutdown_sdl()
 static inline void osdep_platform_init_ui()
 {
 	normalcursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
+	if (!normalcursor)
+		normalcursor = SDL_GetDefaultCursor();
 	clipboard_init();
 }
 
 static inline void osdep_platform_sync_keyboard_leds()
 {
 #if defined(__linux__)
-	ioctl(0, KDGKBLED, &kbd_flags);
-	ioctl(0, KDGETLED, &kbd_led_status);
+	if (!amiberry_led_console_get_flags(&kbd_flags))
+		return;
+	if (!amiberry_led_console_get_leds(&kbd_led_status))
+		return;
 	if (kbd_flags & 07 & LED_CAP)
 	{
 		kbd_led_status |= LED_CAP;
@@ -75,7 +95,7 @@ static inline void osdep_platform_sync_keyboard_leds()
 		kbd_led_status &= ~LED_CAP;
 		inputdevice_do_keyboard(AK_CAPSLOCK, 0);
 	}
-	ioctl(0, KDSETLED, kbd_led_status);
+	amiberry_led_console_set_leds(kbd_led_status);
 #else
 	int caps = SDL_GetModState();
 	caps = caps & SDL_KMOD_CAPS;

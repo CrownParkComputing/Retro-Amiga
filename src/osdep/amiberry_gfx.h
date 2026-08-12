@@ -5,6 +5,8 @@
 #include "uae/types.h"
 #include <vector>
 
+#include "amiberry_gui_automation.h"
+
 class IRenderer;
 
 #define MAX_DISPLAYS 10
@@ -16,6 +18,8 @@ class IRenderer;
 #ifdef AMIBERRY
 extern SDL_PixelFormat pixel_format;
 extern uae_u8* p96_get_render_buffer_pointer(int monid);
+extern bool p96_is_zero_copy_enabled(int monid);
+extern bool p96_is_zero_copy_surface(int monid, const void* pixels);
 #endif
 
 #define GUI_WIDTH  860
@@ -76,6 +80,19 @@ struct winuae_currentmode {
 	int freq;
 };
 
+struct AutoCropState {
+	const SDL_Surface* surface = nullptr;
+	int surface_w = 0;
+	int surface_h = 0;
+	SDL_Rect rect{};
+	SDL_Rect guard_rect{};
+	SDL_Rect pending_rect{};
+	int shrink_frames = 0;
+	bool valid = false;
+	bool guard_valid = false;
+	bool pending_valid = false;
+};
+
 #define MAX_AMIGAMONITORS 4
 struct AmigaMonitor {
 	int monitor_id;
@@ -104,9 +121,12 @@ struct AmigaMonitor {
 	bool ratio_sizing;
 	bool render_ok, wait_render;
 	int dpi;
+	int desktop_width = 0;
+	int desktop_height = 0;
 
 	int in_sizemove;
 	bool focus_transitioning;
+	bool moved_during_focus_transition;
 	int pre_focus_x, pre_focus_y;
 	int manual_painting_needed;
 	int minimized;
@@ -130,6 +150,8 @@ struct AmigaMonitor {
 	float hidpi_scale_x = 1.0f;
 	float hidpi_scale_y = 1.0f;
 	bool hidpi_needs_scaling = false;
+	int logical_window_width = 0;
+	int logical_window_height = 0;
 };
 extern struct AmigaMonitor* amon;
 extern struct AmigaMonitor AMonitors[MAX_AMIGAMONITORS];
@@ -163,6 +185,28 @@ inline SDL_Surface* get_amiga_surface(int monid = 0)
 	return amiga_surface;
 }
 
+enum class AmiberryGuiViewportSpace
+{
+	SdlRendererLogical,
+	DrawablePixels
+};
+
+// Publish the exact source rectangle and presented viewport used by a renderer.
+// Drawable-pixel viewports are converted to SDL logical window coordinates once.
+void amiberry_gui_geometry_publish(int monid, const AmiberryGfxRect& source,
+	const AmiberryGfxRect& viewport, AmiberryGuiViewportSpace viewport_space,
+	int drawable_width, int drawable_height, const char* renderer_name);
+void amiberry_gui_geometry_invalidate(int monid = -1);
+void amiberry_gui_geometry_set_active_monitor(int monid);
+AmiberryGuiGeometrySnapshot amiberry_gui_geometry_snapshot();
+bool amiberry_actionable_screenshot_supported(int monid);
+bool amiberry_capture_actionable_screenshot(int monid, const std::string& path,
+	AmiberryGuiGeometrySnapshot& snapshot);
+AmiberryGuiGuardedInputResult amiberry_gui_guarded_input_apply(
+	const AmiberryGuiGuardedInputRequest& request,
+	const AmiberryGuiGuardedInputEnvironment& environment,
+	const AmiberryGuiInputMutation& mutation);
+
 extern SDL_DisplayMode sdl_mode;
 extern const char* sdl_video_driver;
 extern SDL_Cursor* normalcursor;
@@ -191,8 +235,14 @@ extern void gfx_unlock();
 struct MultiDisplay* getdisplay(const uae_prefs* p, int monid);
 extern int getrefreshrate(int monid, int width, int height);
 extern void auto_crop_image();
+extern void auto_crop_display_dimensions(int w, int h, int hres, int vres, bool is_ntsc,
+	int& display_w, int& display_h);
+extern void apply_auto_crop_policy(const SDL_Surface* surface, SDL_Rect& rect,
+	int hres, int vres, bool is_ntsc, AutoCropState& state, bool reset);
 extern bool vkbd_allowed(int monid);
 extern float calculate_desired_aspect(const AmigaMonitor* mon);
+extern float calculate_rtg_integer_scale(int render_width, int render_height,
+	int src_width, int src_height, int scale_limit);
 extern void quit_drawing_thread();
 extern void start_drawing_thread();
 extern bool target_graphics_buffer_update(const int monid, const bool force);
@@ -201,3 +251,14 @@ extern bool force_auto_crop;
 extern SDL_GamepadButton vkbd_button;
 extern void GetWindowRect(SDL_Window* window, SDL_Rect* rect);
 extern bool kmsdrm_detected;
+extern bool no_wm_detected;
+// Detects environments without a window manager: KMSDRM (always) or x11
+// without a WM (e.g. Batocera). Self-contained — probes SDL's video
+// driver itself, so callers don't need to pre-set kmsdrm_detected.
+// Sets BOTH kmsdrm_detected and no_wm_detected when KMSDRM is in use.
+// Idempotent: a definitive detection latches; if SDL video isn't
+// initialized yet (driver is null), the call is a no-op so a later call
+// can retry. Override via AMIBERRY_NO_WM env var ("1"/"0") on non-KMSDRM
+// platforms; KMSDRM is never overridable.
+void detect_no_wm();
+bool get_kmsdrm_drawable_size(SDL_Window* window, int* width, int* height);

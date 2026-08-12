@@ -652,6 +652,7 @@ extern struct picasso96_state_struct picasso96_state[MAX_AMIGAMONITORS];
 extern void picasso_enablescreen(int monid, int on);
 extern void picasso_refresh(int monid);
 extern void init_hz_p96(int monid);
+extern void picasso_update_native_cursor(int monid);
 extern void picasso_handle_vsync();
 extern void picasso_trigger_vblank();
 extern bool picasso_is_active(int monid);
@@ -708,6 +709,12 @@ void p96_get_cursor_dimensions(int *w, int *h);
 SDL_Surface* p96_get_cursor_overlay_surface();
 bool p96_cursor_needs_update();
 void p96_cleanup_cursor_overlay();
+#ifdef AMIBERRY
+bool picasso_uses_host_cursor(int monid);
+void picasso_update_external_host_cursor(int monid, const uae_u8* image, int image_pitch,
+	int width, int height, const uae_u32* colors, int hotspot_x, int hotspot_y);
+void picasso_clear_external_host_cursor(int monid);
+#endif
 
 #define LIB_SIZE 34
 #define CARD_FLAGS LIB_SIZE

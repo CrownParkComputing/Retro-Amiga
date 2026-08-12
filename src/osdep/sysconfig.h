@@ -43,7 +43,7 @@
 #endif
 
 #if defined(__x86_64__) || defined(_M_AMD64) || defined(CPU_AARCH64) || defined(__aarch64__) || defined(_M_ARM64)
-#if !defined(LIBRETRO_NO_JIT) && !defined(AMIBERRY_IOS)
+#if !defined(LIBRETRO_NO_JIT) && !defined(AMIBERRY_IOS) && !defined(AMIBERRY_NO_JIT)
 #define JIT /* JIT compiler support */
 #define USE_JIT_FPU
 #endif
@@ -72,7 +72,6 @@
 //#define USE_X86_FPUCW 1
 /* #define CATWEASEL */ /* Catweasel MK2/3 support */
 #define AHI /* AHI sound emulation */
-//#define AHI_v2 // AHI v2 was never completed on the Amiga-side
 #define ENFORCER /* UAE Enforcer */
 #define ECS_DENISE /* ECS DENISE new features */
 #define AGA /* AGA chipset emulation (ECS_DENISE must be enabled) */
@@ -141,21 +140,23 @@
 #define WITH_BUILTIN_SLIRP
 #define WITH_TABLETLIBRARY
 /* #define WITH_UAENET_PCAP */ // defined externally in Amiberry
-#define WITH_PPC
 #define WITH_TOCCATA
 #define WITH_PCI
 
-// PCem support and any dependent features
-#ifdef USE_PCEM
+// CPU-board SCSI support is needed by PCem boards and PPC accelerators.
+#if defined(USE_PCEM) || defined(WITH_PPC)
 #define NCR /* A4000T/A4091, 53C710/53C770 SCSI */
 #define NCR9X /* 53C9X SCSI */
+#endif
+
+// PCem support and dependent x86 bridgeboard features.
+#ifdef USE_PCEM
 #define WITH_X86
-#define WITH_QEMU_CPU
 #define WITH_DRACO
 #endif
 
 #define WITH_THREADED_CPU
-/* #define WITH_SOFTFLOAT */
+#define WITH_SOFTFLOAT
 #define FLOPPYBRIDGE
 #define WITH_MIDIEMU
 #define WITH_DSP
@@ -660,59 +661,65 @@ typedef int32_t uae_atomic;
 #endif
 
 /* MinGW's fopen does not support the glibc 'e' (O_CLOEXEC) mode flag.
- * Strip it on Windows since close-on-exec is not relevant there.
+ * Provide uae_fopen() that strips it on Windows; passthrough elsewhere.
+ *
+ * Do NOT #define fopen here - a global macro replacement corrupts
+ * libc++ <fstream>, whose templates reference std::fopen. Call
+ * uae_fopen() explicitly at the handful of sites that use the 'e'
+ * flag.
  *
  * On Android, scoped-storage media is bridged as app-private paths like
- * .../cache/fd_<n>/name. Reopening those paths by name re-triggers filesystem
- * permission checks, so duplicate the already-open fd instead.
- */
-#if defined(_WIN32) || defined(__ANDROID__)
+ * .../cache/fd_<n>/name. Reopening those by name re-triggers filesystem
+ * permission checks, so duplicate the already-open fd instead. */
 #include <cstdio>
+#if defined(_WIN32)
 #include <cstring>
-#if defined(__ANDROID__)
+static inline FILE* uae_fopen(const char* path, const char* mode)
+{
+	char winmode[16];
+	int j = 0;
+	for (int i = 0; mode[i] && j < 15; i++) {
+		if (mode[i] != 'e')
+			winmode[j++] = mode[i];
+	}
+	winmode[j] = '\0';
+	return fopen(path, winmode);
+}
+#elif defined(__ANDROID__)
+#include <cstring>
 #include <cerrno>
 #include <cstdlib>
 #include <unistd.h>
 #include <sys/stat.h>
-#endif
 static inline FILE* uae_fopen(const char* path, const char* mode)
 {
-#if defined(__ANDROID__)
-   if (path && mode) {
-      const char* marker = strstr(path, "/cache/fd_");
-      struct stat bridged_stat;
-      if (marker != nullptr && stat(path, &bridged_stat) == 0) {
-         char* endptr = nullptr;
-         const long bridged_fd = strtol(marker + 10, &endptr, 10);
-         if (endptr != nullptr && endptr != marker + 10 && *endptr == '/' && bridged_fd >= 0) {
-            const int dup_fd = dup(static_cast<int>(bridged_fd));
-            if (dup_fd >= 0) {
-               FILE* fp = fdopen(dup_fd, mode);
-               if (fp != nullptr)
-                  return fp;
-               const int saved_errno = errno;
-               close(dup_fd);
-               errno = saved_errno;
-               return nullptr;
-            }
-         }
-      }
-   }
-#endif
-#if defined(_WIN32)
-   char winmode[16];
-   int j = 0;
-   for (int i = 0; mode[i] && j < 15; i++) {
-      if (mode[i] != 'e')
-         winmode[j++] = mode[i];
-   }
-   winmode[j] = '\0';
-   return fopen(path, winmode);
-#else
-   return fopen(path, mode);
-#endif
+	if (path && mode) {
+		const char* marker = strstr(path, "/cache/fd_");
+		struct stat bridged_stat;
+		if (marker != nullptr && stat(path, &bridged_stat) == 0) {
+			char* endptr = nullptr;
+			const long bridged_fd = strtol(marker + 10, &endptr, 10);
+			if (endptr != nullptr && endptr != marker + 10 && *endptr == '/' && bridged_fd >= 0) {
+				const int dup_fd = dup(static_cast<int>(bridged_fd));
+				if (dup_fd >= 0) {
+					FILE* fp = fdopen(dup_fd, mode);
+					if (fp != nullptr)
+						return fp;
+					const int saved_errno = errno;
+					close(dup_fd);
+					errno = saved_errno;
+					return nullptr;
+				}
+			}
+		}
+	}
+	return fopen(path, mode);
 }
-#define fopen(path, mode) uae_fopen(path, mode)
+#else
+static inline FILE* uae_fopen(const char* path, const char* mode)
+{
+	return fopen(path, mode);
+}
 #endif
 
 /* Define to 1 if `S_un' is a member of `struct in_addr'. */

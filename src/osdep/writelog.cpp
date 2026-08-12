@@ -6,6 +6,7 @@
  * Copyright 2001 Bernd Schmidt
  */
 #include <cstdarg>
+#include <cerrno>
 #include <cstdio>
 #include <iostream>
 #include <clocale>
@@ -22,6 +23,7 @@
 #include <termios.h>
 #include <sys/ioctl.h>
 #include <poll.h>
+#include <sys/stat.h>
 #endif
 
 #if defined(__ANDROID__)
@@ -34,6 +36,8 @@
 #include "custom.h"
 #include "events.h"
 #include "debug.h"
+#include "imgui_debugger_console.h"
+#include "macos_debugger_console.h"
 #include "uae.h"
 #include "registry.h"
 #include "threaddep/thread.h"
@@ -48,6 +52,7 @@ static int bootlogmode;
 
 FILE* debugfile = nullptr;
 int console_logging = 0;
+// Process-local because console availability depends on how Amiberry was launched.
 static int debugger_type = -1;
 BOOL debuggerinitializing = false;
 extern bool lof_store;
@@ -60,6 +65,134 @@ static SDL_Window* previousactivewindow;
 
 static uae_sem_t log_sem;
 static int log_sem_init;
+
+#ifndef _WIN32
+// Returns true when the fd is a redirected regular file or pipe — i.e. the
+// debugger's stream is connected to `<file` / `>file` / a `| pipe`, not a TTY
+// and not /dev/null / a character device / a closed fd. Used to route the
+// interactive debugger to the launching shell's stdin/stdout (issue #2117)
+// instead of the ImGui/Cocoa debugger window.
+static bool fd_is_redirected(int fd)
+{
+	struct stat st{};
+	if (fstat(fd, &st) != 0)
+		return false;
+	return S_ISREG(st.st_mode) || S_ISFIFO(st.st_mode);
+}
+
+// fd types are stable for the process lifetime, so cache the result.
+static bool debugger_stdin_redirected()
+{
+	static const bool v = fd_is_redirected(STDIN_FILENO);
+	return v;
+}
+
+static bool debugger_stdout_redirected()
+{
+	static const bool v = fd_is_redirected(STDOUT_FILENO);
+	return v;
+}
+
+static bool debugger_stdio_redirected()
+{
+	return debugger_stdin_redirected() || debugger_stdout_redirected();
+}
+#endif
+
+#if defined(AMIBERRY_MACOS) || (!defined(__ANDROID__) && !defined(AMIBERRY_IOS))
+static constexpr int CONSOLEOPEN_DEBUGGER_WINDOW = 2;
+
+static bool console_debugger_available()
+{
+#if defined(_WIN32)
+	return true;
+#else
+	return (console_logging && isatty(STDIN_FILENO) && isatty(STDOUT_FILENO))
+		|| debugger_stdio_redirected();
+#endif
+}
+
+static bool debugger_window_supported()
+{
+#if defined(AMIBERRY_MACOS)
+	return macos_debugger_console_supported();
+#else
+	return imgui_debugger_console_supported();
+#endif
+}
+
+static bool use_debugger_window()
+{
+	return debugger_window_supported() && (!console_debugger_available() || debugger_type == 2);
+}
+
+static void open_debugger_window()
+{
+	if (!consoleopen) {
+		previousactivewindow = SDL_GetKeyboardFocus();
+	}
+#if defined(AMIBERRY_MACOS)
+	macos_debugger_console_open();
+#else
+	imgui_debugger_console_open();
+#endif
+	consoleopen = CONSOLEOPEN_DEBUGGER_WINDOW;
+}
+
+static void close_debugger_window()
+{
+#if defined(AMIBERRY_MACOS)
+	macos_debugger_console_close();
+#else
+	imgui_debugger_console_close();
+#endif
+}
+
+static void activate_debugger_window()
+{
+#if defined(AMIBERRY_MACOS)
+	macos_debugger_console_activate();
+#else
+	imgui_debugger_console_activate();
+#endif
+}
+
+static void write_debugger_window(const TCHAR* text)
+{
+#if defined(AMIBERRY_MACOS)
+	macos_debugger_console_write(text);
+#else
+	imgui_debugger_console_write(text);
+#endif
+}
+
+static bool debugger_window_has_input()
+{
+#if defined(AMIBERRY_MACOS)
+	return macos_debugger_console_has_input();
+#else
+	return imgui_debugger_console_has_input();
+#endif
+}
+
+static TCHAR debugger_window_getch()
+{
+#if defined(AMIBERRY_MACOS)
+	return macos_debugger_console_getch();
+#else
+	return imgui_debugger_console_getch();
+#endif
+}
+
+static int debugger_window_get(TCHAR* out, const int maxlen)
+{
+#if defined(AMIBERRY_MACOS)
+	return macos_debugger_console_get(out, maxlen);
+#else
+	return imgui_debugger_console_get(out, maxlen);
+#endif
+}
+#endif
 
 /* console functions for debugger */
 
@@ -160,13 +293,15 @@ void activate_console()
 		return;
 	}
 	previousactivewindow = SDL_GetKeyboardFocus();
+#if defined(AMIBERRY_MACOS) || (!defined(__ANDROID__) && !defined(AMIBERRY_IOS))
+	if (consoleopen == CONSOLEOPEN_DEBUGGER_WINDOW) {
+		activate_debugger_window();
+	}
+#endif
 }
 
 static void open_console_window()
 {
-	if (!consoleopen) {
-		previousactivewindow = SDL_GetKeyboardFocus();
-	}
 #ifdef _WIN32
 	/* When built with -mwindows (Release), there is no console.
 	 * Allocate one on demand so log output is visible.
@@ -184,6 +319,37 @@ static void open_console_window()
 
 static void openconsole ()
 {
+#if defined(AMIBERRY_MACOS) || (!defined(__ANDROID__) && !defined(AMIBERRY_IOS))
+	if (debugger_type < 0) {
+		debugger_type = console_debugger_available() ? 1 : 2;
+	}
+	if (debugger_type == 1 && !console_debugger_available()) {
+		debugger_type = 2;
+	}
+	if (use_debugger_window()) {
+		if (consoleopen == CONSOLEOPEN_DEBUGGER_WINDOW || debuggerinitializing)
+			return;
+		close_console();
+		open_debugger_window();
+		return;
+	}
+#ifdef _WIN32
+	if (consoleopen >= 0) {
+		if (!consoleopen)
+			previousactivewindow = SDL_GetKeyboardFocus();
+		close_console();
+		open_console_window();
+	}
+#else
+	if (consoleopen != 1) {
+		if (!consoleopen)
+			previousactivewindow = SDL_GetKeyboardFocus();
+		close_console();
+		getconsole();
+		consoleopen = 1;
+	}
+#endif
+#else
 	if (realconsole) {
 		if (debugger_type == 2) {
 			consoleopen = 1;
@@ -196,9 +362,7 @@ static void openconsole ()
 		if (consoleopen > 0 || debuggerinitializing)
 			return;
 		if (debugger_type < 0) {
-			regqueryint (NULL, _T("DebuggerType"), &debugger_type);
-			if (debugger_type <= 0)
-				debugger_type = 1;
+			debugger_type = 1;
 			openconsole();
 			return;
 		}
@@ -210,23 +374,36 @@ static void openconsole ()
 		close_console ();
 		open_console_window ();
 	}
+#endif
 }
 
 void debugger_change (int mode)
 {
+#if defined(AMIBERRY_MACOS) || (!defined(__ANDROID__) && !defined(AMIBERRY_IOS))
+	const bool can_use_console_debugger = console_debugger_available();
+	if (mode < 0) {
+		if (debugger_type == 2 && can_use_console_debugger)
+			debugger_type = 1;
+		else
+			debugger_type = 2;
+	} else {
+		debugger_type = mode;
+	}
+	if (debugger_type == 1 && !can_use_console_debugger)
+		debugger_type = 2;
+#else
 	if (mode < 0)
 		debugger_type = debugger_type == 2 ? 1 : 2;
 	else
 		debugger_type = mode;
+#endif
 	if (debugger_type != 1 && debugger_type != 2)
 		debugger_type = 2;
-	regsetint (NULL, _T("DebuggerType"), debugger_type);
 	openconsole ();
 }
 
 void update_debug_info() {
-	// used to update debug info in debugger UI , currently Amiberry only supports
-	// using console debugging on Linux/Mac OS X.
+	// used to update debug info in debugger UI.
 }
 
 void open_console()
@@ -235,6 +412,10 @@ void open_console()
 		uae_sem_init(&log_sem, 0, 1);
 		log_sem_init = 1;
 	}
+#if defined(AMIBERRY_MACOS)
+	openconsole();
+	return;
+#endif
 	if (!consoleopen) {
 		openconsole();
 	}
@@ -242,7 +423,11 @@ void open_console()
 
 bool is_interactive_console(void)
 {
+#if defined(AMIBERRY_MACOS) || (!defined(__ANDROID__) && !defined(AMIBERRY_IOS))
+	return console_logging || debugger_window_supported();
+#else
 	return console_logging;
+#endif
 }
 
 void reopen_console ()
@@ -286,6 +471,11 @@ void close_console ()
 {
 	if (realconsole)
 		return;
+#if defined(AMIBERRY_MACOS) || (!defined(__ANDROID__) && !defined(AMIBERRY_IOS))
+	if (consoleopen == CONSOLEOPEN_DEBUGGER_WINDOW) {
+		close_debugger_window();
+	}
+#endif
 #ifdef _WIN32
 	if (consoleopen < 0) {
 		FreeConsole ();
@@ -331,11 +521,27 @@ static void writeconsole_2 (const TCHAR *buffer)
 	}
 #endif
 
-	if (consoleopen > 0) {
+	if (
+#if defined(AMIBERRY_MACOS) || (!defined(__ANDROID__) && !defined(AMIBERRY_IOS))
+		consoleopen == CONSOLEOPEN_DEBUGGER_WINDOW
+#else
+		false
+#endif
+	) {
+#if defined(AMIBERRY_MACOS) || (!defined(__ANDROID__) && !defined(AMIBERRY_IOS))
+		write_debugger_window(buffer);
+#endif
+	}
+	else if (consoleopen > 0) {
 #ifdef _WIN32
 		fprintf(stdout, "%s", buffer);
 #else
-		SDL_Log("%s", buffer);
+		if (debugger_stdio_redirected()) {
+			fprintf(stdout, "%s", buffer);
+			fflush(stdout);
+		} else {
+			SDL_Log("%s", buffer);
+		}
 #endif
 	}
 	else if (realconsole) {
@@ -411,10 +617,35 @@ static int console_buf_len = 100000;
 
 void console_out_f (const TCHAR *format,...)
 {
+	TCHAR stack_buffer[WRITE_LOG_BUF_SIZE];
+	TCHAR* bufp = stack_buffer;
+	int bufsize = WRITE_LOG_BUF_SIZE;
+
 	va_list arg_ptr;
 	va_start(arg_ptr, format);
-	vprintf(format, arg_ptr);
+	for (;;) {
+		va_list copy;
+		va_copy(copy, arg_ptr);
+		const int count = _vsntprintf(bufp, bufsize, format, copy);
+		va_end(copy);
+		if (count >= 0 && count < bufsize)
+			break;
+		// Either C99 truncation (count >= bufsize) or legacy MSVC truncation (count < 0).
+		const int next = (count >= 0) ? (count + 1) : (bufsize * 4);
+		if (next > 16 * 1024 * 1024) {
+			// Give up and accept truncation rather than allocating unbounded memory.
+			bufp[bufsize - 1] = 0;
+			break;
+		}
+		if (bufp != stack_buffer)
+			xfree(bufp);
+		bufsize = next;
+		bufp = xmalloc(TCHAR, bufsize);
+	}
 	va_end(arg_ptr);
+	console_put(bufp);
+	if (bufp != stack_buffer)
+		xfree(bufp);
 }
 
 void console_out(const TCHAR* txt)
@@ -439,12 +670,23 @@ bool console_isch ()
 #elif defined(_WIN32) && defined(AMIBERRY)
 	if (console_buffer)
 		return false;
+	if (consoleopen == CONSOLEOPEN_DEBUGGER_WINDOW)
+		return debugger_window_has_input();
 	if (consoleopen < 0) {
 		return _kbhit() != 0;
 	}
 	return false;
 #else
 	if (console_buffer)
+		return false;
+#if defined(AMIBERRY_MACOS) || (!defined(__ANDROID__) && !defined(AMIBERRY_IOS))
+	if (consoleopen == CONSOLEOPEN_DEBUGGER_WINDOW)
+		return debugger_window_has_input();
+#endif
+	// A redirected command stream has no async "abort key": its bytes belong to
+	// console_get(), and poll() on a regular file is always ready. Report no input
+	// so iscancel() never fires and console_getch() can't steal command bytes.
+	if (debugger_stdin_redirected())
 		return false;
 	struct pollfd fds;
 	fds.fd = STDIN_FILENO;
@@ -465,6 +707,12 @@ TCHAR console_getch()
 	{
 		return getchar();
 	}
+#if defined(AMIBERRY_MACOS) || (!defined(__ANDROID__) && !defined(AMIBERRY_IOS))
+	if (consoleopen == CONSOLEOPEN_DEBUGGER_WINDOW)
+	{
+		return debugger_window_getch();
+	}
+#endif
 	if (consoleopen < 0)
 	{
 		set_console_input_mode(0);
@@ -523,7 +771,56 @@ int console_get (TCHAR *out, int maxlen)
 	}
 	return 0;
 #else
+#if defined(AMIBERRY_MACOS) || (!defined(__ANDROID__) && !defined(AMIBERRY_IOS))
+	if (consoleopen == CONSOLEOPEN_DEBUGGER_WINDOW)
+		return debugger_window_get(out, maxlen);
+#endif
 	set_console_input_mode(1);
+#ifdef AMIBERRY
+	if (debugger_external_control_available()) {
+		while (debugger_active) {
+			if (debugger_poll_external_control())
+				return -2;
+
+#ifdef _WIN32
+			const HANDLE stdinput = GetStdHandle(STD_INPUT_HANDLE);
+			const DWORD wait_result = stdinput == INVALID_HANDLE_VALUE
+				? WAIT_FAILED : WaitForSingleObject(stdinput, 50);
+			if (wait_result != WAIT_OBJECT_0) {
+				Sleep(10);
+				continue;
+			}
+#else
+			struct pollfd pfd{};
+			pfd.fd = STDIN_FILENO;
+			pfd.events = POLLIN;
+			int result;
+			do {
+				result = poll(&pfd, 1, 50);
+			} while (result < 0 && errno == EINTR);
+			if (result <= 0 || !(pfd.revents & POLLIN)) {
+				if (result > 0 && (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)))
+					SDL_Delay(10);
+				continue;
+			}
+#endif
+
+			TCHAR *res = fgets(out, maxlen, stdin);
+			if (res == nullptr) {
+				clearerr(stdin);
+				SDL_Delay(10);
+				continue;
+			}
+			int len = strlen(out);
+			while (len > 0 && (out[len - 1] == '\r' || out[len - 1] == '\n')) {
+				out[len - 1] = 0;
+				len--;
+			}
+			return len;
+		}
+		return -1;
+	}
+#endif
 	TCHAR *res = fgets(out, maxlen, stdin);
 	if (res == nullptr) {
 		return -1;

@@ -14,13 +14,19 @@
 
 #include "irenderer.h"
 #include "gl_platform.h"
+#include "external_shader.h"
 #include <SDL3/SDL.h>
 #include <string>
+#include <vector>
 
 // Forward declarations
 struct crtemu_t;
-class ExternalShader;
 class ShaderPreset;
+
+struct ShaderParameterCache {
+	std::string shader_name;
+	std::vector<ShaderParameter> parameters;
+};
 
 // Shader lifecycle and caching state (owned by OpenGLRenderer)
 struct ShaderState {
@@ -29,7 +35,16 @@ struct ShaderState {
 	ShaderPreset* preset = nullptr;
 	std::string external_name;
 	std::string loaded_name;      // cache key to avoid recreation
+	bool loaded_for_rtg = false;
+	ShaderParameterCache parameter_template;
+	ShaderParameterCache native_parameter_cache;
+	ShaderParameterCache rtg_parameter_cache;
 	GLenum texture_filter_mode = GL_LINEAR;
+	bool bezel_enabled = false;
+	GLuint resolve_framebuffer = 0;
+	GLuint resolve_texture = 0;
+	int resolve_width = 0;
+	int resolve_height = 0;
 };
 
 // OpenGL overlay resources: OSD, bezel, software cursor (owned by OpenGLRenderer)
@@ -128,6 +143,12 @@ public:
 	// Access shader state for filter.cpp parameter editing
 	ShaderState& shader_state();
 	const ShaderState& shader_state() const;
+	std::vector<ShaderParameter>* shader_parameters(const char* shader_name, bool rtg);
+	const std::vector<ShaderParameter>* shader_parameters(const char* shader_name, bool rtg) const;
+	bool ensure_shader_parameters(const char* shader_name, bool rtg);
+	bool has_shader_parameters(const char* shader_name, bool rtg) const;
+	bool set_shader_parameter(const char* shader_name, bool rtg, const std::string& name, float value);
+	void save_shader_parameters(const char* shader_name, bool rtg);
 
 	// Access overlay state for overlay rendering functions
 	GLOverlayState& overlay_state();
@@ -138,6 +159,7 @@ private:
 	ShaderState m_shader;
 	GLOverlayState m_overlay;
 	bool m_integer_scaling = false; // Integer scaling for native Amiga modes (scaling_method == 2)
+	bool m_stretch_to_fill = false; // Fill the render area, ignoring aspect (scaling_method == 3)
 
 	// Cached GL pixel format info (resolved once from pixel_format, reused per frame)
 	struct GLFormatInfo {
@@ -149,11 +171,19 @@ private:
 	// Private helpers for overlay rendering
 	bool init_osd_shader();
 	bool load_bezel_texture(const char* bezel_name);
+	void cache_shader_parameter_template();
+	void cache_shader_parameters();
+	void restore_shader_parameters(const char* shader_name, bool rtg);
+	bool ensure_shader_resolve_target(int width, int height);
+	void destroy_shader_resolve_target();
+	void render_shader_resolve(int x, int y, int width, int height);
+	void update_texture_filter(GLenum texture_filter);
 
 	// Private helper for external shader rendering
 	void render_external_shader(ExternalShader* shader, int monid,
 		const uae_u8* pixels, int width, int height, int pitch,
-		int viewport_x, int viewport_y, int viewport_width, int viewport_height);
+		int viewport_x, int viewport_y, int viewport_width, int viewport_height,
+		GLuint target_framebuffer);
 };
 
 // Helper to get the OpenGL renderer from the global g_renderer.

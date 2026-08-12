@@ -205,7 +205,7 @@ extern int inputdevice_get_device_status (int devnum);
 extern void inputdevice_set_device_status (int devnum, int enabled);
 extern int inputdevice_get_device_total (int type);
 extern int inputdevice_get_widget_num (int devnum);
-extern int inputdevice_get_widget_type (int devnum, int num, TCHAR *name, bool inccode);
+extern int inputdevice_get_widget_type (int devnum, int num, TCHAR *name, size_t namesize, bool inccode);
 extern int send_input_event (int nr, int state, int max, int autofire);
 extern void release_keys(void);
 
@@ -242,17 +242,24 @@ extern int is_touch_lightpen (void);
 extern int inputdevice_is_tablet (void);
 extern int input_mousehack_status(TrapContext *ctx, int mode, uaecptr diminfo, uaecptr dispinfo, uaecptr vp, uae_u32 moffset);
 extern void input_mousehack_mouseoffset (uaecptr pointerprefs);
+extern void input_mousehack_cursor_hotspot(int cursor_width, int cursor_height, int* hotspot_x, int* hotspot_y,
+	int* residual_x, int* residual_y);
+extern bool input_mousehack_get_last_abs_position(int* x, int* y);
+extern void input_mousehack_invalidate_last_abs_position();
+extern void input_mousehack_set_host_cursor_uses_hotspot(bool enabled, int residual_x, int residual_y);
 extern int mousehack_alive (void);
 extern void mousehack_wakeup(void);
 extern void mousehack_write(int reg, uae_u16 val);
 extern void setmouseactive(int monid, int);
 extern bool ismouseactive(void);
+extern bool was_capture_user_released(void);
 extern void inputdevice_read_msg(bool);
 
 extern void setmousebuttonstateall (int mouse, uae_u32 buttonbits, uae_u32 buttonmask);
 extern void setjoybuttonstateall (int joy, uae_u32 buttonbits, uae_u32 buttonmask);
 extern void setjoybuttonstate (int joy, int button, int state);
 extern void setmousebuttonstate (int mouse, int button, int state);
+extern uae_u32 getmousebuttonstate (int mouse);
 extern void setjoystickstate (int joy, int axle, int state, int max);
 extern int getjoystickstate (int mouse);
 void setmousestate (int mouse, int axis, int data, int isabs);
@@ -260,6 +267,9 @@ extern int getmousestate (int mouse);
 extern void inputdevice_updateconfig (struct uae_prefs *srcprefs, struct uae_prefs *dstprefs);
 extern void inputdevice_updateconfig_internal (struct uae_prefs *srcprefs, struct uae_prefs *dstprefs);
 extern bool inputdevice_devicechange (struct uae_prefs *prefs);
+#ifdef AMIBERRY
+extern void inputdevice_mouse_reinit(struct uae_prefs *prefs);
+#endif
 
 #define INTERNALEVENT_CPURESET 0
 #define INTERNALEVENT_KBRESET 1
@@ -368,10 +378,11 @@ extern void setsystime (void);
 #define JSEM_ISRAPLAYER2(port,p) (jsem_iskbdjoy(port,p) == JSEM_KBDLAYOUT + 5)
 #define JSEM_ISRAPLAYER3(port,p) (jsem_iskbdjoy(port,p) == JSEM_KBDLAYOUT + 6)
 #define JSEM_ISRAPLAYER4(port,p) (jsem_iskbdjoy(port,p) == JSEM_KBDLAYOUT + 7)
+#define JSEM_ISCURSORLEFTFIRE(port,p) (jsem_iskbdjoy(port,p) == JSEM_KBDLAYOUT + 8)
 
 #define JSEM_ISCUSTOM(port,p) ((p)->jports[port].id >= JSEM_CUSTOM && (p)->jports[port].id < JSEM_CUSTOM + MAX_JPORTS_CUSTOM)
 #define JSEM_GETCUSTOMIDX(port,p) ((p)->jports[port].id - JSEM_CUSTOM)
-#define JSEM_LASTKBD 8
+#define JSEM_LASTKBD 9
 #define JSEM_ISANYKBD(port,p) (jsem_iskbdjoy(port,p) >= JSEM_KBDLAYOUT && jsem_iskbdjoy(port,p) < JSEM_KBDLAYOUT + JSEM_LASTKBD)
 
 extern int jsem_isjoy (int port, const struct uae_prefs *p);

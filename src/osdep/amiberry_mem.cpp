@@ -114,7 +114,13 @@ static void* VirtualAlloc(void* lpAddress, size_t dwSize, int flAllocationType,
 	}
 
 	if (flAllocationType & MEM_RESERVE) {
-		address = uae_vm_reserve(dwSize, 0);
+		int flags = 0;
+		if (flAllocationType & MEM_WRITE_WATCH) {
+			flags |= UAE_VM_WRITE_WATCH;
+		}
+		address = lpAddress
+			? uae_vm_reserve_fixed(lpAddress, dwSize, flags)
+			: uae_vm_reserve(dwSize, flags);
 	}
 	else {
 		address = lpAddress;
@@ -276,16 +282,10 @@ bool preinit_shm ()
 	size_t max_allowed_mman = 512 + 256;
 	if (os_64bit) {
 #ifdef CPU_64_BIT
-#if defined(CPU_AARCH64)
-		// ARM64 JIT is fully 64-bit pointer-clean via dedicated register.
+		// 64-bit JITs are pointer-clean via a dedicated natmem base register.
 		// Reserve 4GB to cover the full 68040 32-bit address space,
 		// preventing SIGSEGV from JIT direct access to high M68K addresses.
 		max_allowed_mman = 4096 - 1;
-#else
-		// On x86-64, the JIT uses [reg + disp32] for natmem access. The disp32
-		// is sign-extended, so natmem_offset must be < 0x80000000 (2GB).
-		max_allowed_mman = 2048 - 1;
-#endif
 #else
 		// 32-bit builds (e.g. WoW64): all addresses are naturally below 4GB.
 		// Higher than 2G to support G-REX PCI VRAM.
@@ -364,8 +364,8 @@ bool preinit_shm ()
 	natmem_size = WIN32_NATMEM_TEST * 1024 * 1024;
 #endif
 
-	#if defined(CPU_AARCH64)
-	// ARM64 JIT: ensure at least 4GB for full 68040 32-bit address space coverage.
+	#if defined(CPU_64_BIT)
+	// 64-bit JIT: ensure at least 4GB for full 68040 32-bit address space coverage.
 	// MAXZ3MEM64 may cap size64 below 4GB, but we need the natmem reservation
 	// to span all 4GB so JIT direct access to any M68K address won't fault outside it.
 	natmem_size = std::max<size_t>(natmem_size, 0x100000000ULL);
@@ -380,14 +380,11 @@ bool preinit_shm ()
 #if 1
 	{
 		int vm_flags = UAE_VM_32BIT | UAE_VM_WRITE_WATCH;
-#if defined(CPU_AARCH64)
-		/* ARM64 JIT is fully 64-bit pointer-clean (including add/sub on PC_P):
+#if defined(CPU_64_BIT)
+		/* 64-bit JITs are pointer-clean (including add/sub on PC_P):
 		   natmem can live above 4GB.  Dropping UAE_VM_32BIT avoids futile
 		   mmap/munmap cycles on platforms where the kernel ignores low-address
-		   hints (e.g. macOS ARM64).
-		   x86-64 JIT still has 32-bit arithmetic paths for PC_P (add_l_ri,
-		   adjust_nreg/LEA) that would truncate if natmem_offset > 4GB.
-		   Keep UAE_VM_32BIT for x86-64 to ensure natmem lands near 0x80000000. */
+		   hints (e.g. macOS x86-64/ARM64). */
 		vm_flags &= ~UAE_VM_32BIT;
 #endif
 		natmem_reserved = static_cast<uae_u8*>(uae_vm_reserve(natmem_size, vm_flags));
@@ -837,6 +834,12 @@ bool uae_mman_info(addrbank* ab, struct uae_mman_data* md)
 		got = true;
 		readonly = true;
 		maprom = true;
+    }
+	else if (!_tcscmp(ab->label, _T("rom_b0"))) {
+		start = 0xb00000;
+		got = true;
+		readonly = true;
+		maprom = true;
 	}
 	else if (!_tcscmp(ab->label, _T("rom_e0")))
 	{
@@ -1138,8 +1141,12 @@ void protect_roms(bool protect)
 {
 	if (protect) {
 		// protect only if JIT enabled, always allow unprotect
-		if (!currprefs.cachesize || currprefs.comptrustbyte || currprefs.comptrustword || currprefs.comptrustlong)
+		if (!currprefs.cachesize || currprefs.comptrustbyte || currprefs.comptrustword || currprefs.comptrustlong) {
 			return;
+		}
+		if (currprefs.rom_readwrite || rom_write_enabled) {
+			return;
+		}
 	}
 	for (auto & shmid : shmids) {
 		struct uae_shmid_ds *shm = &shmid;

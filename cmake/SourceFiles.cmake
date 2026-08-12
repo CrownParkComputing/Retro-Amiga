@@ -211,6 +211,18 @@ set(SOURCE_FILES
         src/osdep/fsdb_host.cpp
         src/osdep/clipboard.cpp
         src/osdep/uae4arm_host.cpp
+        src/atonce.cpp
+        src/zz9000.cpp
+        src/fpp_softfloat.cpp
+        src/softfloat/softfloat.cpp
+        src/softfloat/softfloat_decimal.cpp
+        src/softfloat/softfloat_fpsp.cpp
+        src/osdep/host_detect.cpp
+        src/osdep/perf_monitor.cpp
+        src/osdep/amiberry_adpf.cpp
+        src/osdep/mhi_host.cpp
+        src/osdep/amiberry_rp9.cpp
+        src/osdep/rp9_manifest.cpp
         src/osdep/android_keyboard_bridge.cpp
         src/uae4arm/upstream_overrides.cpp
         src/osdep/amiberry_hardfile.cpp
@@ -221,7 +233,6 @@ set(SOURCE_FILES
         src/osdep/writelog.cpp
         src/osdep/amiberry.cpp
         src/osdep/main.cpp
-        src/osdep/ahi_v2.cpp
         src/osdep/amiberry_filesys.cpp
         src/osdep/amiberry_input.cpp
         src/osdep/input_platform.cpp
@@ -252,8 +263,6 @@ set(SOURCE_FILES
         src/osdep/registry.cpp
         src/osdep/retroarch.cpp
         src/osdep/vpar.cpp
-        src/ppc/ppc.cpp
-        src/ppc/ppcd.cpp
         src/qemuvga/cirrus_vga.cpp
         src/qemuvga/es1370.cpp
         src/qemuvga/esp.cpp
@@ -265,8 +274,6 @@ set(SOURCE_FILES
         src/qemuvga/vga.cpp
         src/sounddep/sound.cpp
         src/threaddep/threading.cpp
-        src/osdep/vkbd/vkbd.cpp
-        src/osdep/vkbd/vkbd_gl.cpp
         src/osdep/on_screen_joystick.cpp
         src/osdep/on_screen_joystick_gl.cpp
         src/osdep/on_screen_cd32pad.cpp
@@ -386,6 +393,13 @@ set(PCEM_SOURCE_FILES
         src/pcem/x87.cpp
         src/pcem/x87_timings.cpp
 )
+
+if (USE_PPC)
+    message(STATUS "PowerPC accelerator board support enabled")
+    list(APPEND SOURCE_FILES src/ppc/ppc.cpp src/ppc/ppcd.cpp)
+else()
+    message(STATUS "PowerPC accelerator board support disabled")
+endif()
 
 if (USE_PCEM)
     message(STATUS "PCem support enabled")

@@ -1559,6 +1559,11 @@ static uae_u8 *loadhunkfile(uae_u8 *file, int filelen, uae_u32 seglist, int segm
 		totalsize += hunklens[i];
 	}
 	uae_u32 relocate_base = getrombase(totalsize);
+	if (!relocate_base) {
+		write_log("too large ROM\n");
+		return 0;
+	}
+	out = xcalloc(uae_u8, totalsize);
 	int outsize = 0;
 	int hunkindex = -1;
 	for (;;) {
@@ -1567,11 +1572,6 @@ static uae_u8 *loadhunkfile(uae_u8 *file, int filelen, uae_u32 seglist, int segm
 			uae_u32 hunklen = gl(p + 4) * 4;
 			p += 8;
 			hunkindex++;
-			if (!out)
-				out = xcalloc(uae_u8, outsize + hunklens[hunkindex]);
-			else
-				out = xrealloc(uae_u8, out, outsize + hunklens[hunkindex]);
-			memset(out + outsize, 0, hunklens[hunkindex]);
 			if (hunktype != 0x3eb) {
 				memcpy(out + outsize, p, hunklen);
 				p += hunklen;
@@ -1598,14 +1598,20 @@ static uae_u8 *loadhunkfile(uae_u8 *file, int filelen, uae_u32 seglist, int segm
 						return 0;
 					}
 					uaecptr hunkptr = hunkoffsets[relochunk] + relocate_base;
-					uae_u8 *currenthunk = out + hunkoffsets[relochunk];
+					uae_u8 *currenthunk = out + hunkoffsets[hunkindex];
 					for (int j = 0; j < reloccnt; j++) {
 						uae_u32 reloc = shortrel ? gw(p) : gl(p);
 						p += reladd;
 						if (reloc >= outsize - 3) {
+							xfree(hunkoffsets);
+							xfree(hunklens);
+							xfree(out);
 							return 0;
 						}
-						put_long_host(currenthunk + reloc, get_long_host(currenthunk + reloc) + hunkptr);
+						uae_u8 *dstaddr = currenthunk + reloc;
+						uae_u32 val = get_long_host(dstaddr);
+						val += hunkptr;
+						put_long_host(dstaddr, val);
 					}
 				}
 				if ((p - po) & 2) {
@@ -2000,19 +2006,19 @@ void debugger_scan_libraries(void)
 }
 
 
-bool debugger_get_library_symbol(uaecptr base, uaecptr addr, TCHAR *out)
+bool debugger_get_library_symbol(uaecptr base, uaecptr addr, TCHAR *out, size_t outsize)
 {
 	for (int i = 0; i < libnamecnt; i++) {
 		struct libname *name = &libnames[i];
 		if (name->base == base) {
-			for (int j = 0; j < libsymbolcnt; j++) {
-				struct libsymbol *lvo = &libsymbols[j];
-				if (lvo->lib == name) {
-					if (lvo->value == addr) {
-						_sntprintf(out, sizeof out, _T("%s/%s"), name->name, lvo->name);
-						return true;
+				for (int j = 0; j < libsymbolcnt; j++) {
+					struct libsymbol *lvo = &libsymbols[j];
+					if (lvo->lib == name) {
+						if (lvo->value == addr) {
+							_sntprintf(out, outsize, _T("%s/%s"), name->name, lvo->name);
+							return true;
+						}
 					}
-				}
 			}
 		}
 	}
@@ -3679,7 +3685,7 @@ int debugmem_get_symbol(uaecptr addr, TCHAR *out, int maxsize)
 						if (!first)
 							*p2++ = ',';
 						first = false;
-						_stprintf(p2, _T("%s:+%05X"), sv->name, sv->offset);
+						_sntprintf(p2, sizeof txt2 / sizeof(TCHAR) - (p2 - txt2), _T("%s:+%05X"), sv->name, sv->offset);
 						if (size <= _tcslen(txt2))
 							break;
 						size -= _tcslen(txt2);
@@ -3716,7 +3722,7 @@ int debugmem_get_sourceline(uaecptr addr, TCHAR *out, int maxsize)
 		for (int i = 0; i < codefilecnt; i++) {
 			struct debugcodefile *cf = codefiles[i];
 			if (cf && addr >= cf->start_pc && addr < cf->end_pc) {
-				_stprintf(out, _T("Source file: %s\n"), cf->name);
+				_sntprintf(out, maxsize, _T("Source file: %s\n"), cf->name);
 				return -1;
 			}
 		}
@@ -3793,7 +3799,7 @@ int debugmem_get_sourceline(uaecptr addr, TCHAR *out, int maxsize)
 	return -1;
 }
 
-int debugmem_get_segment(uaecptr addr, bool *exact, bool *ext, TCHAR *out, TCHAR *name)
+int debugmem_get_segment(uaecptr addr, bool *exact, bool *ext, TCHAR *out, size_t outsize, TCHAR *name, size_t namesize)
 {
 	if (out)
 		out[0] = 0;
@@ -3802,26 +3808,26 @@ int debugmem_get_segment(uaecptr addr, bool *exact, bool *ext, TCHAR *out, TCHAR
 	if (exact)
 		*exact = false;
 	struct debugmemallocs *alloc = ismysegment(addr);
-	if (alloc) {
+		if (alloc) {
 		if (exact && alloc->start + 8 + debugmem_bank.start == addr)
 			*exact = true;
-		if (out)
-			_sntprintf(out, sizeof out, _T("[%06X]"), ((addr - debugmem_bank.start) - (alloc->start + 8)) & 0xffffff);
-		if (name)
-			_sntprintf(name, sizeof name, _T("Segment %d: %08x %08x-%08x"),
-				alloc->id, alloc->idtype, alloc->start + debugmem_bank.start, alloc->start + alloc->size - 1 + debugmem_bank.start);
+			if (out)
+				_sntprintf(out, outsize, _T("[%06X]"), ((addr - debugmem_bank.start) - (alloc->start + 8)) & 0xffffff);
+			if (name)
+				_sntprintf(name, namesize, _T("Segment %d: %08x %08x-%08x"),
+					alloc->id, alloc->idtype, alloc->start + debugmem_bank.start, alloc->start + alloc->size - 1 + debugmem_bank.start);
 		if (ext)
 			*ext = false;
 		return alloc->id;
 	} else {
 		struct debugmemallocs *alloc;
 		struct debugsegtracker *seg = findsegment(addr, &alloc);
-		if (seg) {
-			if (out)
-				_sntprintf(out, sizeof out, _T("[%06X]"), ((addr - debugmem_bank.start) - (alloc->start + 8)) & 0xffffff);
-			if (name)
-				_sntprintf(name, sizeof name, _T("Segment %d ('%s') %08x %08x-%08x"),
-					alloc->internalid, seg->name, alloc->idtype, alloc->start, alloc->start + alloc->size - 1);
+			if (seg) {
+				if (out)
+					_sntprintf(out, outsize, _T("[%06X]"), ((addr - debugmem_bank.start) - (alloc->start + 8)) & 0xffffff);
+				if (name)
+					_sntprintf(name, namesize, _T("Segment %d ('%s') %08x %08x-%08x"),
+						alloc->internalid, seg->name, alloc->idtype, alloc->start, alloc->start + alloc->size - 1);
 			if (ext)
 				*ext = true;
 			return alloc->id;
@@ -3987,12 +3993,12 @@ bool debugmem_list_stackframe(bool super)
 	for (int i = 0; i < cnt; i++) {
 		struct debugstackframe *sf = super ? &stackframessuper[i] : &stackframes[i];
 		console_out_f(_T("%08x -> %08x SP=%08x"), sf->current_pc, sf->branch_pc, sf->stack);
-		if (sf->sr & 0x2000)
-			console_out_f(_T(" SR=%04x"), sf->sr);
-		TCHAR txt1[256], txt2[256];
-		if (debugmem_get_segment(sf->branch_pc, NULL, NULL, txt1, txt2)) {
-			console_out_f(_T(" %s %s"), txt1, txt2);
-		}
+			if (sf->sr & 0x2000)
+				console_out_f(_T(" SR=%04x"), sf->sr);
+			TCHAR txt1[256], txt2[256];
+			if (debugmem_get_segment(sf->branch_pc, NULL, NULL, txt1, sizeof txt1 / sizeof(TCHAR), txt2, sizeof txt2 / sizeof(TCHAR))) {
+				console_out_f(_T(" %s %s"), txt1, txt2);
+			}
 		if (debugmem_get_symbol(sf->branch_pc, txt1, sizeof(txt1) / sizeof(TCHAR))) {
 			console_out_f(_T(" %s"), txt1);
 		}

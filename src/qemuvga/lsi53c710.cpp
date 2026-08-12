@@ -266,6 +266,12 @@ typedef struct {
 	uint8_t sstat2;
 	uint8_t dwt;
 	uint8_t sbcl;
+	uint8_t sodl;
+	/* SCSI FIFO: 8 entries, 8 data bits plus generated parity in bit 8.
+	 * SODL writes push it (with CTEST4.SFWR), CTEST3 reads pop it, the
+	 * count shows in SSTAT2's high nibble. */
+	uint16_t scsi_fifo[8];
+	int scsi_fifo_count;
 	uint8_t script_active;
 } LSIState710;
 
@@ -310,7 +316,9 @@ static void lsi_soft_reset(LSIState710 *s)
     s->scntl1 = 0;
     s->sstat0 = 0;
     s->sstat1 = 0;
-	s->sstat2 = 0;
+    s->sstat2 = 0;
+    s->sodl = 0;
+    s->scsi_fifo_count = 0;
     s->scid = 0x80;
     s->sxfer = 0;
     s->socl = 0;
@@ -492,8 +500,7 @@ static void lsi_do_dma(LSIState710 *s, int out)
     dma_addr_t addr;
     SCSIDevice *dev;
 
-    assert(s->current);
-    if (!s->current->dma_len) {
+    if (!s->current || !s->current->dma_len) {
         /* Wait until data is available.  */
         DPRINTF("DMA no data available\n");
         return;
@@ -1411,40 +1418,22 @@ again:
         break;
 
     case 3:
-        if ((insn & (1 << 29)) == 0) {
-            /* Memory move.  */
+        /* Memory Move (DCMD 0xc0) is the only group-3 instruction on the
+           53C710; the Load/Store forms are 53C810+. Reject anything else as
+           an illegal instruction rather than running away on garbage fetched
+           from a non-responding address. */
+        if ((insn >> 24) != 0xc0) {
+            lsi_script_dma_interrupt(s, LSI_DSTAT_IID);
+            break;
+        }
+        {
             uint32_t dest;
             /* ??? The docs imply the destination address is loaded into
                the TEMP register.  However the Linux drivers rely on
-               the value being presrved.  */
+               the value being preserved.  */
             dest = read_dword(s, s->dsp);
             s->dsp += 4;
             lsi_memcpy(s, dest, addr, insn & 0xffffff);
-        } else {
-            uint8_t data[7];
-            int reg;
-            int n;
-            int i;
-
-            if (insn & (1 << 28)) {
-                addr = s->dsa + sextract32(addr, 0, 24);
-            }
-            n = (insn & 7);
-            reg = (insn >> 16) & 0xff;
-            if (insn & (1 << 24)) {
-				pci710_dma_read(pci_dev, addr, data, n);
-                DPRINTF("Load reg 0x%x size %d addr 0x%08x = %08x\n", reg, n,
-                        addr, *(int *)data);
-                for (i = 0; i < n; i++) {
-                    lsi_reg_writeb(s, reg + i, data[i]);
-                }
-            } else {
-                DPRINTF("Store reg 0x%x size %d addr 0x%08x\n", reg, n, addr);
-                for (i = 0; i < n; i++) {
-                    data[i] = lsi_reg_readb(s, reg + i);
-                }
-				pci710_dma_write(pci_dev, addr, data, n);
-            }
         }
     }
     if (insn_processed > 10000 && !s->waiting) {
@@ -1643,6 +1632,23 @@ static uint8_t lsi_reg_readb(LSIState710 *s, int offset)
 }
 #endif
 
+/* SCSI loopback self-test (ncr7xx -t8): with CTEST4.SLBE (0x10) and
+   SCNTL1.ADB set, the SODL/SOCL output latches feed straight back into the
+   SBDL/SBCL input registers - there is no real bus on the emulated board. */
+static bool lsi_scsi_loopback(LSIState710 *s)
+{
+    return (s->ctest4 & 0x10) && (s->scntl1 & LSI_SCNTL1_ADB);
+}
+
+/* Generated SCSI data parity: odd by default, even when SCNTL1.AESP is set. */
+static int lsi_scsi_parity(LSIState710 *s, uint8_t val)
+{
+    int p = __builtin_popcount(val) & 1;
+    if (!(s->scntl1 & LSI_SCNTL1_AESP))
+        p ^= 1;
+    return p;
+}
+
 static uint8_t lsi_reg_readb2(LSIState710 *s, int offset)
 {
     uint8_t tmp;
@@ -1675,7 +1681,19 @@ static uint8_t lsi_reg_readb2(LSIState710 *s, int offset)
         /* This is needed by the linux drivers.  We currently only update it
            during the MSG IN phase.  */
         return s->sidl;
+    case 0xa: /* SBDL - SCSI bus data lines */
+        /* Loopback self-test: the SODL output latch feeds straight back;
+           the idle bus otherwise reads all-deasserted. */
+        return lsi_scsi_loopback(s) ? s->sodl : 0;
     case 0xb: /* SBCL */
+		if (lsi_scsi_loopback(s)) {
+			/* Loopback: SBCL mirrors the SOCL latch. ACK/REQ (bits 3 and 6)
+			   assert only in target mode (SCNTL0.TRG, bit 0). */
+			tmp = s->socl;
+			if (!(s->scntl0 & 0x01))
+				tmp &= ~0x48;
+			return tmp;
+		}
 		tmp = 0;
 		if (s->scntl1 & LSI_SCNTL1_CON) {
 			/* NetBSD 1.x checks for REQ */
@@ -1699,9 +1717,19 @@ static uint8_t lsi_reg_readb2(LSIState710 *s, int offset)
         lsi_update_irq(s);
        return tmp;
     case 0x0e: /* SSTAT1 */
-        return s->sstat1;
+        /* PAR (bit 0) is the generated parity of the driven data in
+           loopback with parity generation (SCNTL0.EPG, bit 2); RST (bit 1)
+           reflects a SCNTL1.RST bus-reset request. */
+        tmp = s->sstat1 & ~0x03;
+        if (s->scntl1 & LSI_SCNTL1_RST)
+            tmp |= 0x02;
+        if (lsi_scsi_loopback(s) && (s->scntl0 & 0x04)
+            && lsi_scsi_parity(s, s->sodl))
+            tmp |= 0x01;
+        return tmp;
     case 0x0f: /* SSTAT2 */
-        return s->sstat2;
+        /* High nibble is the SCSI FIFO byte count. */
+        return (s->sstat2 & 0x0f) | (s->scsi_fifo_count << 4);
     CASE_GET_REG32(dsa, 0x10)
 	case 0x14: /* CTEST0 */
         return s->ctest0;
@@ -1715,6 +1743,19 @@ static uint8_t lsi_reg_readb2(LSIState710 *s, int offset)
         }
         return tmp;
 	case 0x17: /* CTEST3 */
+		/* Reading CTEST3 pops the SCSI FIFO; the popped byte's parity
+		 * lands in CTEST2.SFP (bit 4). */
+		if (s->scsi_fifo_count > 0) {
+			uint16_t entry = s->scsi_fifo[0];
+			for (int i = 1; i < s->scsi_fifo_count; i++)
+				s->scsi_fifo[i - 1] = s->scsi_fifo[i];
+			s->scsi_fifo_count--;
+			if (entry & 0x100)
+				s->ctest2 |= 0x10;
+			else
+				s->ctest2 &= ~0x10;
+			return entry & 0xff;
+		}
 		return s->ctest3;
 	case 0x18: /* CTEST4 */
 		return s->ctest4;
@@ -1798,9 +1839,9 @@ static void lsi_reg_writeb(LSIState710 *s, int offset, uint8_t val)
         break;
     case 0x01: /* SCNTL1 */
         s->scntl1 = val;
-        if (val & LSI_SCNTL1_ADB) {
-            BADF("Immediate Arbritration not implemented\n");
-        }
+        /* SCNTL1.ADB (Assert Data Bus) drives the SODL/SOCL latches onto the
+           bus; in loopback (CTEST4.SLBE) they feed back into SBDL/SBCL, which
+           the read handlers realize. Just latch the bit here. */
         if (val & LSI_SCNTL1_RST) {
             if (!(s->sstat0 & LSI_SSTAT0_RST)) {
 //                qbus_reset_all(&s->bus.qbus);
@@ -1821,9 +1862,24 @@ static void lsi_reg_writeb(LSIState710 *s, int offset, uint8_t val)
     case 0x05: /* SXFER */
         s->sxfer = val;
         break;
-	case 0x0b: /* SBCL */
-		lsi_set_phase (s, val & PHASE_MASK);
-		break;
+    case 0x06: /* SODL */
+        s->sodl = val;
+        /* CTEST4.SFWR (bit 3) routes SODL writes into the SCSI FIFO,
+         * tagging each byte with generated parity (odd, or even under
+         * SCNTL1.AESP). The count reads back in SSTAT2's high nibble. */
+        if ((s->ctest4 & 0x08) && s->scsi_fifo_count < 8) {
+            uint16_t par = __builtin_popcount(val) & 1;
+            if (!(s->scntl1 & LSI_SCNTL1_AESP))
+                par ^= 1;
+            s->scsi_fifo[s->scsi_fifo_count++] = (par << 8) | val;
+        }
+        break;
+    case 0x07: /* SOCL - SCSI output control latch */
+        s->socl = val;
+        break;
+    case 0x0b: /* SBCL */
+        lsi_set_phase (s, val & PHASE_MASK);
+        break;
     case 0x0c: case 0x0d: case 0x0e: case 0x0f:
         /* Linux writes to these readonly registers on startup.  */
         return;
@@ -1842,7 +1898,17 @@ static void lsi_reg_writeb(LSIState710 *s, int offset, uint8_t val)
         s->ctest4 = val;
         break;
 	case 0x19: /* CTEST5 */
-        s->ctest5 = val;
+        /* ADCK/BBCK are self-clearing test strobes: ADCK clocks the DMA
+         * address incrementor (DNAD += bus width), BBCK clocks the DMA byte
+         * counter decrementor (DBC -= bus width). Both bits read back clear.
+         * The A4091 register diagnostic (ncr7xx) relies on this. */
+        if (val & LSI_CTEST5_ADCK) {
+            s->dnad += 4;
+        }
+        if (val & LSI_CTEST5_BBCK) {
+            s->dbc = (s->dbc - 4) & 0xffffff;
+        }
+        s->ctest5 = val & ~(LSI_CTEST5_ADCK | LSI_CTEST5_BBCK);
         break;
 	case 0x1a: /* CTEST6 */
         s->ctest6 = val;
@@ -1869,12 +1935,19 @@ static void lsi_reg_writeb(LSIState710 *s, int offset, uint8_t val)
         break;
 	case 0x22: /* CTEST8 */
 		s->ctest8 = val;
+		if (val & 0x04) {
+			/* CLF: clear the DMA and SCSI FIFOs */
+			s->scsi_fifo_count = 0;
+		}
 	break;
 	case 0x23: /* LCRC */
 		s->lcrc = 0;
 	break;
- 
+
     CASE_SET_REG24(dbc, 0x24)
+    case 0x27: /* DCMD */
+        s->dcmd = val;
+        break;
     CASE_SET_REG32(dnad, 0x28)
     case 0x2c: /* DSP[0:7] */
         s->dsp &= 0xffffff00;

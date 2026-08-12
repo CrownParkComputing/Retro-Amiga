@@ -31,6 +31,7 @@
 #include "fsdb.h"
 #include "zfile.h"
 #include "fsdb_host.h"
+#include "amiberry_filesys_permissions.h"
 #include "uae.h"
 
 enum
@@ -412,7 +413,26 @@ static int fsdb_write_uaem_file(const char* path_utf8, const fsdb_file_info* inf
 	return 0;
 }
 
-int fsdb_write_uaem(const char* nname, const fsdb_file_info* info)
+static bool fsdb_needs_uaem_sidecar(const a_inode* aino, const fsdb_file_info* info)
+{
+	if (!info) {
+		return false;
+	}
+
+	if (info->comment && info->comment[0] != '\0') {
+		return true;
+	}
+
+	if (!aino) {
+		const int default_mode = A_FIBF_READ | A_FIBF_WRITE | A_FIBF_EXECUTE | A_FIBF_DELETE;
+		return info->mode != static_cast<uint32_t>(default_mode);
+	}
+
+	const int amigaos_mode = static_cast<int>(info->mode ^ 0xf);
+	return !fsdb_mode_representable_p(aino, amigaos_mode);
+}
+
+static int fsdb_write_uaem_internal(const a_inode* aino, const char* nname, const fsdb_file_info* info)
 {
 	if (!nname || !info) {
 		return ERROR_OBJECT_NOT_AROUND;
@@ -422,10 +442,8 @@ int fsdb_write_uaem(const char* nname, const fsdb_file_info* info)
 		return 0;
 	}
 
-	const int default_mode = A_FIBF_READ | A_FIBF_WRITE | A_FIBF_EXECUTE | A_FIBF_DELETE;
 	const bool has_comment = info->comment && info->comment[0] != '\0';
-	const bool has_time = info->days != 0 || info->mins != 0 || info->ticks != 0;
-	const bool need_uaem = info->mode != static_cast<uint32_t>(default_mode) || has_comment || has_time;
+	const bool need_uaem = fsdb_needs_uaem_sidecar(aino, info);
 
 	const std::string uaem_path = std::string(nname) + ".uaem";
 	const auto uaem_path_utf8 = iso_8859_1_to_utf8(std::string_view(uaem_path));
@@ -447,6 +465,43 @@ int fsdb_write_uaem(const char* nname, const fsdb_file_info* info)
 
 	remove(tmp_path_utf8.c_str());
 	return fsdb_write_uaem_file(uaem_path_utf8.c_str(), info, has_comment);
+}
+
+int fsdb_write_uaem(const char* nname, const fsdb_file_info* info)
+{
+	return fsdb_write_uaem_internal(nullptr, nname, info);
+}
+
+void fsdb_sync_file_time_from_host(const TCHAR* nname)
+{
+	if (!nname || !currprefs.filesys_custom_uaefsdb) {
+		return;
+	}
+
+	fsdb_file_info info;
+	fsdb_init_file_info(&info);
+	if (fsdb_read_uaem(nname, &info) != 0) {
+		if (info.comment) {
+			xfree(info.comment);
+		}
+		return;
+	}
+
+	struct mystat statbuf {};
+	if (my_stat(nname, &statbuf)) {
+		int days, mins, ticks;
+		timeval_to_amiga(&statbuf.mtime, &days, &mins, &ticks, 50);
+		if (info.days != days || info.mins != mins || info.ticks != ticks) {
+			info.days = days;
+			info.mins = mins;
+			info.ticks = ticks;
+			fsdb_write_uaem_internal(nullptr, nname, &info);
+		}
+	}
+
+	if (info.comment) {
+		xfree(info.comment);
+	}
 }
 
 /* Return nonzero for any name we can't create on the native filesystem.  */
@@ -551,6 +606,7 @@ bool my_utime(const char* name, const struct mytimeval* tv)
 	}
 
 	struct mytimeval mtv;
+	const auto path_utf8 = iso_8859_1_to_utf8(std::string_view(name));
 
 	bool ok = false;
 	try {
@@ -584,13 +640,17 @@ bool my_utime(const char* name, const struct mytimeval* tv)
 		struct _utimbuf utb;
 		utb.actime = mtv.tv_sec;
 		utb.modtime = mtv.tv_sec;
-		ok = _utime(name, &utb) == 0;
+		ok = _utime(path_utf8.c_str(), &utb) == 0;
 #else
 		struct timeval times[2];
-		times[0].tv_sec = static_cast<decltype(times[0].tv_sec)>(mtv.tv_sec);
-		times[0].tv_usec = static_cast<decltype(times[0].tv_usec)>(mtv.tv_usec);
+#if defined(__FreeBSD__) && defined(__i386__)
+		times[0].tv_sec = static_cast<time_t>(mtv.tv_sec);
+		times[0].tv_usec = static_cast<suseconds_t>(mtv.tv_usec);
 		times[1] = times[0];
-		ok = utimes(name, times) == 0;
+#else
+		times[0] = times[1] = { mtv.tv_sec, mtv.tv_usec };
+#endif
+		ok = utimes(path_utf8.c_str(), times) == 0;
 #endif
 	}
 	catch (...) {
@@ -612,19 +672,15 @@ bool my_utime(const char* name, const struct mytimeval* tv)
 		return true;
 	}
 
-	// Only write .uaem if one already existed (to preserve attrs/comment with updated time)
-	// or if mode/comment actually need sidecar storage.
-	// The host filesystem already stores the timestamp via utimes() above,
-	// so we don't create a new .uaem just to record the time.
+	// Refresh existing .uaem metadata so attrs/comments keep the updated time,
+	// but let fsdb_write_uaem() remove timestamp-only sidecars. The host
+	// filesystem already stores the timestamp via utimes() above.
 	const bool had_uaem = (read_err == 0);
-	const int default_mode = A_FIBF_READ | A_FIBF_WRITE | A_FIBF_EXECUTE | A_FIBF_DELETE;
-	const bool has_comment = info.comment && info.comment[0] != '\0';
-	const bool mode_differs = info.mode != static_cast<uint32_t>(default_mode);
 
 	int uaem_err = 0;
-	if (had_uaem || mode_differs || has_comment) {
+	if (had_uaem || fsdb_needs_uaem_sidecar(nullptr, &info)) {
 		timeval_to_amiga(&mtv, &info.days, &info.mins, &info.ticks, 50);
-		uaem_err = fsdb_write_uaem(name, &info);
+		uaem_err = fsdb_write_uaem_internal(nullptr, name, &info);
 	}
 	if (info.comment) {
 		xfree(info.comment);
@@ -752,25 +808,13 @@ int fsdb_set_file_attrs(a_inode* aino)
             return host_errno_to_dos_errno(err);
         }
 
-        // Calculate new mode based on Amiga flags
-        // Note: In Amiga, protection bits are inverted (set = denied)
-        const uae_u32 mask = aino->amigaos_mode;
-        int mode = statbuf.st_mode;
-
-        // Update user permissions
-        mode = (mask & A_FIBF_READ) ? (mode & ~S_IRUSR) : (mode | S_IRUSR);
-        mode = (mask & A_FIBF_WRITE) ? (mode & ~S_IWUSR) : (mode | S_IWUSR);
-        mode = (mask & A_FIBF_EXECUTE) ? (mode & ~S_IXUSR) : (mode | S_IXUSR);
-
-        // Add group/other read permissions if user can read
-        if (mode & S_IRUSR) {
-            mode |= (S_IRGRP | S_IROTH);
-        }
-
-        // Add group/other execute permissions if user can execute
-        if (mode & S_IXUSR) {
-            mode |= (S_IXGRP | S_IXOTH);
-        }
+		// Amiga protection bits are inverted: set means access is denied.
+		const uae_u32 mask = aino->amigaos_mode;
+		const mode_t mode = amiberry_filesys_apply_protection_bits(
+			statbuf.st_mode,
+			(mask & A_FIBF_READ) != 0,
+			(mask & A_FIBF_WRITE) != 0,
+			(mask & A_FIBF_EXECUTE) != 0);
 
 		// Apply new permissions
 		if (chmod(path_utf8.c_str(), mode) != 0) {
@@ -806,7 +850,7 @@ int fsdb_set_file_attrs(a_inode* aino)
 		if (aino->comment && aino->comment[0]) {
 			info.comment = my_strdup(aino->comment);
 		}
-		const int uaem_err = fsdb_write_uaem(aino->nname, &info);
+		const int uaem_err = fsdb_write_uaem_internal(aino, aino->nname, &info);
 		if (info.comment) {
 			xfree(info.comment);
 		}

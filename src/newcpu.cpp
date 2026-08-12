@@ -58,9 +58,10 @@
 #endif
 #ifdef JIT
 #include "jit/compemu.h"
+#include "uae/vm.h"
 #include <signal.h>
 volatile int jit_exception_pending = 0;
-#if defined(CPU_AARCH64)
+#if defined(JIT_HAS_BUS_ERROR_RECOVERY)
 #include <setjmp.h>
 jmp_buf jit_bus_error_jmpbuf;
 volatile bool jit_in_compiled_code = false;
@@ -490,9 +491,10 @@ static bool get_trace(uaecptr addr, int accessmode, int size, uae_u32 *data)
 			}
 			check_trace();
 
-			// Partially fix 6.0.x statefiles where 68000 word read value was stored as a zero.
+			// Partially fix 6.0.0-6.0.3 statefiles where 68000 word read value was stored as a zero.
 			// This can be only fixed when it was 68000 instruction prefetch.
-			if ((get_statefile_version() & 0xffffff00) == 0x00060000) {
+			int statefile_version = get_statefile_version();
+			if (statefile_version >= 0x00060000 && statefile_version <= 0x00060003) {
 				if (!ctm->data && accessmode == 2 && currprefs.cpu_model <= 68010 && currprefs.cpu_cycle_exact && addr > regs.pc && addr < regs.pc + 20) {
 					return true;
 				}
@@ -1411,7 +1413,7 @@ static void set_x_funcs ()
 
 	icache_fetch = get_longi;
 	icache_fetch_word = nullptr;
-	if (currprefs.cpu_cycle_exact) {
+	if (currprefs.cpu_memory_cycle_exact) {
 		icache_fetch = mem_access_delay_longi_read_ce020;
 	}
 	if (currprefs.cpu_model >= 68040 && currprefs.cpu_memory_cycle_exact) {
@@ -1779,6 +1781,11 @@ void flush_cpu_caches_040(uae_u16 opcode)
 	bool pushinv = (regs.cacr & 0x01000000) == 0; // 68060 DPI
 
 	flush_cpu_caches_040_2(cache, scope, addr, push, pushinv);
+#ifdef WITH_PPC
+	if (cache & 2) {
+		uae_ppc_mark_code_cache_dirty();
+	}
+#endif
 	mmu_flush_cache();
 }
 
@@ -2414,8 +2421,9 @@ static void activate_trace()
 void checkint()
 {
 	doint();
-	if (!m68k_accurate_ipl && !currprefs.cachesize && !(regs.spcflags & SPCFLAG_INT) && (regs.spcflags & SPCFLAG_DOINT))
+	if (!m68k_accurate_ipl && !currprefs.cachesize && !(regs.spcflags & SPCFLAG_INT) && (regs.spcflags & SPCFLAG_DOINT)) {
 		set_special(SPCFLAG_INT);
+	}
 }
 
 void REGPARAM2 MakeSR()
@@ -4354,6 +4362,26 @@ static void check_uae_int_request(void)
 #endif
 				atomic_and(&uae_int_requested, ~0x010000);
 #ifdef WITH_PPC
+			} else if (!irq2 && !(intreq & 0x0008)) {
+				/*
+				 * The CyberStorm board IRQ (e.g. an NCR SCSI completion) is
+				 * still pending, but the level-2 PORTS bit it raised has been
+				 * acknowledged without the PPC having serviced the controller.
+				 * The board IRQ is level-triggered (it stays asserted in
+				 * io_reg[CSIII_REG_IRQ] until the PPC acks the NCR), yet the
+				 * PORTS bit forwarding it is edge-driven - cpuboard_rethink()
+				 * only re-raises it on a device state change. The PPC runs on
+				 * its own QEMU vCPU thread, so the first PORTS delivery can be
+				 * missed/raced; after that the pending board IRQ has no path
+				 * back to the PPC and the OS4 boot hangs until a manual
+				 * pause/resume ("the kick"). Re-present it here so OS4 gets
+				 * another chance to service the controller. Gated on the PORTS
+				 * bit being clear, so it is self-limiting (one interrupt at a
+				 * time) and stops as soon as the NCR is serviced and the board
+				 * IRQ clears.
+				 */
+				int_request_do(false);
+				irq2 = true;
 			}
 #endif
 		}
@@ -4432,6 +4460,10 @@ static bool haltloop_do(int vsynctimeline, frame_time_t rpt_end, int lines)
 			ppc_interrupt(intlev());
 			uae_ppc_execute_check();
 #endif
+			if (regs.spcflags & SPCFLAG_CALLBACK) {
+				unset_special(SPCFLAG_CALLBACK);
+				device_call_main_thread_callbacks();
+			}
 			if (regs.spcflags & (SPCFLAG_BRK | SPCFLAG_MODE_CHANGE)) {
 				if (regs.spcflags & SPCFLAG_BRK) {
 					unset_special(SPCFLAG_BRK);
@@ -4451,6 +4483,11 @@ static bool haltloop_do(int vsynctimeline, frame_time_t rpt_end, int lines)
 			ppc_interrupt(intlev());
 			uae_ppc_execute_check();
 #endif
+			if (regs.spcflags & SPCFLAG_CALLBACK) {
+				unset_special(SPCFLAG_CALLBACK);
+				device_call_main_thread_callbacks();
+			}
+
 			if (event_wait)
 				break;
 			frame_time_t d = read_processor_time() - rpt_end;
@@ -4529,6 +4566,11 @@ static bool haltloop()
 			if (vpos)
 				prevvpos = 1;
 			x_do_cycles(8 * CYCLE_UNIT);
+
+			if (regs.spcflags & SPCFLAG_CALLBACK) {
+				unset_special(SPCFLAG_CALLBACK);
+				device_call_main_thread_callbacks();
+			}
 
 			if (regs.spcflags) {
 				if ((regs.spcflags & (SPCFLAG_BRK | SPCFLAG_MODE_CHANGE)))
@@ -4676,7 +4718,7 @@ void doint()
 
 	if (m68k_interrupt_delay) {
 		if (!m68k_accurate_ipl && regs.ipl_pin > regs.intmask) {
-			set_special(SPCFLAG_INT);
+			set_special(SPCFLAG_DOINT);
 		}
 		return;
 	}
@@ -4719,6 +4761,11 @@ static int do_specialties (int cycles)
 	if (spcflags & SPCFLAG_MODE_CHANGE)
 		return 1;
 	
+	if (spcflags & SPCFLAG_CALLBACK) {
+		unset_special(SPCFLAG_CALLBACK);
+		device_call_main_thread_callbacks();
+	}
+
 	while (spcflags & SPCFLAG_CPUINRESET) {
 		cpu_halt_clear();
 		x_do_cycles(4 * CYCLE_UNIT);
@@ -4851,7 +4898,7 @@ static int do_specialties (int cycles)
 			unset_special(SPCFLAG_UAEINT);
 		}
 
-		if (m68k_interrupt_delay) {
+		if (m68k_interrupt_delay && m68k_accurate_ipl) {
 			int ipl = time_for_interrupt();
 			if (ipl) {
 				unset_special(SPCFLAG_INT);
@@ -4860,7 +4907,7 @@ static int do_specialties (int cycles)
 		} else {
 			if (spcflags & SPCFLAG_INT) {
 				int intr = intlev();
-				unset_special (SPCFLAG_INT | SPCFLAG_DOINT);
+				unset_special(SPCFLAG_INT | SPCFLAG_DOINT);
 				if (intr > regs.intmask || (intr == 7 && intr > regs.lastipl)) {
 					do_interrupt(intr);
 				}
@@ -5302,10 +5349,15 @@ static void init_cpu_thread()
 
 extern addrbank *thread_mem_banks[MEMORY_BANKS];
 
+static bool is_cpu_thread()
+{
+	return cpu_thread_tid == uae_thread_get_id(nullptr);
+}
+
 uae_u32 process_cpu_indirect_memory_read(uae_u32 addr, int size)
 {
 	// Do direct access if call is from filesystem etc thread
-	if (cpu_thread_tid != uae_thread_get_id(nullptr)) {
+	if (!is_cpu_thread()) {
 		uae_u32 data = 0;
 		addrbank *ab = thread_mem_banks[bankindex(addr)];
 		switch (size)
@@ -5352,7 +5404,7 @@ uae_u32 process_cpu_indirect_memory_read(uae_u32 addr, int size)
 
 void process_cpu_indirect_memory_write(uae_u32 addr, uae_u32 data, int size)
 {
-	if (cpu_thread_tid != uae_thread_get_id(nullptr)) {
+	if (!is_cpu_thread()) {
 		addrbank *ab = thread_mem_banks[bankindex(addr)];
 		switch (size)
 		{
@@ -5454,6 +5506,11 @@ static void run_cpu_thread(int (*f)(void *))
 	}
 
 	while (!(regs.spcflags & SPCFLAG_MODE_CHANGE)) {
+		if (regs.spcflags & SPCFLAG_CALLBACK) {
+			unset_special(SPCFLAG_CALLBACK);
+			device_call_main_thread_callbacks();
+		}
+
 		// Service any pending indirect memory request (lockless fast path)
 		service_cpu_indirect_request();
 
@@ -5532,6 +5589,10 @@ static void run_cpu_thread(int (*f)(void *))
 					if (service_cpu_indirect_request()) {
 						cpu_thread_flush_register_batch();
 					}
+					if (regs.spcflags & SPCFLAG_CALLBACK) {
+						unset_special(SPCFLAG_CALLBACK);
+						device_call_main_thread_callbacks();
+					}
 					c = read_processor_time();
 				}
 			}
@@ -5552,7 +5613,7 @@ static void run_cpu_thread(int (*f)(void *))
 static void custom_reset_cpu(bool hardreset, bool keyboardreset)
 {
 #ifdef WITH_THREADED_CPU
-	if (cpu_thread_tid == uae_thread_get_id(nullptr)) {
+	if (is_cpu_thread()) {
 		__atomic_store_n(&cpu_thread_reset, 1 | (hardreset ? 2 : 0) | (keyboardreset ? 4 : 0), __ATOMIC_RELEASE);
 		uae_sem_post(&cpu_wakeup_sema);
 		uae_sem_wait(&cpu_in_sema);
@@ -5632,6 +5693,7 @@ void exec_nostats (void)
 
 	for (;;)
 	{
+		r->instruction_pc = m68k_getpc();
 		r->opcode = get_jit_opcode();
 
 		(*cpufunctbl[r->opcode])(r->opcode);
@@ -5678,8 +5740,18 @@ void execute_normal(void)
 	start_pc = r->pc;
 	for (;;) {
 		/* Take note: This is the do-it-normal loop */
+		r->instruction_pc = m68k_getpc();
 		r->opcode = get_jit_opcode();
 
+#if defined(JIT) && defined(CPU_x86_64)
+		/* High x86-64 natmem uses jit_n_addr_unsafe for pointer-clean codegen
+		 * decisions.  Keep pc_hist.specmem reserved for actual bank special
+		 * flags; distrust_* and jit_use_memory_helpers() handle the synthetic
+		 * comptrust defaults. */
+		if (jit_n_addr_unsafe && !jit_n_addr_bank_unsafe) {
+			special_mem = 0;
+		} else
+#endif
 		special_mem = special_mem_default;
 		pc_hist[blocklen].location = (uae_u16*)r->pc_p;
 
@@ -5724,6 +5796,11 @@ typedef void compiled_handler (void);
 static int cpu_thread_run_jit(void *v)
 {
 	cpu_thread_tid = uae_thread_get_id(nullptr);
+#ifdef __ANDROID__
+	// This thread runs the m68k core in cpu_threaded mode; target_run() tuned
+	// the main thread before this thread existed, so tune ourselves here too.
+	amiberry_tune_emulation_thread();
+#endif
 	__atomic_store_n(&cpu_thread_indirect_mode, 0xff, __ATOMIC_RELEASE);
 	__atomic_store_n(&cpu_thread_reset, 0, __ATOMIC_RELEASE);
 	cpu_thread_active = 1;
@@ -5733,7 +5810,7 @@ static int cpu_thread_run_jit(void *v)
 	{
 		for (;;) {
 			check_debugger();
-#if defined(CPU_AARCH64)
+#if defined(JIT_HAS_BUS_ERROR_RECOVERY)
 			{
 				int bus_error_exc = setjmp(jit_bus_error_jmpbuf);
 				if (bus_error_exc != 0) {
@@ -5752,18 +5829,24 @@ static int cpu_thread_run_jit(void *v)
 				jit_exception_pending = 0;
 				write_log(_T("JIT: Processing pending bus error in cpu_thread (exception %d, PC=%08x)\n"),
 					exc, (unsigned int)M68K_GETPC);
+#if defined(JIT_HAS_BUS_ERROR_RECOVERY)
+				jit_in_compiled_code = false;
+#endif
 				Exception(exc);
+#if defined(JIT_HAS_BUS_ERROR_RECOVERY)
+				jit_in_compiled_code = true;
+#endif
 			}
 #endif
 			/* Whenever we return from that, we should check spcflags */
 			if (regs.spcflags || cpu_thread_ilvl > 0) {
-#if defined(CPU_AARCH64)
+#if defined(JIT_HAS_BUS_ERROR_RECOVERY)
 				jit_in_compiled_code = false;
 #endif
 				if (do_specialties_thread()) {
 					break;
 				}
-#if defined(CPU_AARCH64)
+#if defined(JIT_HAS_BUS_ERROR_RECOVERY)
 				jit_in_compiled_code = true;
 #endif
 			}
@@ -5789,6 +5872,18 @@ static int cpu_thread_run_jit(void *v)
 
 static void m68k_run_jit(void)
 {
+	/* Guard against a silent JIT init failure: calling a NULL
+	 * pushall_call_handler would crash at host PC=0.  Turn the cache
+	 * off and fall back to the interpreter on the next scheduler pass
+	 * instead.  Must run before the cpu_thread dispatch below. */
+	if (pushall_call_handler == NULL) {
+		write_log(_T("JIT: pushall_call_handler is NULL; disabling JIT and falling back to interpreter.\n"));
+		currprefs.cachesize = 0;
+		changed_prefs.cachesize = 0;
+		set_special(SPCFLAG_BRK);
+		return;
+	}
+
 #ifdef WITH_THREADED_CPU
 	if (currprefs.cpu_thread) {
 		run_cpu_thread(cpu_thread_run_jit);
@@ -5806,15 +5901,14 @@ static void m68k_run_jit(void)
 #ifdef USE_STRUCTURED_EXCEPTION_HANDLING
 		__try {
 #endif
-			#if defined(CPU_AARCH64)
+			#if defined(JIT_HAS_BUS_ERROR_RECOVERY)
 			/* setjmp point for bus error recovery from JIT-compiled code.
 			 * When hardware_exception2() is called from within JIT code,
 			 * it longjmps here instead of throwing (C++ throw can't
 			 * unwind through JIT code). exception2_setup() has already
 			 * saved the bus error details before the longjmp.
-			 * Placed OUTSIDE the inner loop so the cost of setjmp (which
-			 * saves all callee-saved registers) is only paid once per
-			 * exception, not on every JIT dispatch. */
+			 * Placed outside the inner loop so the cost of setjmp is not
+			 * paid on every JIT dispatch. */
 			{
 				int bus_error_exc = setjmp(jit_bus_error_jmpbuf);
 				if (bus_error_exc != 0) {
@@ -5830,6 +5924,19 @@ static void m68k_run_jit(void)
 			jit_in_compiled_code = true;
 #endif
 			for (;;) {
+#if defined(__APPLE__) && defined(CPU_AARCH64)
+				/* The qemu-uae PPC plugin generates TCG code on this (m68k)
+				 * thread during PPC init/reset (reached via do_specialties()
+				 * below) and leaves the thread in JIT *write* mode through
+				 * pthread_jit_write_protect_np(). On Apple Silicon a MAP_JIT
+				 * page is per-thread either writable or executable, so the next
+				 * dispatch into translated m68k code would fault with
+				 * EXC_BAD_ACCESS (code=2). Re-assert execute mode here so we
+				 * never run a translated block from a write-protected page.
+				 * Only needed while the PPC CPU is in use. */
+				if (currprefs.ppc_mode)
+					uae_vm_jit_write_protect(true);
+#endif
 				((compiled_handler*)(pushall_call_handler))();
 				/* Check for pending exception from SIGSEGV handler (x86-64) */
 #if defined(CPU_x86_64) || defined(_M_AMD64)
@@ -5838,26 +5945,32 @@ static void m68k_run_jit(void)
 					jit_exception_pending = 0;
 					write_log(_T("JIT: Processing pending bus error (exception %d, PC=%08x)\n"),
 						exc, (unsigned int)M68K_GETPC);
+#if defined(JIT_HAS_BUS_ERROR_RECOVERY)
+					jit_in_compiled_code = false;
+#endif
 					Exception(exc);
+#if defined(JIT_HAS_BUS_ERROR_RECOVERY)
+					jit_in_compiled_code = true;
+#endif
 				}
 #endif
 				/* Whenever we return from that, we should check spcflags */
 				check_uae_int_request();
 				if (regs.spcflags) {
-#if defined(CPU_AARCH64)
+#if defined(JIT_HAS_BUS_ERROR_RECOVERY)
 					jit_in_compiled_code = false;
 #endif
 					if (do_specialties(0)) {
 						STOPTRY;
 						return;
 					}
-#if defined(CPU_AARCH64)
+#if defined(JIT_HAS_BUS_ERROR_RECOVERY)
 					jit_in_compiled_code = true;
 #endif
 				}
 				// If T0, T1 or M got set: run normal emulation loop
 				if (regs.t0 || regs.t1 || regs.m) {
-#if defined(CPU_AARCH64)
+#if defined(JIT_HAS_BUS_ERROR_RECOVERY)
 					jit_in_compiled_code = false;
 #endif
 					flush_icache(3);
@@ -5880,7 +5993,7 @@ static void m68k_run_jit(void)
 						bus_error();
 					} ENDTRY
 					unset_special(SPCFLAG_END_COMPILE);
-#if defined(CPU_AARCH64)
+#if defined(JIT_HAS_BUS_ERROR_RECOVERY)
 					jit_in_compiled_code = true;
 #endif
 				}
@@ -6653,6 +6766,11 @@ static int cpu_thread_run_2(void *v)
 	struct regstruct *r = &regs;
 
 	cpu_thread_tid = uae_thread_get_id(nullptr);
+#ifdef __ANDROID__
+	// This thread runs the m68k core in cpu_threaded mode; target_run() tuned
+	// the main thread before this thread existed, so tune ourselves here too.
+	amiberry_tune_emulation_thread();
+#endif
 	__atomic_store_n(&cpu_thread_indirect_mode, 0xff, __ATOMIC_RELEASE);
 	__atomic_store_n(&cpu_thread_reset, 0, __ATOMIC_RELEASE);
 
@@ -6859,6 +6977,10 @@ void m68k_run(void)
 		currprefs.cpu_model < 68020 ? m68k_run_2_000 : m68k_run_2_020;
 
 	run_func();
+
+#ifdef WITH_THREADED_CPU
+	cpu_thread_tid = 0;
+#endif
 }
 
 void m68k_go (int may_quit)
@@ -6909,6 +7031,10 @@ void m68k_go (int may_quit)
 
 			hsync_counter = 0;
 			vsync_counter = 0;
+			if (quit_program) {
+				set_cycles(start_cycles);
+				clear_events();
+			}
 			quit_program = 0;
 
 #ifdef SAVESTATE
@@ -7202,8 +7328,10 @@ void m68k_dumpstate(uaecptr *nextpc, uaecptr prevpc)
 		}
 	}
 	m68k_disasm (pc, nextpc, pc, 1);
-	if (nextpc)
+	if (nextpc) {
 		console_out_f (_T("Next PC: %08x\n"), *nextpc);
+		*nextpc = pc;
+	}
 }
 
 void m68k_dumpcache (bool dc)
@@ -7211,6 +7339,9 @@ void m68k_dumpcache (bool dc)
 	if (!currprefs.cpu_compatible)
 		return;
 	if (currprefs.cpu_model == 68020) {
+		if (dc) {
+			return;
+		}
 		for (int i = 0; i < CACHELINES020; i += 4) {
 			for (int j = 0; j < 4; j++) {
 				int s = i + j;
@@ -8087,7 +8218,11 @@ void exception3_write(uae_u32 opcode, uaecptr addr, int size, uae_u32 val, int f
 
 void exception2_setup(uae_u32 opcode, uaecptr addr, bool read, int size, uae_u32 fc)
 {
+#if defined(JIT_HAS_BUS_ERROR_RECOVERY)
+	last_addr_for_exception_3 = jit_in_compiled_code ? regs.instruction_pc : m68k_getpc();
+#else
 	last_addr_for_exception_3 = m68k_getpc();
+#endif
 	last_fault_for_exception_3 = addr;
 	last_writeaccess_for_exception_3 = read == 0;
 	last_op_for_exception_3 = opcode;
@@ -8129,12 +8264,10 @@ void hardware_exception2(uaecptr addr, uae_u32 v, bool read, bool ins, int size)
 		}
 		// Non-MMU
 		exception2_setup(regs.opcode, addr, read, size, fc);
-#if defined(CPU_AARCH64)
-		/* On ARM64, C++ exceptions cannot unwind through JIT-compiled
-		 * code (no DWARF unwinding tables in JIT code buffer). When
-		 * executing inside JIT-compiled code, use longjmp to immediately
-		 * return to the JIT loop where Exception() can be called with
-		 * the correct M68K state (saved by exception2_setup above). */
+#if defined(JIT_HAS_BUS_ERROR_RECOVERY)
+		/* C++ exceptions cannot unwind through JIT-compiled code. When
+		 * executing inside JIT code, return to the JIT loop where
+		 * Exception() can be called with the M68K state saved above. */
 		if (jit_in_compiled_code) {
 			longjmp(jit_bus_error_jmpbuf, 2);
 			/* not reached */

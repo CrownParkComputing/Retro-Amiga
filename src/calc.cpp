@@ -36,6 +36,12 @@
 static double parsedvaluesd[MAX_VALUES];
 static TCHAR *parsedvaluess[MAX_VALUES];
 
+template <typename T, std::size_t N>
+constexpr std::size_t countof(T const (&) [N]) noexcept
+{
+    return N;
+}
+
 // operators
 // precedence   operators       associativity
 // 1            !               right to left
@@ -47,6 +53,7 @@ static int op_preced(const int c)
     switch(c)    {
         case 0xf0: case 0xf1: case 0xf2:
         case '!':
+        case '~':
             return 4;
         case '*':  case '/': case '\\': case '%':
         case '|':  case '&': case '^':
@@ -68,7 +75,7 @@ static bool op_left_assoc(const int c)
     switch(c)    {
         // left to right
         case '*': case '/': case '%': case '+': case '-':
-        case '|': case '&': case '^':
+        case '|': case '&': case '^': case '~':
         case 0xf0: case 0xf1: case 0xf2:
             return true;
         // right to left
@@ -88,6 +95,7 @@ static unsigned int op_arg_count(const int c)
             return 2;
         case '!':
         case ':':
+        case '~':
         case 0xf0: case 0xf1: case 0xf2:
             return 1;
         default:
@@ -96,7 +104,7 @@ static unsigned int op_arg_count(const int c)
     return 0;
 }
  
-#define is_operator(c)  ((unsigned char)(c) == '+' || (unsigned char)(c) == '-' || (unsigned char)(c) == '/' || (unsigned char)(c) == '*' || (unsigned char)(c) == '!' || (unsigned char)(c) == '%' || (unsigned char)(c) == '=' || \
+#define is_operator(c)  ((unsigned char)(c) == '+' || (unsigned char)(c) == '-' || (unsigned char)(c) == '/' || (unsigned char)(c) == '*' || (unsigned char)(c) == '!' || (unsigned char)(c) == '%' || (unsigned char)(c) == '=' || (unsigned char)(c) == '~' || \
                          (unsigned char)(c) == '|' || (unsigned char)(c) == '&' || (unsigned char)(c) == '^' || (unsigned char)(c) == '@' || (unsigned char)(c) == ('@' | 0x80) || (unsigned char)(c) == '>' || (unsigned char)(c) == '<' || (unsigned char)(c) == ('>' | 0x80) || (unsigned char)(c) == ('<' | 0x80) || \
                          (unsigned char)(c) == '?' || (unsigned char)(c) == ':' || (unsigned char)(c) == 0xf0 || (unsigned char)(c) == 0xf1 || (unsigned char)(c) == 0xf2)
 #define is_function(c)  (c >= 'A' && c <= 'Z')
@@ -395,6 +403,9 @@ static bool docalcx(unsigned char op, double v1, double v2, double *valp)
         case ':':
         v = v1;
         break;
+        case '~':
+		v = ~(int)v1;
+        break;
 #ifdef DEBUGGER
         case 0xf0:
         v = get_byte_debug((uaecptr)v1);
@@ -461,7 +472,7 @@ static TCHAR *stacktostr(struct calcstack *st)
 	static TCHAR out[256];
 	if (st->s)
 		return st->s;
-	_stprintf(out, _T("%f"), st->val);
+	_sntprintf(out, sizeof out / sizeof(TCHAR), _T("%f"), st->val);
 	return out;
 }
 #endif
@@ -483,11 +494,12 @@ static bool execution_order(const TCHAR *input, double *outval, TCHAR *outstring
     unsigned int sl = 0, rn = 0;
 	struct calcstack *sc, *sc2;
 	double val = 0;
-    TCHAR vals[MAX_DPATH];
+    TCHAR vals[MAX_DPATH+1]; // include trailing terminator
+
     int i;
 	bool ok = false;
 
-    vals[0] = 0;
+    vals[0] = _T('\0');
 	// While there are input tokens left
     while(strpos < strend)  {
 
@@ -555,7 +567,7 @@ static bool execution_order(const TCHAR *input, double *outval, TCHAR *outstring
                                         sl--;sl--;sl--;
                                         if (isstackstring(sc2)) {
                                             TCHAR *c = stacktostring(sc2);
-                                            _tcscpy(vals, c);
+                                            uae_tcslcpy(vals, c, countof(vals));
                                             xfree(c);
                                         }
                                         val = stacktoval(sc2);
@@ -580,8 +592,8 @@ static bool execution_order(const TCHAR *input, double *outval, TCHAR *outstring
 				if (outval)
 					*outval = val;
                 if (outstring) {
-                    if (vals[0] && _tcslen(vals) >= maxlen) {
-                        vals[maxlen] = 0;
+                    if (vals[0] && countof(vals) > maxlen && _tcslen(vals) >= maxlen) {
+                        vals[maxlen] = _T('\0');
                     }
                     _tcscpy(outstring, vals[0] ? vals : _T(""));
                 }
@@ -798,4 +810,3 @@ bool iscalcformula (const TCHAR *formula)
 	}
 	return false;
 }
-

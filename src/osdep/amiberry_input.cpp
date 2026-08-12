@@ -2,6 +2,8 @@
 #include <cstring>
 #include <cstdlib>
 #include <algorithm>
+#include <cctype>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -14,6 +16,7 @@
 #include "fsdb.h"
 #include "uae.h"
 #include "xwin.h"
+#include "target.h"
 #include "tabletlibrary.h"
 
 enum
@@ -96,6 +99,314 @@ void apply_android_controller_remap(const int* sdl_to_target, int count)
 	set_config_changed();
 }
 constexpr auto analog_lower_bound = -analog_upper_bound;
+
+namespace
+{
+struct cached_joystick_custom_mapping
+{
+	amiberry_joystick_identity identity;
+	std::array<int, SDL_GAMEPAD_BUTTON_COUNT> buttons;
+	std::array<int, SDL_GAMEPAD_BUTTON_COUNT> hotkey_buttons;
+	std::array<int, SDL_GAMEPAD_AXIS_COUNT> axes;
+	std::array<int, SDL_GAMEPAD_AXIS_COUNT> hotkey_axes;
+	uae_u64 last_seen{};
+};
+
+struct preserved_port_joystick_custom_mapping
+{
+	struct inputdevconfig idc;
+	amiberry_joystick_identity identity;
+	controller_mapping mapping;
+	bool valid{};
+	bool has_identity{};
+};
+
+std::array<cached_joystick_custom_mapping, MAX_INPUT_DEVICES> cached_joystick_custom_mappings;
+int cached_joystick_custom_mapping_count;
+uae_u64 cached_joystick_custom_mapping_generation;
+std::array<preserved_port_joystick_custom_mapping, MAX_JPORTS> preserved_port_joystick_custom_mappings;
+
+bool matches_joystick_config(const struct inputdevconfig& idc,
+	const TCHAR* name, const TCHAR* configname)
+{
+	return name && configname &&
+		!_tcscmp(idc.name, name) && !_tcscmp(idc.configname, configname);
+}
+
+amiberry_joystick_identity get_joystick_identity(const didata& did)
+{
+	return {
+		did.guid,
+		did.serial,
+		did.path,
+		did.name,
+		did.is_controller
+	};
+}
+
+int find_cached_joystick_mapping(const amiberry_joystick_identity& identity,
+	const std::array<bool, MAX_INPUT_DEVICES>& used)
+{
+	int best_index = -1;
+	int best_score = -1;
+	bool ambiguous = false;
+	for (int i = 0; i < cached_joystick_custom_mapping_count; ++i) {
+		if (used[i])
+			continue;
+		const int score = amiberry_joystick_identity_score(
+			cached_joystick_custom_mappings[i].identity, identity);
+		if (score > best_score) {
+			best_index = i;
+			best_score = score;
+			ambiguous = false;
+		} else if (score >= 0 && score == best_score) {
+			ambiguous = true;
+		}
+	}
+	return ambiguous ? -1 : best_index;
+}
+
+void copy_custom_mapping_to_cache(const controller_mapping& source,
+	cached_joystick_custom_mapping& destination)
+{
+	destination.buttons = source.amiberry_custom_none;
+	destination.hotkey_buttons = source.amiberry_custom_hotkey;
+	destination.axes = source.amiberry_custom_axis_none;
+	destination.hotkey_axes = source.amiberry_custom_axis_hotkey;
+}
+
+void copy_custom_mapping_from_cache(const cached_joystick_custom_mapping& source,
+	controller_mapping& destination)
+{
+	destination.amiberry_custom_none = source.buttons;
+	destination.amiberry_custom_hotkey = source.hotkey_buttons;
+	destination.amiberry_custom_axis_none = source.axes;
+	destination.amiberry_custom_axis_hotkey = source.hotkey_axes;
+}
+
+void copy_custom_mapping(const controller_mapping& source,
+	controller_mapping& destination)
+{
+	destination.amiberry_custom_none = source.amiberry_custom_none;
+	destination.amiberry_custom_hotkey = source.amiberry_custom_hotkey;
+	destination.amiberry_custom_axis_none = source.amiberry_custom_axis_none;
+	destination.amiberry_custom_axis_hotkey = source.amiberry_custom_axis_hotkey;
+}
+}
+
+void amiberry_preserve_port_joystick_custom_mapping(const int portnum,
+	const TCHAR* name, const TCHAR* configname)
+{
+	if (portnum < 0 || portnum >= MAX_JPORTS)
+		return;
+	if (!name || !configname)
+		return;
+
+	auto& preserved = preserved_port_joystick_custom_mappings[portnum];
+	const int joystick_index = amiberry_get_joystick_index(configname);
+	if (joystick_index < 0 || joystick_index >= num_joystick)
+		return;
+
+	const auto& did = di_joystick[joystick_index];
+	if (name && name[0] && did.name != name)
+		return;
+
+	if (preserved.valid && matches_joystick_config(preserved.idc, name, configname)) {
+		preserved.mapping = did.mapping;
+		if (!preserved.has_identity) {
+			preserved.identity = get_joystick_identity(did);
+			preserved.has_identity = true;
+		}
+		return;
+	}
+
+	preserved = {};
+	_tcsncpy(preserved.idc.name, name, MAX_JPORT_NAME - 1);
+	_tcsncpy(preserved.idc.configname, configname, MAX_JPORT_CONFIG - 1);
+	preserved.idc.name[MAX_JPORT_NAME - 1] = 0;
+	preserved.idc.configname[MAX_JPORT_CONFIG - 1] = 0;
+	preserved.identity = get_joystick_identity(did);
+	preserved.mapping = did.mapping;
+	preserved.valid = true;
+	preserved.has_identity = true;
+}
+
+void amiberry_clear_port_joystick_custom_mapping(const int portnum)
+{
+	if (portnum >= 0 && portnum < MAX_JPORTS)
+		preserved_port_joystick_custom_mappings[portnum] = {};
+}
+
+void amiberry_clear_port_joystick_custom_mappings()
+{
+	preserved_port_joystick_custom_mappings = {};
+}
+
+bool amiberry_get_port_joystick_custom_mapping(const int portnum,
+	const TCHAR* name, const TCHAR* configname, controller_mapping& mapping)
+{
+	if (portnum < 0 || portnum >= MAX_JPORTS)
+		return false;
+
+	const auto& preserved = preserved_port_joystick_custom_mappings[portnum];
+	if (preserved.valid && matches_joystick_config(preserved.idc, name, configname)) {
+		mapping = preserved.mapping;
+		return true;
+	}
+
+	const int joystick_index = amiberry_get_joystick_index(configname);
+	if (joystick_index < 0 || joystick_index >= num_joystick)
+		return false;
+
+	const auto& did = di_joystick[joystick_index];
+	if (name && name[0] && did.name != name)
+		return false;
+
+	mapping = did.mapping;
+	return true;
+}
+
+void amiberry_set_port_joystick_custom_mapping(const int portnum,
+	const TCHAR* name, const TCHAR* configname, const controller_mapping& mapping)
+{
+	if (portnum < 0 || portnum >= MAX_JPORTS || !name || !configname)
+		return;
+
+	const int joystick_index = amiberry_get_joystick_index(configname);
+	if (joystick_index < 0)
+		return;
+
+	auto& preserved = preserved_port_joystick_custom_mappings[portnum];
+	if (!preserved.valid || !matches_joystick_config(preserved.idc, name, configname)) {
+		preserved = {};
+		_tcsncpy(preserved.idc.name, name, MAX_JPORT_NAME - 1);
+		_tcsncpy(preserved.idc.configname, configname, MAX_JPORT_CONFIG - 1);
+		preserved.idc.name[MAX_JPORT_NAME - 1] = 0;
+		preserved.idc.configname[MAX_JPORT_CONFIG - 1] = 0;
+	}
+	copy_custom_mapping(mapping, preserved.mapping);
+	preserved.valid = true;
+
+	if (joystick_index >= num_joystick)
+		return;
+
+	auto& did = di_joystick[joystick_index];
+	if (name[0] && did.name != name)
+		return;
+	if (!preserved.has_identity) {
+		preserved.identity = get_joystick_identity(did);
+		preserved.has_identity = true;
+	}
+	copy_custom_mapping(mapping, did.mapping);
+}
+
+bool amiberry_resolve_port_joystick(const int portnum, int& joystick_index)
+{
+	joystick_index = -1;
+	if (portnum < 0 || portnum >= MAX_JPORTS)
+		return false;
+
+	const auto& preserved = preserved_port_joystick_custom_mappings[portnum];
+	if (!preserved.valid || !preserved.has_identity)
+		return false;
+
+	std::array<bool, MAX_INPUT_DEVICES> used{};
+	for (int i = 0; i < num_joystick; ++i) {
+		const int cache_index = find_cached_joystick_mapping(
+			get_joystick_identity(di_joystick[i]), used);
+		if (cache_index < 0 ||
+			!amiberry_joystick_identity_equal(
+				preserved.identity, cached_joystick_custom_mappings[cache_index].identity)) {
+			continue;
+		}
+		if (joystick_index >= 0) {
+			joystick_index = -1;
+			return true;
+		}
+		joystick_index = i;
+	}
+	return true;
+}
+
+bool amiberry_apply_port_joystick_custom_mapping(const int portnum,
+	const TCHAR* name, const TCHAR* configname)
+{
+	if (portnum < 0 || portnum >= MAX_JPORTS || !name || !configname)
+		return false;
+
+	const auto& preserved = preserved_port_joystick_custom_mappings[portnum];
+	if (!preserved.valid)
+		return false;
+	const int joystick_index = amiberry_get_joystick_index(configname);
+	if (joystick_index < 0 || joystick_index >= num_joystick)
+		return false;
+
+	int resolved_joystick = -1;
+	if (amiberry_resolve_port_joystick(portnum, resolved_joystick)) {
+		if (resolved_joystick != joystick_index)
+			return false;
+	} else if (preserved.idc.name[0]) {
+		if (_tcscmp(preserved.idc.name, name))
+			return false;
+	} else if (_tcscmp(preserved.idc.configname, configname)) {
+		return false;
+	}
+
+	auto& did = di_joystick[joystick_index];
+	if (name[0] && did.name != name)
+		return false;
+
+	copy_custom_mapping(preserved.mapping, did.mapping);
+	return true;
+}
+
+void amiberry_cache_joystick_custom_mappings()
+{
+	std::array<bool, MAX_INPUT_DEVICES> used{};
+	for (int i = 0; i < num_joystick; ++i) {
+		const auto identity = get_joystick_identity(di_joystick[i]);
+		int cache_index = find_cached_joystick_mapping(identity, used);
+		if (cache_index < 0) {
+			if (cached_joystick_custom_mapping_count < MAX_INPUT_DEVICES) {
+				cache_index = cached_joystick_custom_mapping_count++;
+			} else {
+				uae_u64 oldest_generation = std::numeric_limits<uae_u64>::max();
+				for (int candidate = 0; candidate < cached_joystick_custom_mapping_count; ++candidate) {
+					if (!used[candidate] &&
+						cached_joystick_custom_mappings[candidate].last_seen < oldest_generation) {
+						cache_index = candidate;
+						oldest_generation = cached_joystick_custom_mappings[candidate].last_seen;
+					}
+				}
+			}
+		}
+		if (cache_index < 0)
+			continue;
+
+		auto& cached = cached_joystick_custom_mappings[cache_index];
+		cached.identity = identity;
+		copy_custom_mapping_to_cache(di_joystick[i].mapping, cached);
+		cached.last_seen = ++cached_joystick_custom_mapping_generation;
+		used[cache_index] = true;
+	}
+}
+
+void amiberry_restore_joystick_custom_mappings()
+{
+	std::array<bool, MAX_INPUT_DEVICES> used{};
+	for (int i = 0; i < num_joystick; ++i) {
+		const int cache_index = find_cached_joystick_mapping(
+			get_joystick_identity(di_joystick[i]), used);
+		if (cache_index < 0)
+			continue;
+
+		copy_custom_mapping_from_cache(cached_joystick_custom_mappings[cache_index],
+			di_joystick[i].mapping);
+		cached_joystick_custom_mappings[cache_index].last_seen =
+			++cached_joystick_custom_mapping_generation;
+		used[cache_index] = true;
+	}
+}
 
 static int isrealbutton(const struct didata* did, const int num)
 {
@@ -417,11 +728,8 @@ int keyhack (const int scancode, const int pressed, const int num)
 	if (currprefs.alt_tab_release)
 	{
 		if (pressed && scancode == SDL_SCANCODE_TAB && (key_altpressed() || state[SDL_SCANCODE_LALT] || state[SDL_SCANCODE_RALT])) {
-			const AmigaMonitor* mon = &AMonitors[0];
-			if (mon->amiga_window) {
-				SDL_SetWindowMouseGrab(mon->amiga_window, false);
-				SDL_SetWindowRelativeMouseMode(mon->amiga_window, false);
-			}
+			if (ismouseactive())
+				disablecapture();
 			return -1;
 		}
 	}
@@ -508,15 +816,6 @@ static void di_dev_free(struct didata* did)
 		did->joystick = nullptr;
 	}
 	cleardid(did);
-}
-
-static void di_free()
-{
-	for (auto i = 0; i < MAX_INPUT_DEVICES; i++) {
-		di_dev_free(&di_joystick[i]);
-		di_dev_free(&di_mouse[i]);
-		di_dev_free(&di_keyboard[i]);
-	}
 }
 
 static int tablet_detected;
@@ -678,6 +977,56 @@ static void setup_mouse_device(struct didata* did, const char* name)
 	}
 }
 
+#ifndef LIBRETRO
+// Returns true when an SDL-reported mouse name looks like a virtual/aggregator
+// device rather than a real physical pointer. Used in multi-mouse mode to keep
+// the user-visible device list sane on X11/XWayland, where SDL_GetMice() often
+// exposes master pointers ("Virtual core pointer"), XTEST slaves, and Wayland
+// pointer proxies alongside the real USB/Bluetooth mouse.
+//
+// Patterns are case-insensitive but deliberately scoped to avoid clipping
+// legitimate product names (e.g., Kensington's "Orbit Core Pointer" trackball
+// would hit a bare "core pointer" match — so we require "virtual core pointer"
+// specifically for the X11 master pointer).
+//
+// Empty / null names: NOT treated as virtual. Some SDL3 backends (older
+// Wayland + mutter, certain Android HID stacks) return an empty string for
+// valid physical devices. Filtering those out would hide real mice; instead
+// we name them "Mouse N" downstream.
+static bool mouse_name_looks_virtual(const char* name)
+{
+	if (!name)
+		return false;
+	std::string lower;
+	lower.reserve(std::strlen(name));
+	for (const char* p = name; *p; ++p)
+		lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(*p))));
+	if (lower.empty())
+		return false;
+	if (lower.find("virtual core pointer") != std::string::npos) return true;
+	if (lower.find("virtual core xtest") != std::string::npos) return true;
+	if (lower.find("xtest pointer") != std::string::npos) return true;
+	if (lower.find("pointer proxy") != std::string::npos) return true;
+	// Broad "virtual" match as last resort — X11 sometimes prefixes with just
+	// "Virtual" and a suffix we don't recognise; real products very rarely
+	// include the exact word in their name.
+	if (lower.find("virtual") != std::string::npos) return true;
+	return false;
+}
+
+// Set up a single logical "System mouse" that absorbs all SDL mouse events
+// regardless of SDL_MouseID. This is the default and handles the common case
+// (one real user moving one physical mouse) without any platform-specific
+// device-name guessing. In this mode, mouse_id_map[0]=0 acts as a sentinel:
+// get_mouse_index_from_sdl_id() routes every event to index 0.
+static void setup_single_system_mouse()
+{
+	num_mouse = 1;
+	mouse_id_map[0] = 0;
+	setup_mouse_device(&di_mouse[0], "System mouse");
+}
+#endif
+
 static int init_mouse()
 {
 	memset(mouse_id_map, 0, sizeof mouse_id_map);
@@ -685,74 +1034,104 @@ static int init_mouse()
 		s.clear();
 
 #ifndef LIBRETRO
+	// Single-mouse mode (default): one logical device, all SDL mouse events
+	// collapse to it. This eliminates confusion from virtual/aggregator
+	// devices ("Virtual core pointer" etc.) on X11/XWayland — the default
+	// path does not depend on device names at all.
+	if (!currprefs.input_multi_mouse) {
+		setup_single_system_mouse();
+		int sdl_count = 0;
+		if (SDL_MouseID* tmp = SDL_GetMice(&sdl_count)) {
+			SDL_free(tmp);
+		}
+		write_log(_T("Mouse: single-device mode (SDL reports %d mice, all routed to System mouse)\n"),
+			sdl_count);
+		return 1;
+	}
+
+	// Multi-mouse mode (opt-in): enumerate physical devices for 2-player
+	// games that need independent mice (e.g., Lemmings). Filter out known
+	// virtual/aggregator devices and fall back to single-mouse mode if no
+	// real devices remain after filtering.
 	int count = 0;
 	SDL_MouseID* sdl_mice = SDL_GetMice(&count);
-	if (sdl_mice && count >= 1) {
-		// Sort mice: prefer real physical mice over virtual/core pointers.
-		// Virtual devices (like "Virtual core pointer" on X11) should be last
-		// so that index 0 is a real mouse when possible.
-		std::vector<SDL_MouseID> sorted_mice(sdl_mice, sdl_mice + count);
-		std::stable_sort(sorted_mice.begin(), sorted_mice.end(),
-			[](SDL_MouseID a, SDL_MouseID b) {
-				const char* name_a = SDL_GetMouseNameForID(a);
-				const char* name_b = SDL_GetMouseNameForID(b);
-				auto is_virtual = [](const char* name) -> bool {
-					if (!name || !name[0]) return true;
-					std::string n(name);
-					// Common virtual/abstract pointer names across platforms
-					if (n.find("Virtual") != std::string::npos) return true;
-					if (n.find("virtual") != std::string::npos) return true;
-					if (n.find("core pointer") != std::string::npos) return true;
-					if (n.find("XTEST") != std::string::npos) return true;
-					return false;
-				};
-				bool va = is_virtual(name_a);
-				bool vb = is_virtual(name_b);
-				if (va != vb) return !va; // real mice first
-				return false; // preserve original order otherwise
-			});
-
-		num_mouse = std::min(count, static_cast<int>(MAX_INPUT_DEVICES));
-		for (int i = 0; i < num_mouse; i++) {
-			mouse_id_map[i] = sorted_mice[i];
-			const char* sdl_name = SDL_GetMouseNameForID(sorted_mice[i]);
-			std::string device_name;
-			if (sdl_name && sdl_name[0]) {
-				device_name = sdl_name;
-			} else {
-				device_name = (num_mouse > 1)
-					? "Mouse " + std::to_string(i + 1)
-					: "System mouse";
-			}
-			setup_mouse_device(&di_mouse[i], device_name.c_str());
-		}
-		SDL_free(sdl_mice);
-		write_log(_T("Multi-mouse: %d mice detected\n"), num_mouse);
-		for (int i = 0; i < num_mouse; i++) {
-			write_log(_T("  Mouse %d: \"%s\" (SDL ID %u)\n"), i, di_mouse[i].name.c_str(),
-				static_cast<unsigned>(mouse_id_map[i]));
-		}
-	} else {
+	if (!sdl_mice || count < 1) {
 		if (sdl_mice)
 			SDL_free(sdl_mice);
-#endif
-		num_mouse = 1;
-		mouse_id_map[0] = 0;
-		setup_mouse_device(&di_mouse[0], "System mouse");
-#ifndef LIBRETRO
+		setup_single_system_mouse();
+		write_log(_T("Mouse: multi-mouse requested but SDL reports no mice; using System mouse\n"));
+		return 1;
 	}
+
+	// Partition into real vs virtual. We register only the reals (virtuals are
+	// discarded entirely, not just re-ordered), which guarantees that mouse
+	// index 0 — the default binding for Port 1 — is always a real device.
+	// SDL's order within each group is preserved so hot-plug-stable IDs don't
+	// drift between launches.
+	std::vector<SDL_MouseID> real_mice;
+	std::vector<SDL_MouseID> virtual_mice;
+	real_mice.reserve(count);
+	virtual_mice.reserve(count);
+	for (int i = 0; i < count; i++) {
+		const char* n = SDL_GetMouseNameForID(sdl_mice[i]);
+		if (mouse_name_looks_virtual(n))
+			virtual_mice.push_back(sdl_mice[i]);
+		else
+			real_mice.push_back(sdl_mice[i]);
+	}
+	SDL_free(sdl_mice);
+
+	if (real_mice.empty()) {
+		// Every device SDL reported looks virtual (common on locked-down X11
+		// sessions). Fall back rather than exposing confusing entries — this
+		// is the robustness win over the previous sort-only approach.
+		setup_single_system_mouse();
+		write_log(_T("Mouse: multi-mouse enabled but all %zu detected devices look virtual; using System mouse\n"),
+			virtual_mice.size());
+		for (SDL_MouseID id : virtual_mice) {
+			const char* vn = SDL_GetMouseNameForID(id);
+			write_log(_T("  filtered: \"%s\" (SDL ID %u)\n"), vn ? vn : "(unnamed)",
+				static_cast<unsigned>(id));
+		}
+		return 1;
+	}
+
+	num_mouse = std::min(static_cast<int>(real_mice.size()), static_cast<int>(MAX_INPUT_DEVICES));
+	for (int i = 0; i < num_mouse; i++) {
+		mouse_id_map[i] = real_mice[i];
+		const char* sdl_name = SDL_GetMouseNameForID(real_mice[i]);
+		std::string device_name;
+		if (sdl_name && sdl_name[0]) {
+			device_name = sdl_name;
+		} else {
+			device_name = (num_mouse > 1)
+				? "Mouse " + std::to_string(i + 1)
+				: "System mouse";
+		}
+		setup_mouse_device(&di_mouse[i], device_name.c_str());
+	}
+	write_log(_T("Multi-mouse: %d real mice detected (%zu virtual filtered)\n"),
+		num_mouse, virtual_mice.size());
+	for (int i = 0; i < num_mouse; i++) {
+		write_log(_T("  Mouse %d: \"%s\" (SDL ID %u)\n"), i, di_mouse[i].name.c_str(),
+			static_cast<unsigned>(mouse_id_map[i]));
+	}
+#else
+	num_mouse = 1;
+	mouse_id_map[0] = 0;
+	setup_mouse_device(&di_mouse[0], "System mouse");
 #endif
 	return 1;
 }
 
 static void close_mouse()
 {
-	for (auto i = 0; i < num_mouse; i++)
+	for (auto i = 0; i < MAX_INPUT_DEVICES; i++)
 		di_dev_free(&di_mouse[i]);
 	memset(mouse_id_map, 0, sizeof mouse_id_map);
 	for (auto& s : mouse_unique_names)
 		s.clear();
-	di_free();
+	num_mouse = 1;
 }
 
 static int acquire_mouse(const int num, int flags)
@@ -861,6 +1240,17 @@ struct inputdevice_functions inputdevicefunc_mouse = {
 int get_mouse_index_from_sdl_id(SDL_MouseID which)
 {
 #ifndef LIBRETRO
+	// Single-mouse mode: collapse every SDL mouse event to index 0, including
+	// touch-synthesised mouse events (SDL_TOUCH_MOUSEID) and pen/stylus events
+	// (SDL_PEN_MOUSEID). This is defence-in-depth — the fall-through at the
+	// end of the function would also return 0 — but the explicit short-circuit
+	// makes the single-device contract obvious and survives any future change
+	// to mouse_id_map semantics.
+	if (!currprefs.input_multi_mouse)
+		return 0;
+	// Multi-mouse mode: touch and pen events are still absorbed by mouse 0 so
+	// a user with multiple USB mice doesn't see their trackpad/stylus hijacked
+	// by an unrelated port binding.
 	if (which == 0 || which == SDL_TOUCH_MOUSEID || which == SDL_PEN_MOUSEID)
 		return 0;
 	for (int i = 0; i < num_mouse; i++) {
@@ -872,9 +1262,27 @@ int get_mouse_index_from_sdl_id(SDL_MouseID which)
 }
 
 #ifndef LIBRETRO
+int get_tracked_mouse_index_from_sdl_id(SDL_MouseID which)
+{
+	if (!currprefs.input_multi_mouse || which == 0
+		|| which == SDL_TOUCH_MOUSEID || which == SDL_PEN_MOUSEID)
+		return -1;
+	for (int i = 0; i < num_mouse; ++i) {
+		if (mouse_id_map[i] == which)
+			return i;
+	}
+	return -1;
+}
+
 void handle_sdl_mouse_added(SDL_MouseID which)
 {
+	// In single-mouse mode the hotplug event is irrelevant: the newly added
+	// mouse's events are routed to index 0 by get_mouse_index_from_sdl_id().
+	if (!currprefs.input_multi_mouse)
+		return;
 	if (which == 0 || which == SDL_TOUCH_MOUSEID || which == SDL_PEN_MOUSEID)
+		return;
+	if (mouse_name_looks_virtual(SDL_GetMouseNameForID(which)))
 		return;
 
 	for (int i = 0; i < num_mouse; i++) {
@@ -913,6 +1321,10 @@ void handle_sdl_mouse_added(SDL_MouseID which)
 
 void handle_sdl_mouse_removed(SDL_MouseID which)
 {
+	// See handle_sdl_mouse_added(): single-mouse mode does not track
+	// per-device SDL_MouseIDs, so unplug events are no-ops.
+	if (!currprefs.input_multi_mouse)
+		return;
 	if (which == 0 || which == SDL_TOUCH_MOUSEID || which == SDL_PEN_MOUSEID)
 		return;
 
@@ -1171,6 +1583,10 @@ void open_as_game_controller(struct didata* did, const int i)
 	did->joystick_id = SDL_GetJoystickID(did->joystick);
 	SDL_GUIDToString(SDL_GetJoystickGUID(did->joystick), guid_str, 33);
 	did->guid = std::string(guid_str);
+	if (const char* serial = SDL_GetJoystickSerial(did->joystick))
+		did->serial = serial;
+	if (const char* path = SDL_GetJoystickPath(did->joystick))
+		did->path = path;
 
 	if (SDL_GetGamepadNameForID(i) != nullptr)
 		did->controller_name.assign(SDL_GetGamepadNameForID(i));
@@ -1201,6 +1617,10 @@ void open_as_joystick(struct didata* did, const int i)
 	did->joystick_id = SDL_GetJoystickID(did->joystick);
 	SDL_GUIDToString(SDL_GetJoystickGUID(did->joystick), guid_str, 33);
 	did->guid = std::string(guid_str);
+	if (const char* serial = SDL_GetJoystickSerial(did->joystick))
+		did->serial = serial;
+	if (const char* path = SDL_GetJoystickPath(did->joystick))
+		did->path = path;
 
 	if (SDL_GetJoystickNameForID(i) != nullptr)
 		did->joystick_name.assign(SDL_GetJoystickNameForID(i));
@@ -1337,7 +1757,7 @@ void setup_mapping(didata* did, const std::string& controllers, const int id)
 	}
 	else
 	{
-		const std::string controller_name = did->controller_name;
+		const std::string controller_name = did->name;
 		const std::string controller_path = get_controllers_path();
 		const std::string controller_file = controller_path + controller_name + ".controller";
 		if (my_existsfile2(controller_file.c_str()))
@@ -1378,6 +1798,22 @@ static int init_joystick()
 	return 1;
 }
 
+int amiberry_get_joystick_index(const TCHAR* configname)
+{
+	if (!configname || _tcsncmp(configname, _T("JOY"), 3) != 0)
+		return -1;
+
+	const TCHAR* digits = configname + 3;
+	if (!digits[0])
+		return -1;
+
+	TCHAR* endptr;
+	const long index = _tcstol(digits, &endptr, 10);
+	if (endptr == digits || endptr[0] || index < 0 || index >= MAX_INPUT_DEVICES)
+		return -1;
+	return static_cast<int>(index);
+}
+
 bool load_custom_options(uae_prefs* p, const std::string& option, const TCHAR* value)
 {
 	// Only do this loop if the option starts with "joyport"
@@ -1389,17 +1825,13 @@ bool load_custom_options(uae_prefs* p, const std::string& option, const TCHAR* v
 		{
 			const jport *jp = &p->jports[i];
 
-			// Check if configname contains JOY0, JOY1, JOY2, or JOY3
-			int joy_index = -1;
-			if (jp->idc.configname[0] && strncmp(jp->idc.configname, "JOY", 3) == 0 &&
-				jp->idc.configname[4] == '\0' &&
-				jp->idc.configname[3] >= '0' && jp->idc.configname[3] <= '3') {
-				joy_index = jp->idc.configname[3] - '0';
-				}
+			const int joy_index = amiberry_get_joystick_index(jp->idc.configname);
 			if (joy_index == -1)
 				continue;
 
-			didata* did = &di_joystick[joy_index];
+			controller_mapping mapping{};
+			amiberry_get_port_joystick_custom_mapping(
+				i, jp->idc.name, jp->idc.configname, mapping);
 
 			for (int m = 0; m < 2; ++m)
 			{
@@ -1409,11 +1841,14 @@ bool load_custom_options(uae_prefs* p, const std::string& option, const TCHAR* v
 					buffer = "joyport" + std::to_string(i) + "_amiberry_custom_" + mode + "_" + SDL_GetGamepadStringForButton(static_cast<SDL_GamepadButton>(n));
 					if (buffer == option)
 					{
-						const auto b = (find_inputevent(value) > -1) ? remap_event_list[find_inputevent(value)] : 0;
+						const int event_index = find_inputevent(value);
+						const auto b = event_index > -1 ? remap_event_list[event_index] : 0;
 						if (m == 0)
-							did->mapping.amiberry_custom_none[n] = b;
+							mapping.amiberry_custom_none[n] = b;
 						else
-							did->mapping.amiberry_custom_hotkey[n] = b;
+							mapping.amiberry_custom_hotkey[n] = b;
+						amiberry_set_port_joystick_custom_mapping(
+							i, jp->idc.name, jp->idc.configname, mapping);
 						return true;
 					}
 				}
@@ -1423,11 +1858,14 @@ bool load_custom_options(uae_prefs* p, const std::string& option, const TCHAR* v
 					buffer = "joyport" + std::to_string(i) + "_amiberry_custom_axis_" + mode + "_" + SDL_GetGamepadStringForAxis(static_cast<SDL_GamepadAxis>(n));
 					if (buffer == option)
 					{
-						const auto b = (find_inputevent(value) > -1) ? remap_event_list[find_inputevent(value)] : 0;
+						const int event_index = find_inputevent(value);
+						const auto b = event_index > -1 ? remap_event_list[event_index] : 0;
 						if (m == 0)
-							did->mapping.amiberry_custom_axis_none[n] = b;
+							mapping.amiberry_custom_axis_none[n] = b;
 						else
-							did->mapping.amiberry_custom_axis_hotkey[n] = b;
+							mapping.amiberry_custom_axis_hotkey[n] = b;
+						amiberry_set_port_joystick_custom_mapping(
+							i, jp->idc.name, jp->idc.configname, mapping);
 						return true;
 					}
 				}
@@ -1443,11 +1881,10 @@ static void close_joystick()
 	if (!joystick_inited)
 		return;
 	joystick_inited = 0;
-	for (auto i = 0; i < num_joystick; i++)
+	for (auto i = 0; i < MAX_INPUT_DEVICES; i++)
 		di_dev_free(&di_joystick[i]);
 	num_joystick = 0;
 	osj_device_index = -1;
-	di_free();
 }
 
 void import_joysticks()
@@ -1986,6 +2423,19 @@ int input_get_default_joystick(struct uae_input_device* uid, int i, int port, in
 			// Return => RShoulder
 			if (!button_map[0][SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER])
 				setid(uid, i, ID_BUTTON_OFFSET + SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, 0, port, INPUTEVENT_KEY_RETURN, gp);
+		}
+
+		// FS-UAE-style extra Up bind on WEST (X/Square) so modern pads get a free jump button.
+		// Applies only in real joystick modes on ports 0/1; in DEFAULT mode this overrides the
+		// rarely-used 3rd fire button. Respect any user-defined custom mapping on WEST.
+		// Analog mode has its own default-mapping function (input_get_default_joystick_analog).
+		if (currprefs.input_joystick_up_button
+			&& port < 2
+			&& (mode == JSEM_MODE_DEFAULT || mode == JSEM_MODE_JOYSTICK)
+			&& !button_map[0][SDL_GAMEPAD_BUTTON_WEST])
+		{
+			setid(uid, i, ID_BUTTON_OFFSET + SDL_GAMEPAD_BUTTON_WEST, 0, port,
+				port ? INPUTEVENT_JOY2_UP : INPUTEVENT_JOY1_UP, gp);
 		}
 	}
 

@@ -29,9 +29,14 @@
 #include "sounddep/sound.h"
 #include "inputdevice.h"
 #include "amiberry_input.h"
+#include "target.h"
 
 #include "threaddep/thread.h"
-#include "vkbd/vkbd.h"
+#include "imgui_overlay.h"
+#ifdef USE_VULKAN
+#include "imgui_impl_vulkan.h"
+#endif
+#include "imgui_osk.h"
 #include "on_screen_joystick.h"
 #include "on_screen_cd32pad.h"
 #include "fsdb_host.h"
@@ -47,8 +52,17 @@
 #include "display_modes.h"
 #include "irenderer.h"
 #include "renderer_factory.h"
+#ifdef USE_OPENGL
+#include "opengl_renderer.h"
+#endif
+#ifdef USE_VULKAN
+#include "vulkan_renderer.h"
+#endif
 
 #ifdef AMIBERRY
+
+// Config name for window title
+extern char last_active_config[];
 
 // Shared state defined in amiberry_gfx.cpp
 extern int wasfs[2];
@@ -95,36 +109,34 @@ void close_hwnds(struct AmigaMonitor* mon, const bool force_destroy_fullwindow)
 		renderer_to_use = g_renderer.get();
 	}
 
+	// Shut down the ImGui overlay BEFORE the renderer destroys its context/device.
+	// The overlay's Vulkan backend needs the device alive for cleanup.
+	imgui_osk_shutdown();
+	imgui_overlay_shutdown();
+
 	const bool preserve_fullwindow_window = isfullscreen() < 0 && !force_destroy_fullwindow;
 	if (renderer_to_use) {
 		renderer_to_use->close_hwnds_cleanup(mon);
 		renderer_to_use->destroy_context();
-		if (!kmsdrm_detected && !preserve_fullwindow_window) {
+		// no_wm_detected covers both KMSDRM and x11-without-WM: in both
+		// cases the renderer is shared with the GUI and must not be torn
+		// down here.
+		if (!no_wm_detected && !preserve_fullwindow_window) {
 			renderer_to_use->destroy_platform_renderer(mon);
 		}
 	}
 	if (mon->monitor_id > 0 && mon->renderer) {
 		mon->renderer.reset();
 	}
-	if (mon->amiga_window && !kmsdrm_detected && !preserve_fullwindow_window)
+	if (mon->amiga_window && !no_wm_detected && !preserve_fullwindow_window)
 	{
 #if defined(__ANDROID__)
 		// Reuse existing window
-#elif defined(_WIN32)
-		if (mon->gui_window == mon->amiga_window) {
-			// GUI is sharing this window — don't destroy
-		} else {
-			SDL_DestroyWindow(mon->amiga_window);
-			mon->amiga_window = nullptr;
-		}
 #else
 		SDL_DestroyWindow(mon->amiga_window);
 		mon->amiga_window = nullptr;
 #endif
 	}
-
-	if (currprefs.vkbd_enabled)
-		vkbd_quit();
 
 	gfx_hdr = false;
 }
@@ -156,6 +168,17 @@ void update_gfxparams(struct AmigaMonitor* mon)
 
 	updatewinfsmode(mon->monitor_id, &currprefs);
 #ifdef PICASSO96
+	if (currprefs.rtgvblankrate == 0) {
+		currprefs.gfx_apmode[APMODE_RTG].gfx_refreshrate = currprefs.gfx_apmode[0].gfx_refreshrate;
+		if (currprefs.gfx_apmode[APMODE_NATIVE].gfx_interlaced) {
+			currprefs.gfx_apmode[APMODE_RTG].gfx_refreshrate *= 2;
+		}
+	} else if (currprefs.rtgvblankrate < 0) {
+		currprefs.gfx_apmode[APMODE_RTG].gfx_refreshrate = 0;
+	} else {
+		currprefs.gfx_apmode[APMODE_RTG].gfx_refreshrate = currprefs.rtgvblankrate;
+	}
+
 	if (mon->screen_is_picasso) {
 		float mx = 1.0;
 		float my = 1.0;
@@ -168,16 +191,6 @@ void update_gfxparams(struct AmigaMonitor* mon)
 		mon->currentmode.current_width = static_cast<int>(state->Width * currprefs.rtg_horiz_zoom_mult * mx);
 		mon->currentmode.current_height = static_cast<int>(state->Height * currprefs.rtg_vert_zoom_mult * my);
 		currprefs.gfx_apmode[APMODE_RTG].gfx_interlaced = false;
-		if (currprefs.rtgvblankrate == 0) {
-			currprefs.gfx_apmode[APMODE_RTG].gfx_refreshrate = currprefs.gfx_apmode[APMODE_NATIVE].gfx_refreshrate;
-			if (currprefs.gfx_apmode[APMODE_NATIVE].gfx_interlaced) {
-				currprefs.gfx_apmode[APMODE_RTG].gfx_refreshrate *= 2;
-			}
-		} else if (currprefs.rtgvblankrate < 0) {
-			currprefs.gfx_apmode[APMODE_RTG].gfx_refreshrate = 0;
-		} else {
-			currprefs.gfx_apmode[APMODE_RTG].gfx_refreshrate = currprefs.rtgvblankrate;
-		}
 	} else {
 #endif
 		mon->currentmode.current_width = currprefs.gfx_monitor[mon->monitor_id].gfx_size.width;
@@ -296,6 +309,7 @@ int open_windows(AmigaMonitor* mon, bool mousecapture, bool started)
 
 	mon->in_sizemove = 0;
 	mon->focus_transitioning = false;
+	mon->moved_during_focus_transition = false;
 	mon->pre_focus_x = 0;
 	mon->pre_focus_y = 0;
 
@@ -318,10 +332,14 @@ int open_windows(AmigaMonitor* mon, bool mousecapture, bool started)
 	if (!ret) {
 		return ret;
 	}
+	if (!started && currprefs.start_uncaptured)
+		suppresscapture();
 	if (gfx_platform_skip_window_activation())
 		return ret;
 
-	bool startactive = (started && mouseactive) || (!started && !currprefs.start_uncaptured && !currprefs.start_minimized);
+	const bool startcapture = !started && !currprefs.start_uncaptured && !currprefs.start_minimized
+		&& (currprefs.capture_always || isfullscreen() != 0);
+	bool startactive = (started && mouseactive) || startcapture;
 	bool startpaused = !started && ((currprefs.start_minimized && currprefs.minimized_pause) || (currprefs.start_uncaptured && currprefs.inactive_pause && isfullscreen() <= 0));
 	bool startminimized = !started && currprefs.start_minimized && isfullscreen() <= 0;
 	int input = 0;
@@ -396,11 +414,6 @@ int reopen(struct AmigaMonitor* mon, int full, bool unacquire)
 	if (changed_prefs.gfx_apmode[1].gfx_fullscreen != currprefs.gfx_apmode[1].gfx_fullscreen && mon->screen_is_picasso)
 		full = 1;
 
-	/* fullscreen to fullscreen */
-	if (isfullscreen() > 0 && currprefs.gfx_apmode[0].gfx_fullscreen == changed_prefs.gfx_apmode[0].gfx_fullscreen &&
-		currprefs.gfx_apmode[1].gfx_fullscreen == changed_prefs.gfx_apmode[1].gfx_fullscreen && currprefs.gfx_apmode[0].gfx_fullscreen == GFX_FULLSCREEN) {
-		quick = 1;
-	}
 	/* windowed to windowed */
 	if (isfullscreen() <= 0 && currprefs.gfx_apmode[0].gfx_fullscreen == changed_prefs.gfx_apmode[0].gfx_fullscreen &&
 		currprefs.gfx_apmode[1].gfx_fullscreen == changed_prefs.gfx_apmode[1].gfx_fullscreen) {
@@ -456,6 +469,14 @@ void close_windows(struct AmigaMonitor* mon, const bool force_destroy_fullwindow
 		reset_sound();
 
 #ifdef AMIBERRY
+	// Reset drawbuffer state that may point into the surface pixel buffer
+	// before destroying the surface (see doInit for the full explanation).
+	avidinfo->drawbuffer.bufmem = nullptr;
+	avidinfo->drawbuffer.width_allocated = 0;
+	avidinfo->drawbuffer.height_allocated = 0;
+	avidinfo->drawbuffer.rowbytes = 0;
+	avidinfo->drawbuffer.locked = false;
+
 	if (mon->monitor_id == 0) {
 		SDL_DestroySurface(amiga_surface);
 		amiga_surface = nullptr;
@@ -577,20 +598,22 @@ static int create_windows(struct AmigaMonitor* mon)
 		}
 	}
 
-	const SDL_WindowFlags fullscreen = (isfullscreen() > 0) ? SDL_WINDOW_FULLSCREEN : 0;
-	uint32_t fullwindow = (isfullscreen() < 0) ? 1 : 0;
+	uint32_t fullwindow = isfullscreen() != 0 ? 1 : 0;
 	SDL_WindowFlags flags = 0;
 	const int borderless = currprefs.borderless;
 	int x, y, w, h;
 	struct MultiDisplay* md;
 
 #ifdef AMIBERRY
-	// Detect KMSDRM driver
 	write_log("Getting Current Video Driver...\n");
 	sdl_video_driver = SDL_GetCurrentVideoDriver();
-	if (sdl_video_driver != nullptr && strcmpi(sdl_video_driver, "KMSDRM") == 0)
+	// Detect WM-less environments (KMSDRM, or x11 without a WM like Batocera).
+	// Both require window sharing: without a WM, separate windows can't be
+	// focus/stacking-managed, leaving the GUI stuck foreground on resume
+	// (see #1962). detect_no_wm() also sets kmsdrm_detected when applicable.
+	detect_no_wm();
+	if (no_wm_detected)
 	{
-		kmsdrm_detected = true;
 		if (!mon->amiga_window && mon->gui_window)
 		{
 			mon->amiga_window = mon->gui_window;
@@ -642,6 +665,16 @@ static int create_windows(struct AmigaMonitor* mon)
 			md = md2;
 	}
 	mon->md = md;
+	mon->desktop_width = 0;
+	mon->desktop_height = 0;
+	if (md && md->display_id) {
+		const SDL_DisplayMode* desktop_mode = SDL_GetDesktopDisplayMode(md->display_id);
+		if (desktop_mode) {
+			mon->desktop_width = desktop_mode->w;
+			mon->desktop_height = desktop_mode->h;
+			sdl_mode = *desktop_mode;
+		}
+	}
 
 	if (mon->amiga_window) {
 		SDL_Rect r;
@@ -680,6 +713,19 @@ static int create_windows(struct AmigaMonitor* mon)
 		} else if (md && md->display_id) {
 			SDL_Rect db;
 			SDL_GetDisplayBounds(md->display_id, &db);
+			// Leaving desktop fullscreen: the current position is the fullscreen
+			// origin, so restore the stored windowed position instead.
+			if (SDL_GetWindowFlags(mon->amiga_window) & SDL_WINDOW_FULLSCREEN) {
+				int stored_x = 1, stored_y = 0;
+				regqueryint(nullptr, _T("MainPosX"), &stored_x);
+				regqueryint(nullptr, _T("MainPosY"), &stored_y);
+				if (currprefs.borderless) {
+					stored_x = currprefs.gfx_monitor[mon->monitor_id].gfx_size_win.x;
+					stored_y = currprefs.gfx_monitor[mon->monitor_id].gfx_size_win.y;
+				}
+				nx = std::max(stored_x, 0);
+				ny = std::max(stored_y, 0);
+			}
 			bool on_target = (nx >= db.x && nx < db.x + db.w
 				&& ny >= db.y && ny < db.y + db.h);
 			if (!on_target) {
@@ -717,6 +763,16 @@ static int create_windows(struct AmigaMonitor* mon)
 					write_log(_T("fullwindow: forcing mode switch from exclusive to desktop fullscreen\n"));
 				}
 			}
+		} else {
+			// Leaving desktop fullscreen through the resize-in-place path: SDL
+			// defers size/position changes on fullscreen windows, so without an
+			// explicit exit the window would silently stay fullscreen.
+			SDL_WindowFlags wflags = SDL_GetWindowFlags(mon->amiga_window);
+			if (wflags & SDL_WINDOW_FULLSCREEN) {
+				SDL_SetWindowFullscreen(mon->amiga_window, false);
+				SDL_SyncWindow(mon->amiga_window);
+				needs_resize = true;
+			}
 		}
 
 		if (needs_resize) {
@@ -728,7 +784,7 @@ static int create_windows(struct AmigaMonitor* mon)
 
 			// SDL3: position/size changes are deferred on fullscreen windows,
 			// so exit fullscreen first, reposition, then re-enter
-			if (fullwindow || fullscreen) {
+			if (fullwindow) {
 				SDL_SetWindowFullscreen(mon->amiga_window, false);
 			}
 
@@ -738,23 +794,6 @@ static int create_windows(struct AmigaMonitor* mon)
 
 			if (fullwindow) {
 				SDL_SetWindowFullscreenMode(mon->amiga_window, nullptr);
-				SDL_SetWindowFullscreen(mon->amiga_window, true);
-				SDL_SyncWindow(mon->amiga_window);
-			} else if (fullscreen) {
-				SDL_DisplayID display_id = md ? md->display_id : SDL_GetDisplayForWindow(mon->amiga_window);
-				bool mode_set = false;
-				if (display_id) {
-					SDL_DisplayMode closest;
-					if (SDL_GetClosestFullscreenDisplayMode(
-						display_id, w, h, 0.0f, true, &closest)) {
-						SDL_SetWindowFullscreenMode(mon->amiga_window, &closest);
-						mode_set = true;
-					}
-				}
-				if (!mode_set) {
-					write_log(_T("Fullscreen: no matching display mode for %dx%d, falling back to desktop mode (full-window)\n"), w, h);
-					SDL_SetWindowFullscreenMode(mon->amiga_window, nullptr);
-				}
 				SDL_SetWindowFullscreen(mon->amiga_window, true);
 				SDL_SyncWindow(mon->amiga_window);
 			}
@@ -832,22 +871,6 @@ static int create_windows(struct AmigaMonitor* mon)
 #endif
 		mon->currentmode.native_width = rc.w;
 		mon->currentmode.native_height = rc.h;
-	} else if (fullscreen) {
-#ifdef __ANDROID__
-		flags |= SDL_WINDOW_RESIZABLE;
-#endif
-		getbestmode(mon, 0);
-		w = mon->currentmode.native_width;
-		h = mon->currentmode.native_height;
-		rc = md->rect;
-		if (rc.x >= 0)
-			x = rc.x;
-		else
-			x = rc.x + (rc.w - w);
-		if (rc.y >= 0)
-			y = rc.y;
-		else
-			y = rc.y + (rc.h - h);
 	} else {
 		flags |= SDL_WINDOW_RESIZABLE;
 	}
@@ -874,9 +897,11 @@ static int create_windows(struct AmigaMonitor* mon)
 	if (renderer_to_use) {
 		flags |= renderer_to_use->get_window_flags();
 	}
-	TCHAR wintitle[64];
+	TCHAR wintitle[256];
 	if (mon->monitor_id > 0)
-		_stprintf(wintitle, _T("Amiberry [%d]"), mon->monitor_id + 1);
+		_sntprintf(wintitle, sizeof wintitle / sizeof(TCHAR), _T("Amiberry [%d]"), mon->monitor_id + 1);
+	else if (last_active_config[0])
+		_sntprintf(wintitle, sizeof wintitle / sizeof(TCHAR), _T("Amiberry - [%s]"), last_active_config);
 	else
 		_tcscpy(wintitle, _T("Amiberry"));
 	mon->amiga_window = SDL_CreateWindow(wintitle,
@@ -889,32 +914,12 @@ static int create_windows(struct AmigaMonitor* mon)
 		return 0;
 	}
 	SDL_SetWindowPosition(mon->amiga_window, rc.x, rc.y);
-	if (fullwindow || fullscreen) {
+	if (fullwindow) {
 		SDL_SyncWindow(mon->amiga_window);
 	}
 
 	if (fullwindow) {
 		SDL_SetWindowFullscreenMode(mon->amiga_window, nullptr);
-		SDL_SetWindowFullscreen(mon->amiga_window, true);
-		SDL_SyncWindow(mon->amiga_window);
-	} else if (fullscreen) {
-		SDL_DisplayID display_id = md ? md->display_id : SDL_GetDisplayForWindow(mon->amiga_window);
-		bool mode_set = false;
-		if (display_id) {
-			SDL_DisplayMode closest;
-			if (SDL_GetClosestFullscreenDisplayMode(
-				display_id, mon->currentmode.native_width, mon->currentmode.native_height, 0.0f, true, &closest)) {
-				SDL_SetWindowFullscreenMode(mon->amiga_window, &closest);
-				mode_set = true;
-			}
-		}
-		if (!mode_set) {
-			// No matching fullscreen display mode found (e.g. custom EDID with limited modes).
-			// Fall back to borderless fullscreen desktop mode to avoid a windowed-size window.
-			write_log(_T("Fullscreen: no matching display mode for %dx%d, falling back to borderless fullscreen desktop mode\n"),
-				mon->currentmode.native_width, mon->currentmode.native_height);
-			SDL_SetWindowFullscreenMode(mon->amiga_window, nullptr);
-		}
 		SDL_SetWindowFullscreen(mon->amiga_window, true);
 		SDL_SyncWindow(mon->amiga_window);
 	}
@@ -948,17 +953,9 @@ static int create_windows(struct AmigaMonitor* mon)
 		}
 	}
 
-    // Cache current display mode for scaling heuristics
-    {
-        SDL_DisplayID disp_id = SDL_GetDisplayForWindow(mon->amiga_window);
-        const SDL_DisplayMode* dm = disp_id ? SDL_GetDesktopDisplayMode(disp_id) : nullptr;
-        if (dm) {
-            sdl_mode = *dm;
-        }
-    }
 	updatewinrect(mon, true);
 	GetWindowRect(mon->amiga_window, &mon->mainwin_rect);
-	if (fullscreen || fullwindow)
+	if (fullwindow)
 		movecursor(mon, x + w / 2, y + h / 2);
 
 	mon->window_extra_height_bar = 0;
@@ -976,6 +973,8 @@ static int create_windows(struct AmigaMonitor* mon)
 	if (renderer_to_use && mon->amiga_window) {
 		int win_w, win_h, draw_w, draw_h;
 		SDL_GetWindowSize(mon->amiga_window, &win_w, &win_h);
+		mon->logical_window_width = win_w;
+		mon->logical_window_height = win_h;
 		renderer_to_use->get_drawable_size(mon->amiga_window, &draw_w, &draw_h);
 		if (win_w > 0 && draw_w > 0 && win_w != draw_w) {
 			mon->hidpi_scale_x = (float)draw_w / (float)win_w;
@@ -1029,7 +1028,7 @@ static void allocsoftbuffer(int monid, const TCHAR* name, struct vidbuffer* buf,
 	}
 }
 
-int oldtex_w[MAX_AMIGAMONITORS], oldtex_h[MAX_AMIGAMONITORS], oldtex_rtg[MAX_AMIGAMONITORS];
+int oldtex_w[MAX_AMIGAMONITORS], oldtex_h[MAX_AMIGAMONITORS], oldtex_rtg[MAX_AMIGAMONITORS], oldtex_zero_copy[MAX_AMIGAMONITORS];
 
 // updatepicasso96 remains in amiberry_gfx.cpp; declared here for doInit to call
 extern void updatepicasso96(struct AmigaMonitor* mon);
@@ -1116,7 +1115,33 @@ bool doInit(AmigaMonitor* mon)
 				int ctx_attempts = 0;
 				bool ctx_success = false;
 
-				while (ctx_attempts < 2 && !ctx_success) {
+				/* Modes 0..3:
+				 *   0 = preferred  : GL 3.3 Core, RGBA8, no depth/stencil
+				 *   1 = legacy     : GL 2.1 Compat, RGBA8, no depth/stencil
+				 *   2 = minimal-3.3: GL 3.3 Core, only DOUBLEBUFFER set
+				 *   3 = minimal-2.1: GL 2.1 Compat, only DOUBLEBUFFER set
+				 * Modes 2/3 exist for drivers with a narrow pixel-format set
+				 * (e.g. Mesa3D d3d12 on Windows ARM64 VMs). */
+				constexpr int max_ctx_modes = 4;
+				while (ctx_attempts < max_ctx_modes && !ctx_success) {
+					/* Refresh the renderer pointer at the top of every
+					 * iteration.  A previous failed create_windows() may
+					 * have called close_hwnds() — which resets
+					 * mon->renderer for secondary monitors (monitor_id > 0)
+					 * — leaving any cached pointer dangling.  Re-fetching
+					 * here also lets the OpenGL attribute calls below
+					 * apply to the right (or freshly recreated) renderer.
+					 * SDL GL attributes are process-global so even the
+					 * fallback to g_renderer is safe — the attributes
+					 * affect the next SDL_CreateWindow regardless of
+					 * which IRenderer instance is used to set them. */
+					renderer = get_renderer(mon->monitor_id);
+					if (!renderer) {
+						write_log("No renderer available for monitor %d after retry; aborting doInit.\n",
+							mon->monitor_id);
+						return false;
+					}
+
 					if (!renderer->set_context_attributes(ctx_attempts))
 					{
 						write_log("Failed to set context attributes for mode %d\n", ctx_attempts);
@@ -1126,11 +1151,28 @@ bool doInit(AmigaMonitor* mon)
 
 					if (!create_windows(mon))
 					{
-						close_hwnds(mon, false);
-						return false;
+						/* SDL_CreateWindow can fail at this point with "No
+						 * matching GL pixel format available" when the GL
+						 * driver doesn't expose a pixel format compatible
+						 * with the attributes we just set (seen with Mesa
+						 * d3d12 on Windows ARM64 VMs).  Treat it as a
+						 * context-mode failure and retry with the next
+						 * mode rather than aborting the whole init. */
+						write_log("Window creation failed for renderer mode %d on monitor %d. Retrying with next mode...\n",
+							ctx_attempts, mon->monitor_id);
+						ctx_attempts++;
+						continue;
 					}
 
+					/* Re-fetch the renderer because create_windows() can
+					 * recreate mon->renderer for secondary monitors when
+					 * the previous one was reset. */
 					renderer = get_renderer(mon->monitor_id);
+					if (!renderer) {
+						write_log("Renderer disappeared for monitor %d after window creation; aborting doInit.\n",
+							mon->monitor_id);
+						return false;
+					}
 
 					renderer->destroy_shaders();
 					renderer->destroy_context();
@@ -1149,6 +1191,14 @@ bool doInit(AmigaMonitor* mon)
 
 				if (!ctx_success) {
 					write_log("All renderer context attempts failed for monitor %d. Aborting doInit.\n", mon->monitor_id);
+#if defined(_WIN32)
+					write_log("HINT: If running inside a VM (VMware/Parallels/Hyper-V) without an OpenGL ICD,\n");
+					write_log("HINT: try the Mesa3D 'llvmpipe' build (mesa-llvmpipe-arm64 from\n");
+					write_log("HINT: https://github.com/mmozeiko/build-mesa/releases) — drop opengl32.dll\n");
+					write_log("HINT: next to Amiberry.exe.  llvmpipe is software-only but exposes a\n");
+					write_log("HINT: standard pixel-format set that SDL accepts; mesa-d3d12 trades that\n");
+					write_log("HINT: for hardware acceleration but exposes a much narrower format set.\n");
+#endif
 					return false;
 				}
 			}
@@ -1210,6 +1260,22 @@ bool doInit(AmigaMonitor* mon)
 	{
 		if (surface_ref)
 		{
+			// The drawbuffer's vram_buffer mode stores bufmem/width_allocated/
+			// height_allocated/rowbytes as direct references into the surface's
+			// pixel buffer (set by lockscr).  Reset those fields before freeing
+			// the surface so no stale pointers or dimensions survive the
+			// reallocation.  Without this, a subsequent flush_clear_screen or
+			// unlockscr dirty-rect calculation can use the old (larger)
+			// dimensions against the new (smaller) surface, overflowing the
+			// pixel buffer and corrupting heap metadata — the
+			// "free(): invalid next size" crash when switching between RTG
+			// (e.g. ZZ9000) and native PAL modes (issue #2266).
+			avidinfo->drawbuffer.bufmem = nullptr;
+			avidinfo->drawbuffer.width_allocated = 0;
+			avidinfo->drawbuffer.height_allocated = 0;
+			avidinfo->drawbuffer.rowbytes = 0;
+			avidinfo->drawbuffer.locked = false;
+
 			SDL_DestroySurface(surface_ref);
 			surface_ref = nullptr;
 		}
@@ -1236,20 +1302,47 @@ bool doInit(AmigaMonitor* mon)
 	rp_set_hwnd_delayed();
 #endif
 
-	if (isfullscreen() != 0) {
-		setmouseactive(mon->monitor_id, -1);
-	}
-
-	//osk_setup(mon->monitor_id, -2);
-	if (vkbd_allowed(mon->monitor_id))
+	// Initialize the ImGui overlay context for the on-screen keyboard.
+	// Always init so toggle works; vkbd_allowed() gates rendering.
 	{
-		vkbd_set_transparency(static_cast<double>(currprefs.vkbd_transparency) / 100.0);
-		vkbd_set_hires(currprefs.vkbd_hires);
-		vkbd_set_keyboard_has_exit_button(currprefs.vkbd_exit);
-		vkbd_set_language(string(currprefs.vkbd_language));
-		vkbd_set_style(string(currprefs.vkbd_style));
-		vkbd_init();
+		bool overlay_inited = false;
+#ifdef USE_VULKAN
+		auto* vk = get_vulkan_renderer();
+		if (vk && vk->get_vk_device()) {
+			ImGui_ImplVulkan_InitInfo vk_info{};
+			vk_info.Instance = vk->get_vk_instance();
+			vk_info.PhysicalDevice = vk->get_vk_physical_device();
+			vk_info.Device = vk->get_vk_device();
+			vk_info.QueueFamily = vk->get_vk_graphics_queue_family();
+			vk_info.Queue = vk->get_vk_graphics_queue();
+			// DescriptorPool is created internally by imgui_overlay_init_vulkan
+			vk_info.DescriptorPool = VK_NULL_HANDLE;
+			vk_info.MinImageCount = vk->get_vk_min_image_count();
+			vk_info.ImageCount = vk->get_vk_image_count();
+			vk_info.PipelineInfoMain.RenderPass = vk->get_vk_render_pass();
+			vk_info.PipelineInfoMain.Subpass = 0;
+			vk_info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+			imgui_overlay_init_vulkan(mon->amiga_window, &vk_info);
+			overlay_inited = true;
+		}
+#endif
+		if (!overlay_inited) {
+			void* gl_ctx = nullptr;
+#ifdef USE_OPENGL
+			auto* gl_renderer = get_opengl_renderer();
+			if (gl_renderer)
+				gl_ctx = gl_renderer->get_gl_context();
+#endif
+			imgui_overlay_init(mon->amiga_window, mon->amiga_renderer, gl_ctx);
+		}
 	}
+	imgui_osk_init();
+	imgui_osk_set_transparency(
+		(currprefs.vkbd_transparency > 0)
+			? static_cast<float>(currprefs.vkbd_transparency) / 100.0f
+			: 0.85f);
+	imgui_osk_set_language(currprefs.vkbd_language);
+	imgui_osk_set_numpad(currprefs.vkbd_numpad);
 
 	// Initialize on-screen joystick if enabled
 	if (currprefs.onscreen_joystick)
@@ -1311,43 +1404,58 @@ bool doInit(AmigaMonitor* mon)
 	const bool likely_gles_only = (drv && (strcmp(drv, "KMSDRM") == 0));
 #endif
 
-	if (mode == 0) {
-		if (likely_gles_only) {
-			// GLES-only systems (e.g., Raspberry Pi with KMSDRM): Try GLES 3.0
-			write_log(_T("Requesting OpenGL ES 3.0 context (GLES-only driver detected)...\n"));
-			success &= SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-			success &= SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-			success &= SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-		} else {
-			// Desktop OpenGL (x86, x86_64, ARM desktops, macOS): Try Core Profile 3.3
-			write_log(_T("Requesting OpenGL 3.3 Core context...\n"));
-			success &= SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-			success &= SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-			success &= SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-#ifdef AMIBERRY_MACOS
-			// macOS requires the forward-compatible flag for OpenGL 3.2+ Core Profile
-			success &= SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
-#endif
-		}
-	} else {
-		// Fallback: Legacy OpenGL 2.1 Compatibility
-		write_log(_T("Requesting OpenGL 2.1 Compatibility context...\n"));
+	/* Mode 0 / 1 -> request a GL 3.3 Core context with sensible RGBA8
+	 * pixel-format hints.  Mode 2 / 3 -> retry with the bare minimum
+	 * (just the GL version + DOUBLEBUFFER), so a driver with a narrow
+	 * pixel-format set (e.g. Mesa3D d3d12 on Windows ARM64 VMs, which
+	 * does not expose a format with the 16-bit depth / RGBA8 / alpha
+	 * combination SDL would otherwise enforce) still has a chance. */
+	const bool minimal_attrs = (mode >= 2);
+	const bool legacy_profile = (mode == 1) || (mode == 3);
+
+	if (legacy_profile) {
+		write_log(_T("Requesting OpenGL 2.1 Compatibility context (mode=%d, minimal=%d)...\n"),
+			mode, minimal_attrs ? 1 : 0);
 		success &= SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
 		success &= SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
 		success &= SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
 		success &= SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+	} else if (likely_gles_only) {
+		// GLES-only systems (e.g., Raspberry Pi with KMSDRM): Try GLES 3.0
+		write_log(_T("Requesting OpenGL ES 3.0 context (GLES-only driver detected, mode=%d, minimal=%d)...\n"),
+			mode, minimal_attrs ? 1 : 0);
+		success &= SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+		success &= SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+		success &= SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+	} else {
+		// Desktop OpenGL (x86, x86_64, ARM desktops, macOS): Try Core Profile 3.3
+		write_log(_T("Requesting OpenGL 3.3 Core context (mode=%d, minimal=%d)...\n"),
+			mode, minimal_attrs ? 1 : 0);
+		success &= SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+		success &= SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+		success &= SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+#ifdef AMIBERRY_MACOS
+		// macOS requires the forward-compatible flag for OpenGL 3.2+ Core Profile
+		success &= SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
+#endif
 	}
 
-	// Sensible defaults.
+	/* Always request DOUBLEBUFFER so the GL renderer can present without
+	 * tearing.  Amiberry never uses the depth or stencil buffer
+	 * (opengl_renderer / shader_preset call glDisable(GL_DEPTH_TEST) and
+	 * glDisable(GL_STENCIL_TEST) at startup), so request none. */
 	success &= SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-	success &= SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 16);
+	success &= SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
 	success &= SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0);
 
-	// Optional: request RGBA8
-	success &= SDL_GL_SetAttribute(SDL_GL_RED_SIZE,   8);
-	success &= SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
-	success &= SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE,  8);
-	success &= SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
+	if (!minimal_attrs) {
+		// Optional: request RGBA8 (skipped on minimal mode for VM-friendly
+		// drivers like Mesa3D d3d12 that may only expose RGBX/RGB10A2 etc.)
+		success &= SDL_GL_SetAttribute(SDL_GL_RED_SIZE,   8);
+		success &= SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
+		success &= SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE,  8);
+		success &= SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
+	}
 
 	return success;
 }

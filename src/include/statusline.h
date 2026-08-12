@@ -2,12 +2,15 @@
 #define UAE_STATUSLINE_H
 
 #include "uae/types.h"
+#include "gui.h"
 
 #define TD_DEFAULT_PADX 4
 #define TD_DEFAULT_PADY 2
 #define TD_DEFAULT_WIDTH 30
 #define TD_DEFAULT_LED_WIDTH 24
 #define TD_DEFAULT_LED_HEIGHT 4
+
+#define TD_MAX_CHARS 3
 
 #define TD_RIGHT 1
 #define TD_BOTTOM 2
@@ -23,6 +26,9 @@ extern int td_width;
 #define TD_DEFAULT_NUM_HEIGHT 7
 
 #define TD_TOTAL_HEIGHT (td_numbers_pady * 2 + td_numbers_height)
+
+#define LDP_CHAR_WIDTH 6
+#define LDP_CHAR_HEIGHT 7
 
 #define NUMBERS_NUM 20
 
@@ -55,5 +61,8 @@ int statusline_set_multiplier(int, int, int);
 int statusline_get_multiplier(int monid);
 void statusline_set_font(const char *newnumbers, int width, int height);
 void ldp_render(const char *txt, int len, uae_u8 *buf, struct vidbuffer*, int x, int y, int mx, int my);
+
+extern const uae_s8 defaultosdledpos[LED_MAX];
+bool statusline_led_visible(int led);
 
 #endif /* UAE_STATUSLINE_H */

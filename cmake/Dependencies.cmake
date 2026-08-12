@@ -706,6 +706,16 @@ if (USE_PCEM)
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_PCEM)
 endif ()
 
+if (USE_PPC)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_PPC)
+endif()
+
+# The QEMU glue carries the SCSI/PCI device types that the NCR controllers are
+# built from, so it has to be on whenever either emulator that needs it is.
+if (USE_PCEM OR USE_PPC)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_QEMU_CPU)
+endif()
+
 # SDL3 include dirs: FetchContent builds may not provide SDL3::SDL3.
 set(_SDL_INCLUDE_DIRS "")
 if(TARGET SDL3::SDL3)

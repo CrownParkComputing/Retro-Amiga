@@ -19,6 +19,7 @@
 
 #include "opengl_renderer.h"
 #include "amiberry_gfx.h"
+#include "amiberry_gfx_geometry.h"
 #include "gfx_window.h"
 #include "drawing.h"
 #include "fsdb_host.h"
@@ -30,10 +31,15 @@
 #include "shader_preset.h"
 #include "target.h"
 #include "statusline.h"
-#include "vkbd/vkbd.h"
+#include "imgui_overlay.h"
+#include "imgui_osk.h"
 #include "on_screen_joystick.h"
 #include "on_screen_cd32pad.h"
+#include "on_screen_joystick_layout.h"
+#include "gui/gui_handling.h"
+#include <algorithm>
 #include <cmath>
+#include <utility>
 #include <SDL3_image/SDL_image.h>
 
 #ifndef GL_BGRA
@@ -56,10 +62,15 @@ OpenGLRenderer* get_opengl_renderer()
 	return dynamic_cast<OpenGLRenderer*>(g_renderer.get());
 }
 
-static bool is_kmsdrm_video_driver()
+static const uae_prefs& get_active_filter_prefs()
 {
-	const char* driver = SDL_GetCurrentVideoDriver();
-	return driver != nullptr && strcmpi(driver, "KMSDRM") == 0;
+	return gui_running ? changed_prefs : currprefs;
+}
+
+static const char* get_selected_shader_name(const AmigaMonitor* mon)
+{
+	const auto& prefs = get_active_filter_prefs();
+	return mon->screen_is_picasso ? prefs.shader_rtg : prefs.shader;
 }
 
 static void resolve_gl_pixel_format(uint32_t sdl_pixel_format, GLenum& fmt, GLenum& type, int& bpp)
@@ -93,6 +104,7 @@ static void resolve_gl_pixel_format(uint32_t sdl_pixel_format, GLenum& fmt, GLen
 bool OpenGLRenderer::init_context(SDL_Window* window)
 {
 	write_log("DEBUG: Initializing OpenGL Context...\n");
+	amiberry_hw_vsync_pacing_set_blocking(false);
 
 	m_gl_context = SDL_GL_CreateContext(window);
 	if (!m_gl_context) {
@@ -110,13 +122,23 @@ bool OpenGLRenderer::init_context(SDL_Window* window)
 	// Load OpenGL extension functions (does nothing on Android/GLES3)
 	if (!gl_platform_init()) {
 		const GLubyte* ver = glGetString(GL_VERSION);
-		if (!ver) {
-			write_log(_T("!!! glGetString(GL_VERSION) is null; failing OpenGL init.\n"));
-			SDL_GL_DestroyContext(m_gl_context);
-			m_gl_context = nullptr;
-			return false;
-		}
-		write_log(_T("!!! OpenGL version: %hs\n"), ver);
+		const GLubyte* ren = glGetString(GL_RENDERER);
+		write_log(_T("!!! OpenGL extension loading failed (version=%hs renderer=%hs); "
+			"the host GL driver is too old (shaders/VBO/VAO required).\n"),
+			ver ? reinterpret_cast<const char*>(ver) : "<null>",
+			ren ? reinterpret_cast<const char*>(ren) : "<null>");
+#if defined(_WIN32)
+		write_log(_T("!!! On Windows this usually means the default \"GDI Generic\" "
+			"software OpenGL 1.1 implementation is being used (common in VMs without "
+			"GPU passthrough).  Install Mesa3D or use a hardware-accelerated GPU.\n"));
+#endif
+		/* gl_platform_init() failing leaves shader/VBO/VAO function pointers
+		 * NULL.  Continuing would crash later on the first draw call, so abort
+		 * GL context creation here and let the caller decide (either fall back
+		 * to the SDL renderer or exit cleanly). */
+		SDL_GL_DestroyContext(m_gl_context);
+		m_gl_context = nullptr;
+		return false;
 	}
 
 	const char* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
@@ -134,11 +156,12 @@ bool OpenGLRenderer::init_context(SDL_Window* window)
 
 void OpenGLRenderer::destroy_context()
 {
+	amiberry_hw_vsync_pacing_set_blocking(false);
 	if (m_gl_context != nullptr)
 	{
 		SDL_GL_DestroyContext(m_gl_context);
 		m_gl_context = nullptr;
-		m_vsync.current_interval = -1;
+		m_vsync.current_interval = INVALID_SWAP_INTERVAL;
 		m_vsync.cached_refresh_rate = 0.0f;
 		m_vsync.gl_initialized = false;
 	}
@@ -155,7 +178,7 @@ SDL_WindowFlags OpenGLRenderer::get_window_flags() const
 {
 	SDL_WindowFlags flags = SDL_WINDOW_OPENGL;
 #if !defined(__ANDROID__)
-	if (!is_kmsdrm_video_driver()) {
+	if (!kmsdrm_detected) {
 		flags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;
 	}
 #endif
@@ -223,22 +246,22 @@ bool OpenGLRenderer::alloc_texture(int monid, int w, int h)
 	resolve_gl_pixel_format(pixel_format, m_gl_format.fmt, m_gl_format.type, m_gl_format.bpp);
 
 	auto mon = &AMonitors[monid];
-	const char* shader_name;
-	if (mon->screen_is_picasso)
-		shader_name = amiberry_options.shader_rtg;
-	else
-		shader_name = amiberry_options.shader;
+	const char* shader_name = get_selected_shader_name(mon);
+	const bool shader_for_rtg = mon->screen_is_picasso;
 
-	// Skip shader recreation if already loaded with the same name.
-	// This preserves runtime parameter changes made by the user.
+	// Parameterized shaders may have different Native and RTG values, so they
+	// must be recreated when the display target changes even if the name matches.
 	bool shader_exists = (m_shader.crtemu != nullptr || m_shader.external != nullptr || m_shader.preset != nullptr);
-	if (shader_exists && m_shader.loaded_name == shader_name) {
+	const bool parameterized_shader = m_shader.external != nullptr || m_shader.preset != nullptr;
+	if (shader_exists && m_shader.loaded_name == shader_name
+		&& (!parameterized_shader || m_shader.loaded_for_rtg == shader_for_rtg)) {
 		return true;
 	}
 
 	// Clean up existing shaders (name changed or no shader loaded yet)
 	destroy_shaders();
 	m_shader.loaded_name = shader_name;
+	m_shader.loaded_for_rtg = shader_for_rtg;
 
 	// Force full render on next frame after shader switch
 	mon->full_render_needed = true;
@@ -258,6 +281,8 @@ bool OpenGLRenderer::alloc_texture(int monid, int w, int h)
 			shader_name = "none";
 		} else {
 			write_log("Shader preset loaded successfully (%d passes)\n", m_shader.preset->get_pass_count());
+			cache_shader_parameter_template();
+			restore_shader_parameters(shader_name, shader_for_rtg);
 			return true;
 		}
 	}
@@ -271,6 +296,8 @@ bool OpenGLRenderer::alloc_texture(int monid, int w, int h)
 			shader_name = "none";
 		} else {
 			write_log("External shader loaded successfully\n");
+			cache_shader_parameter_template();
+			restore_shader_parameters(shader_name, shader_for_rtg);
 			return true;
 		}
 	}
@@ -298,45 +325,51 @@ bool OpenGLRenderer::alloc_texture(int monid, int w, int h)
 	return m_shader.crtemu != nullptr || m_shader.external != nullptr || m_shader.preset != nullptr;
 }
 
-// Helper to decide between Linear (smooth) and Nearest Neighbor (pixelated) scaling
-    static bool ar_is_exact(const SDL_DisplayMode* mode, const int width, const int height)
-    {
-	return mode->w % width == 0 && mode->h % height == 0;
-}
-
-void OpenGLRenderer::set_scaling(int monid, const uae_prefs* p, int w, int h)
+void OpenGLRenderer::set_scaling(const int monid, const uae_prefs* p, int /*w*/, int /*h*/)
 {
 	if (currprefs.headless) return;
+	amiberry_gui_geometry_invalidate(monid);
 
-	auto scale_quality = "nearest";
+	GLenum texture_filter = GL_NEAREST;
 	m_integer_scaling = false;
+	m_stretch_to_fill = false;
 
 	switch (p->scaling_method) {
 	case -1: // Auto
-		if (!ar_is_exact(&sdl_mode, w, h))
-			scale_quality = "linear";
+		texture_filter = GL_LINEAR;
 		break;
-	case 0: scale_quality = "nearest"; break;
-	case 1: scale_quality = "linear"; break;
-	case 2: scale_quality = "nearest"; m_integer_scaling = true; break;
-	default: scale_quality = "linear"; break;
+	case 0: texture_filter = GL_NEAREST; break;
+	case 1: texture_filter = GL_LINEAR; break;
+	case 2: texture_filter = GL_NEAREST; m_integer_scaling = true; break;
+	case 3: texture_filter = GL_LINEAR; m_stretch_to_fill = true; break;
+	default: texture_filter = GL_LINEAR; break;
 	}
+	update_texture_filter(texture_filter);
+}
 
-	m_shader.texture_filter_mode = (strcmp(scale_quality, "linear") == 0) ? GL_LINEAR : GL_NEAREST;
+void OpenGLRenderer::update_texture_filter(const GLenum texture_filter)
+{
+	const bool no_shader_active = m_shader.crtemu != nullptr
+		&& m_shader.crtemu->type == CRTEMU_TYPE_NONE
+		&& m_shader.external == nullptr
+		&& m_shader.preset == nullptr;
+	if (m_shader.texture_filter_mode == texture_filter
+		&& (!no_shader_active
+			|| m_shader.crtemu->texture_filter == static_cast<CRTEMU_GLint>(texture_filter)))
+		return;
+	m_shader.texture_filter_mode = texture_filter;
 
 	// Only apply filter mode when no shader is active (NONE mode without external shader).
 	// When a shader is active, it controls its own texture sampling.
-	bool no_shader_active = (m_shader.crtemu != nullptr
-		&& m_shader.crtemu->type == CRTEMU_TYPE_NONE
-		&& m_shader.external == nullptr
-		&& m_shader.preset == nullptr);
 	if (no_shader_active) {
 		if (m_shader.crtemu->backbuffer != 0 && glIsTexture(m_shader.crtemu->backbuffer)) {
-			m_shader.crtemu->texture_filter = m_shader.texture_filter_mode;
+			m_shader.crtemu->texture_filter = texture_filter;
 			glBindTexture(GL_TEXTURE_2D, m_shader.crtemu->backbuffer);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, m_shader.texture_filter_mode);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, m_shader.texture_filter_mode);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, texture_filter);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, texture_filter);
 			glBindTexture(GL_TEXTURE_2D, 0);
+		} else {
+			m_shader.crtemu->texture_filter = texture_filter;
 		}
 	}
 }
@@ -345,7 +378,10 @@ void OpenGLRenderer::set_scaling(int monid, const uae_prefs* p, int w, int h)
 
 void OpenGLRenderer::update_vsync(int monid)
 {
-	if (!AMonitors[monid].amiga_window) return;
+	if (!AMonitors[monid].amiga_window) {
+		amiberry_hw_vsync_pacing_set_blocking(false);
+		return;
+	}
 
 	const AmigaMonitor* mon = &AMonitors[monid];
 	const auto idx = mon->screen_is_picasso ? APMODE_RTG : APMODE_NATIVE;
@@ -353,7 +389,7 @@ void OpenGLRenderer::update_vsync(int monid)
 	int interval = 0;
 
 	if (currprefs.gfx_variable_sync && vsync_mode > 0) {
-		interval = -1;
+		interval = ADAPTIVE_SWAP_INTERVAL;
 	} else if (vsync_mode > 0) {
 		if (vsync_mode > 1) {
 			if (m_vsync.cached_refresh_rate <= 0.0f) {
@@ -377,21 +413,42 @@ void OpenGLRenderer::update_vsync(int monid)
 		}
 	}
 
+	// KMSDRM has no Adaptive/VRR presentation mode. SDL 3.2.x maps interval 0
+	// to an asynchronous DRM page flip and retains its default triple-buffered
+	// path, with software timing pacing the emulator. SDL 3.4+ retains the
+	// double-buffered blocking atomic path, so use interval 1 there and let
+	// matched-refresh hardware pacing account for it.
+	// Mismatched-refresh atomic presentation needs a separate scheduler.
+	if (kmsdrm_detected) {
+		interval = SDL_GetVersion() < SDL_VERSIONNUM(3, 4, 0) ? 0 : 1;
+	}
+
 	if (m_vsync.current_interval != interval) {
-		if (interval == -1) {
-			if (!SDL_GL_SetSwapInterval(-1)) {
-				write_log("OpenGL VSync: Adaptive not supported (%s), falling back to interval 1\n", SDL_GetError());
-				interval = 1;
-				SDL_GL_SetSwapInterval(1);
+		const int requested_interval = interval;
+		// Do not retain a stale blocking capability while changing the active
+		// presentation policy. Publish true only after a positive interval is
+		// applied successfully.
+		amiberry_hw_vsync_pacing_set_blocking(false);
+		if (interval == ADAPTIVE_SWAP_INTERVAL) {
+			if (!SDL_GL_SetSwapInterval(ADAPTIVE_SWAP_INTERVAL)) {
+				const std::string adaptive_error = SDL_GetError();
+				if (!SDL_GL_SetSwapInterval(1)) {
+					write_log("OpenGL VSync: Adaptive not supported (%s), fallback interval 1 failed: %s (will not retry)\n",
+						adaptive_error.c_str(), SDL_GetError());
+				} else {
+					write_log("OpenGL VSync: Adaptive not supported (%s), falling back to interval 1\n",
+						adaptive_error.c_str());
+				}
 			} else {
 				write_log("OpenGL VSync: Adaptive VSync enabled\n");
 			}
 		} else if (SDL_GL_SetSwapInterval(interval)) {
+			amiberry_hw_vsync_pacing_set_blocking(interval > 0);
 			write_log("OpenGL VSync: Mode %d, Interval set to %d\n", vsync_mode, interval);
 		} else {
 			write_log("OpenGL VSync: Failed to set interval %d: %s (will not retry)\n", interval, SDL_GetError());
 		}
-		m_vsync.current_interval = interval;
+		m_vsync.current_interval = requested_interval;
 	}
 }
 
@@ -401,6 +458,101 @@ bool OpenGLRenderer::render_frame(int monid, int mode, int immediate)
 {
 	SDL_Surface* surface = get_amiga_surface(monid);
 	return surface != nullptr;
+}
+
+bool OpenGLRenderer::ensure_shader_resolve_target(const int width, const int height)
+{
+	if (width <= 0 || height <= 0)
+		return false;
+	if (m_shader.resolve_framebuffer != 0 && m_shader.resolve_texture != 0
+		&& m_shader.resolve_width == width && m_shader.resolve_height == height) {
+		return true;
+	}
+
+	destroy_shader_resolve_target();
+
+	glGenTextures(1, &m_shader.resolve_texture);
+	glBindTexture(GL_TEXTURE_2D, m_shader.resolve_texture);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
+		GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+	glGenFramebuffers(1, &m_shader.resolve_framebuffer);
+	glBindFramebuffer(GL_FRAMEBUFFER, m_shader.resolve_framebuffer);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+		GL_TEXTURE_2D, m_shader.resolve_texture, 0);
+	const bool complete = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	if (!complete) {
+		write_log("Shader resolve framebuffer is incomplete\n");
+		destroy_shader_resolve_target();
+		return false;
+	}
+
+	m_shader.resolve_width = width;
+	m_shader.resolve_height = height;
+	return true;
+}
+
+void OpenGLRenderer::destroy_shader_resolve_target()
+{
+	if (m_shader.resolve_framebuffer != 0) {
+		glDeleteFramebuffers(1, &m_shader.resolve_framebuffer);
+		m_shader.resolve_framebuffer = 0;
+	}
+	if (m_shader.resolve_texture != 0) {
+		glDeleteTextures(1, &m_shader.resolve_texture);
+		m_shader.resolve_texture = 0;
+	}
+	m_shader.resolve_width = 0;
+	m_shader.resolve_height = 0;
+}
+
+void OpenGLRenderer::render_shader_resolve(
+	const int x, const int y, const int width, const int height)
+{
+	if (m_shader.resolve_texture == 0 || width <= 0 || height <= 0)
+		return;
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	if (!init_osd_shader())
+		return;
+
+	// FBO textures already use GL's bottom-left origin, so this quad does not
+	// apply the Y-flip used for top-down SDL surfaces and overlay images.
+	static const GLfloat vertices[] = {
+		-1.0f, -1.0f, 0.0f, 0.0f,
+		 1.0f, -1.0f, 1.0f, 0.0f,
+		 1.0f,  1.0f, 1.0f, 1.0f,
+		-1.0f,  1.0f, 0.0f, 1.0f,
+	};
+
+	glViewport(x, y, width, height);
+	glDisable(GL_BLEND);
+	glDisable(GL_DEPTH_TEST);
+	glDisable(GL_CULL_FACE);
+	glUseProgram(m_overlay.osd_program);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, m_shader.resolve_texture);
+	if (m_overlay.osd_tex_loc != -1) glUniform1i(m_overlay.osd_tex_loc, 0);
+
+	glBindVertexArray(m_overlay.osd_vao);
+	glBindBuffer(GL_ARRAY_BUFFER, m_overlay.osd_vbo);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STREAM_DRAW);
+	glEnableVertexAttribArray(0);
+	glDisableVertexAttribArray(1);
+	glDisableVertexAttribArray(2);
+	glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), nullptr);
+	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+
+	glDisableVertexAttribArray(0);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glBindVertexArray(0);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glUseProgram(0);
 }
 
 void OpenGLRenderer::present_frame(int monid, int mode)
@@ -415,18 +567,18 @@ void OpenGLRenderer::present_frame(int monid, int mode)
 
 	const auto time = SDL_GetTicks();
 
-	// Handle VSync options
-	update_vsync(monid);
-
-	int drawableWidth, drawableHeight;
-	get_drawable_size(mon->amiga_window, &drawableWidth, &drawableHeight);
-
 	// Ensure GL context is current for this window
 	if (m_gl_context && mon->amiga_window) {
 		if (!SDL_GL_MakeCurrent(mon->amiga_window, m_gl_context)) {
 			write_log("SDL_GL_MakeCurrent failed: %s\n", SDL_GetError());
 		}
 	}
+
+	// Handle VSync options after making the emulation context current.
+	update_vsync(monid);
+
+	int drawableWidth, drawableHeight;
+	get_drawable_size(mon->amiga_window, &drawableWidth, &drawableHeight);
 
 	// Reset GL state to a known baseline - only on first frame after context creation
 	if (!m_vsync.gl_initialized) {
@@ -442,17 +594,33 @@ void OpenGLRenderer::present_frame(int monid, int mode)
 	// in crop_aspect, accounting for resolution mode and NTSC correction.
 	// Use it instead of the fixed 4:3 that only applies to the full uncropped frame.
 	float desired_aspect;
-	if ((currprefs.gfx_auto_crop || currprefs.gfx_manual_crop) && !mon->screen_is_picasso && crop_aspect > 0.0f) {
+	if (!mon->screen_is_picasso && crop_aspect > 0.0f) {
 		desired_aspect = crop_aspect;
 	} else {
 		desired_aspect = calculate_desired_aspect(mon);
 	}
 	if (desired_aspect <= 0.0f) desired_aspect = 4.0f / 3.0f;
+	float integer_target_aspect = std::max(desired_aspect, 4.0f / 3.0f);
+#if defined(__linux__) && !defined(__ANDROID__)
+	if (!mon->screen_is_picasso && currprefs.gfx_correct_aspect && isfullscreen() > 0) {
+		// Linux exclusive modes may be stretched to the desktop output aspect.
+		// Convert the physical target aspect into framebuffer coordinates.
+		desired_aspect = amiberry_gfx_fullscreen_framebuffer_aspect(desired_aspect,
+			drawableWidth, drawableHeight, mon->desktop_width, mon->desktop_height);
+		integer_target_aspect = amiberry_gfx_fullscreen_framebuffer_aspect(integer_target_aspect,
+			drawableWidth, drawableHeight, mon->desktop_width, mon->desktop_height);
+	}
+#endif
+
+	const auto& filter_prefs = get_active_filter_prefs();
 
 	// Hot-reload shader if user changed it in the GUI while emulation is running
-	const char* wanted_shader = mon->screen_is_picasso ? amiberry_options.shader_rtg : amiberry_options.shader;
+	const char* wanted_shader = mon->screen_is_picasso ? filter_prefs.shader_rtg : filter_prefs.shader;
 	if (m_shader.loaded_name != wanted_shader && surface) {
 		alloc_texture(monid, surface->w, surface->h);
+	}
+	if (m_shader.crtemu != nullptr && m_shader.bezel_enabled != filter_prefs.use_bezel) {
+		update_crtemu_bezel();
 	}
 
 	// Compute bezel display area: letterbox/pillarbox the bezel image within the
@@ -461,7 +629,7 @@ void OpenGLRenderer::present_frame(int monid, int mode)
 	int bezelDisplayX = 0, bezelDisplayY = 0;
 	int bezelDisplayW = drawableWidth, bezelDisplayH = drawableHeight;
 
-	if (amiberry_options.use_custom_bezel && m_overlay.bezel_texture != 0 &&
+	if (filter_prefs.use_custom_bezel && m_overlay.bezel_texture != 0 &&
 		m_overlay.bezel_tex_w > 0 && m_overlay.bezel_tex_h > 0) {
 		float bezelAspect = static_cast<float>(m_overlay.bezel_tex_w) / m_overlay.bezel_tex_h;
 		float windowAspect = static_cast<float>(drawableWidth) / drawableHeight;
@@ -484,12 +652,14 @@ void OpenGLRenderer::present_frame(int monid, int mode)
 	// that all shader paths use instead of the full drawable.
 	int renderAreaX = 0, renderAreaY = 0;
 	int renderAreaW = drawableWidth, renderAreaH = drawableHeight;
+	bool has_bounded_bezel_area = false;
 
-	if (amiberry_options.use_custom_bezel && m_overlay.bezel_texture != 0 && m_overlay.bezel_hole_w > 0.0f && m_overlay.bezel_hole_h > 0.0f) {
+	if (filter_prefs.use_custom_bezel && m_overlay.bezel_texture != 0 && m_overlay.bezel_hole_w > 0.0f && m_overlay.bezel_hole_h > 0.0f) {
 		renderAreaX = bezelDisplayX + static_cast<int>(m_overlay.bezel_hole_x * bezelDisplayW);
 		renderAreaY = bezelDisplayY + static_cast<int>(m_overlay.bezel_hole_y * bezelDisplayH);
 		renderAreaW = static_cast<int>(m_overlay.bezel_hole_w * bezelDisplayW);
 		renderAreaH = static_cast<int>(m_overlay.bezel_hole_h * bezelDisplayH);
+		has_bounded_bezel_area = true;
 	}
 
 	// Compute source dimensions early (needed for integer scaling)
@@ -511,116 +681,129 @@ void OpenGLRenderer::present_frame(int monid, int mode)
 
 	const int src_w = (is_cropped) ? crop_w : (surface ? surface->w : 0);
 	const int src_h = (is_cropped) ? crop_h : (surface ? surface->h : 0);
+	const bool native_auto_crop = !mon->screen_is_picasso && currprefs.gfx_auto_crop;
+	int display_w = src_w;
+	int display_h = src_w > 0
+		? std::max(1, static_cast<int>(static_cast<float>(src_w) / desired_aspect + 0.5f)) : 0;
+	if (native_auto_crop && crop_display_w > 0 && crop_display_h > 0) {
+		display_w = crop_display_w;
+		display_h = crop_display_h;
+	}
+	const int integer_source_w = native_auto_crop ? display_w : src_w;
 
 	bool use_integer_scaling = mon->screen_is_picasso
 		? (mon->scalepicasso == RTG_MODE_INTEGER_SCALE)
 		: m_integer_scaling;
+	const bool auto_native_scaling = !mon->screen_is_picasso
+		&& currprefs.scaling_method == -1;
 
 	bool use_center = mon->screen_is_picasso
 		&& mon->scalepicasso == RTG_MODE_CENTER;
 
-	int destW, destH, destX, destY;
+	// Stretch applies to native modes only; RTG has its own scaling modes.
+	const bool stretch_to_fill = !mon->screen_is_picasso && m_stretch_to_fill;
 
-	if (renderAreaX != 0 || renderAreaY != 0 ||
-		renderAreaW != drawableWidth || renderAreaH != drawableHeight) {
-		destW = renderAreaW;
-		destH = renderAreaH;
-		destX = renderAreaX;
-		destY = renderAreaY;
-	} else if (use_center && src_w > 0 && src_h > 0) {
+	int destW, destH;
+
+	if (use_center && src_w > 0 && src_h > 0) {
 		destW = src_w;
 		destH = src_h;
-		destX = (renderAreaW - destW) / 2;
-		destY = (renderAreaH - destH) / 2;
-	} else {
+	} else if (stretch_to_fill) {
 		destW = renderAreaW;
-		destH = static_cast<int>(renderAreaW / desired_aspect);
+		destH = renderAreaH;
+	} else {
+		amiberry_gfx_aspect_fit_dimensions(
+			renderAreaW, renderAreaH, desired_aspect, destW, destH);
 
-		if (destH > renderAreaH) {
-			destH = renderAreaH;
-			destW = static_cast<int>(renderAreaH * desired_aspect);
+		if (auto_native_scaling && src_w > 0 && src_h > 0) {
+			use_integer_scaling = amiberry_gfx_auto_integer_dimensions(
+				renderAreaW, renderAreaH, integer_source_w, display_w, display_h,
+				currprefs.gfx_correct_aspect != 0, desired_aspect,
+				integer_target_aspect, destW, destH);
+		} else if (use_integer_scaling && src_w > 0 && src_h > 0) {
+			if (mon->screen_is_picasso) {
+				const float scale = calculate_rtg_integer_scale(renderAreaW, renderAreaH,
+					display_w, display_h, filter_prefs.gf[GF_RTG].gfx_filter_integerscalelimit);
+				destW = std::max(1, static_cast<int>(static_cast<float>(display_w) * scale + 0.5f));
+				destH = std::max(1, static_cast<int>(static_cast<float>(display_h) * scale + 0.5f));
+			} else {
+				amiberry_gfx_native_integer_dimensions(
+					renderAreaW, renderAreaH, integer_source_w, display_w, display_h,
+					currprefs.gfx_correct_aspect != 0, integer_target_aspect,
+					destW, destH);
+			}
 		}
 
-		if (destW <= 0) destW = 1;
-		if (destH <= 0) destH = 1;
-
-		if (use_integer_scaling && src_w > 0 && src_h > 0) {
-			// Use the aspect-corrected dimensions from auto_crop_image()
-			// (stored in crop_display_w/h to avoid the render_quad overwrite issue).
-			int display_w, display_h;
-			if (is_cropped && crop_display_w > 0 && crop_display_h > 0) {
-				display_w = crop_display_w;
-				display_h = crop_display_h;
-			} else {
-				display_w = src_w;
-				display_h = std::max(1, static_cast<int>(static_cast<float>(src_w) / desired_aspect + 0.5f));
-			}
-
-			// Vertical integer scale, constrained by the aspect-corrected destH
-			int h_scale = destH / display_h;
-			if (h_scale < 1) h_scale = 1;
-
-			int w_scale;
-			if (currprefs.gfx_correct_aspect && !mon->screen_is_picasso) {
-				// Per-axis scaling: widen toward 4:3 when content is narrower,
-				// but never narrow content that's already wider than 4:3.
-				// At 2160p this gives exact 4:3 (9x horiz, 8x vert = 2880x2160).
-				float target_aspect = std::max(desired_aspect, 4.0f / 3.0f);
-				float ideal_w = display_h * h_scale * target_aspect;
-				int w_lo = std::max(1, static_cast<int>(ideal_w / src_w));
-				int w_hi = w_lo + 1;
-
-				// Pick the candidate closest to target aspect; prefer narrower on tie
-				float aspect_lo = static_cast<float>(src_w * w_lo) / (display_h * h_scale);
-				float aspect_hi = static_cast<float>(src_w * w_hi) / (display_h * h_scale);
-
-				if (src_w * w_hi <= renderAreaW &&
-					fabsf(aspect_hi - target_aspect) < fabsf(aspect_lo - target_aspect)) {
-					w_scale = w_hi;
-				} else {
-					w_scale = w_lo;
-				}
-
-				// Clamp to render area
-				while (src_w * w_scale > renderAreaW && w_scale > 1) w_scale--;
-			} else {
-				// Uniform scaling (no aspect correction or RTG)
-				w_scale = renderAreaW / display_w;
-				if (w_scale > h_scale) w_scale = h_scale;
-			}
-			if (w_scale < 1) w_scale = 1;
-
-			destW = src_w * w_scale;
-			destH = display_h * h_scale;
-		}
-
-		destX = (renderAreaW - destW) / 2;
-		destY = (renderAreaH - destH) / 2;
+	}
+	if (auto_native_scaling) {
+		update_texture_filter(use_integer_scaling ? GL_NEAREST : GL_LINEAR);
 	}
 
-	static int trace_count = 0;
-	if (trace_count++ % 60 == 0) {
-		write_log("TRACE: present_frame: monid=%d, surface=%dx%d, drawable=%dx%d, dest=%d,%d %dx%d, aspect=%.4f\n",
-			monid, surface->w, surface->h, drawableWidth, drawableHeight, destX, destY, destW, destH, desired_aspect);
-	}
+	const AmiberryGfxRect available_area{
+		renderAreaX, renderAreaY, renderAreaW, renderAreaH
+	};
+	const float bounded_fallback_aspect = use_integer_scaling
+		&& !mon->screen_is_picasso && currprefs.gfx_correct_aspect
+		? integer_target_aspect : desired_aspect;
+	const AmiberryGfxRect final_rect = amiberry_gfx_final_presentation_rect(
+		available_area, destW, destH, bounded_fallback_aspect,
+		has_bounded_bezel_area && use_integer_scaling && !use_center);
 
 	// Flip Y for GL viewport: OpenGL has y=0 at bottom, bezel hole Y is y=0 at top
-	int glDestY = drawableHeight - destY - destH;
-	int glAreaY = drawableHeight - renderAreaY - renderAreaH;
+	const int glDestY = drawableHeight - final_rect.y - final_rect.h;
 
-	// Only clear if letterboxing is active (frame doesn't cover entire window)
-	if (destW < drawableWidth || destH < drawableHeight) {
+	// Clear whenever the presentation leaves any part of the drawable uncovered.
+	const AmiberryGfxRect drawable_area{0, 0, drawableWidth, drawableHeight};
+	if (!amiberry_gfx_rect_covers_area(final_rect, drawable_area)) {
 		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT);
 	}
 
-	glViewport(destX, glDestY, destW, destH);
+	glViewport(final_rect.x, glDestY, final_rect.w, final_rect.h);
 
 	// Update render_quad to reflect the actual drawn area
-	render_quad.x = destX;
-	render_quad.y = destY;
-	render_quad.w = destW;
-	render_quad.h = destH;
+	render_quad.x = final_rect.x;
+	render_quad.y = final_rect.y;
+	render_quad.w = final_rect.w;
+	render_quad.h = final_rect.h;
+	const AmiberryGfxRect source_rect{
+		is_cropped ? crop_x : 0, is_cropped ? crop_y : 0, src_w, src_h
+	};
+	amiberry_gui_geometry_publish(monid, source_rect, final_rect,
+		AmiberryGuiViewportSpace::DrawablePixels,
+		drawableWidth, drawableHeight, "opengl");
+
+	// Some CRT shaders require an output at least as large as their input. Render
+	// them at that safe size, then resolve back to the aspect-correct destination
+	// instead of letting the oversized viewport be clipped by the framebuffer.
+	int shader_viewport_w = final_rect.w;
+	int shader_viewport_h = final_rect.h;
+	amiberry_gfx_shader_render_dimensions(
+		final_rect.w, final_rect.h, src_w, src_h, shader_viewport_w, shader_viewport_h);
+	const bool custom_shader_active = (m_shader.preset && m_shader.preset->is_valid())
+		|| (m_shader.external && m_shader.external->is_valid());
+	bool use_shader_resolve = custom_shader_active
+		&& (shader_viewport_w != final_rect.w || shader_viewport_h != final_rect.h);
+	if (use_shader_resolve
+		&& !ensure_shader_resolve_target(shader_viewport_w, shader_viewport_h)) {
+		// Preserve final presentation geometry if the intermediate target cannot
+		// be allocated, even though shaders that require >= 1x may degrade.
+		shader_viewport_w = final_rect.w;
+		shader_viewport_h = final_rect.h;
+		use_shader_resolve = false;
+	}
+	const int shader_viewport_x = use_shader_resolve
+		? 0 : final_rect.x;
+	const int shader_viewport_y = use_shader_resolve
+		? 0 : glDestY;
+	const GLuint shader_framebuffer = use_shader_resolve
+		? m_shader.resolve_framebuffer : 0;
+	if (use_shader_resolve) {
+		glBindFramebuffer(GL_FRAMEBUFFER, shader_framebuffer);
+		glViewport(0, 0, shader_viewport_w, shader_viewport_h);
+		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT);
+	}
 
 	// Handle shader preset rendering (multi-pass .glslp)
 	if (m_shader.preset && m_shader.preset->is_valid()) {
@@ -628,27 +811,19 @@ void OpenGLRenderer::present_frame(int monid, int mode)
 		glDisableVertexAttribArray(1);
 		glDisableVertexAttribArray(2);
 
-		int viewport_w = destW;
-		int viewport_h = destH;
-		if (src_w > 0 && src_h > 0 && (viewport_w < src_w || viewport_h < src_h)) {
-			float s = std::max(static_cast<float>(src_w) / viewport_w, static_cast<float>(src_h) / viewport_h);
-			viewport_w = static_cast<int>(viewport_w * s);
-			viewport_h = static_cast<int>(viewport_h * s);
-		}
-		int viewport_x = renderAreaX + (renderAreaW - viewport_w) / 2;
-		int viewport_y = glAreaY + (renderAreaH - viewport_h) / 2;
-
 		static int preset_frame_count = 0;
 
 		if (is_cropped && surface) {
 			uae_u8* crop_ptr = static_cast<uae_u8*>(surface->pixels) + (crop_y * surface->pitch) + (crop_x * m_gl_format.bpp);
 
 			m_shader.preset->render(crop_ptr, crop_w, crop_h, surface->pitch,
-				viewport_x, viewport_y, viewport_w, viewport_h, preset_frame_count++);
+				shader_viewport_x, shader_viewport_y, shader_viewport_w, shader_viewport_h,
+				preset_frame_count++, shader_framebuffer);
 		} else if (surface) {
 			m_shader.preset->render(static_cast<const unsigned char*>(surface->pixels),
 				surface->w, surface->h, surface->pitch,
-				viewport_x, viewport_y, viewport_w, viewport_h, preset_frame_count++);
+				shader_viewport_x, shader_viewport_y, shader_viewport_w, shader_viewport_h,
+				preset_frame_count++, shader_framebuffer);
 		}
 
 	}
@@ -659,28 +834,23 @@ void OpenGLRenderer::present_frame(int monid, int mode)
 		glDisableVertexAttribArray(1);
 		glDisableVertexAttribArray(2);
 
-		int viewport_w = destW;
-		int viewport_h = destH;
-		if (src_w > 0 && src_h > 0 && (viewport_w < src_w || viewport_h < src_h)) {
-			float s = std::max(static_cast<float>(src_w) / viewport_w, static_cast<float>(src_h) / viewport_h);
-			viewport_w = static_cast<int>(viewport_w * s);
-			viewport_h = static_cast<int>(viewport_h * s);
-		}
-		int viewport_x = renderAreaX + (renderAreaW - viewport_w) / 2;
-		int viewport_y = glAreaY + (renderAreaH - viewport_h) / 2;
-
 		// Set viewport for shader rendering
-		glViewport(viewport_x, viewport_y, viewport_w, viewport_h);
+		glViewport(shader_viewport_x, shader_viewport_y,
+			shader_viewport_w, shader_viewport_h);
 
 		if (is_cropped && surface) {
 			uae_u8* crop_ptr = static_cast<uae_u8*>(surface->pixels) + (crop_y * surface->pitch) + (crop_x * m_gl_format.bpp);
 
 			render_external_shader(m_shader.external, monid, crop_ptr,
-				crop_w, crop_h, surface->pitch, viewport_x, viewport_y, viewport_w, viewport_h);
+				crop_w, crop_h, surface->pitch,
+				shader_viewport_x, shader_viewport_y, shader_viewport_w, shader_viewport_h,
+				shader_framebuffer);
 		} else if (surface) {
 			render_external_shader(m_shader.external, monid,
 				static_cast<const uae_u8*>(surface->pixels),
-				surface->w, surface->h, surface->pitch, viewport_x, viewport_y, viewport_w, viewport_h);
+				surface->w, surface->h, surface->pitch,
+				shader_viewport_x, shader_viewport_y, shader_viewport_w, shader_viewport_h,
+				shader_framebuffer);
 		}
 
 	} else if (m_shader.crtemu) {
@@ -690,13 +860,10 @@ void OpenGLRenderer::present_frame(int monid, int mode)
 		glDisableVertexAttribArray(1);
 		glDisableVertexAttribArray(2);
 
-		// When a custom bezel defines the viewport, skip crtemu's internal 4:3 letterboxing
-		m_shader.crtemu->skip_aspect_correction = (renderAreaW != drawableWidth || renderAreaH != drawableHeight);
+		// Presentation geometry is already final. CRTEMU may change pixels, but it
+		// must fill this viewport without applying another aspect correction.
+		m_shader.crtemu->skip_aspect_correction = true;
 		m_shader.crtemu->desired_aspect = desired_aspect;
-
-		if (m_shader.crtemu->type != CRTEMU_TYPE_NONE) {
-			glViewport(renderAreaX, glAreaY, renderAreaW, renderAreaH);
-		}
 
 		if (is_cropped && surface) {
 			uae_u8* crop_ptr = static_cast<uae_u8*>(surface->pixels) + (crop_y * surface->pitch) + (crop_x * m_gl_format.bpp);
@@ -706,13 +873,37 @@ void OpenGLRenderer::present_frame(int monid, int mode)
 		} else if (surface) {
 			crtemu_present(m_shader.crtemu, time * 1000, (CRTEMU_U32 const*)surface->pixels,
 			surface->w, surface->h, surface->pitch, 0xffffffff, 0x000000, m_gl_format.fmt, m_gl_format.type, m_gl_format.bpp);
-        }
+		}
 	}
 
-	render_software_cursor(monid, destX, glDestY, destW, destH);
+	if (use_shader_resolve) {
+		render_shader_resolve(final_rect.x, glDestY, final_rect.w, final_rect.h);
+	}
+
+	render_software_cursor(monid, final_rect.x, glDestY, final_rect.w, final_rect.h);
 	int glBezelY = drawableHeight - bezelDisplayY - bezelDisplayH;
 	render_bezel(bezelDisplayX, glBezelY, bezelDisplayW, bezelDisplayH);
-	render_osd(monid, destX, glDestY, destW, destH);
+	{
+		// WinUAE parity: the status line is an unscaled overlay positioned in
+		// output pixels, not part of the scaled Amiga image.
+		int osd_x = final_rect.x;
+		int osd_y = glDestY;
+		int osd_w = final_rect.w;
+		int osd_h = final_rect.h;
+		if (mon->statusline_surface) {
+			int slx = 0, sly = 0;
+			statusline_getpos(monid, &slx, &sly, drawableWidth, drawableHeight);
+			osd_w = mon->statusline_surface->w;
+			osd_h = mon->statusline_surface->h;
+			osd_x = slx;
+			// statusline_getpos positions the LED bar (TD_TOTAL_HEIGHT * mult),
+			// but the surface also carries a message area above it. Anchor the
+			// LED bar at the returned position and let the message extend up.
+			const int led_h = TD_TOTAL_HEIGHT * (statusline_get_multiplier(monid) / 100);
+			osd_y = drawableHeight - sly - led_h;
+		}
+		render_osd(monid, osd_x, osd_y, osd_w, osd_h);
+	}
 
 	render_vkbd(monid);
 	render_onscreen_joystick(monid);
@@ -728,55 +919,59 @@ void OpenGLRenderer::present_frame(int monid, int mode)
 
 // --- External shader rendering ---
 
+// Fullscreen quad used by render_external_shader. Uploaded once per VBO
+// creation with GL_STATIC_DRAW; attribute layout captured in the VAO so the
+// per-frame path only needs to bind the VAO and draw.
+//   Layout: VertexCoord (vec4: x,y,z,w), TexCoord (s,t, _,_)  — stride 8 floats
+//   Constant vertex color is supplied via glVertexAttrib4f at VAO setup time
+//   (captured in the VAO's generic attribute state for the default value).
+static const float k_external_shader_quad[] = {
+	// VertexCoord                TexCoord
+	-1.0f, -1.0f, 0.0f, 1.0f,    0.0f, 1.0f, 0.0f, 0.0f,  // Bottom-left
+	 1.0f, -1.0f, 0.0f, 1.0f,    1.0f, 1.0f, 0.0f, 0.0f,  // Bottom-right
+	 1.0f,  1.0f, 0.0f, 1.0f,    1.0f, 0.0f, 0.0f, 0.0f,  // Top-right
+	-1.0f,  1.0f, 0.0f, 1.0f,    0.0f, 0.0f, 0.0f, 0.0f   // Top-left
+};
+
 void OpenGLRenderer::render_external_shader(ExternalShader* shader, const int monid,
 	const uae_u8* pixels, int width, int height, int pitch,
-	int viewport_x, int viewport_y, int viewport_width, int viewport_height)
+	int viewport_x, int viewport_y, int viewport_width, int viewport_height,
+	const GLuint target_framebuffer)
 {
-	if (!shader || !shader->is_valid()) {
-		write_log("render_external_shader: shader is null or invalid\n");
-		return;
-	}
-
-	if (!pixels) {
-		write_log("render_external_shader: pixels is NULL!\n");
-		return;
-	}
-
-	// Clear any existing GL errors
-	(void)glGetError();
-
-	if (!shader->is_valid() || !glIsProgram(shader->get_program())) {
-		write_log("render_external_shader: shader program is invalid or lost. Attempting to reload...\n");
+	if (!shader || !shader->is_valid() || !pixels) {
 		return;
 	}
 
 	GLuint texture = shader->get_input_texture();
 	GLuint vbo = shader->get_input_vbo();
 	GLuint vao = shader->get_input_vao();
+
+	// Per-shader frame counter — only ticks while this shader actually renders.
 	static int frame_count = 0;
 
-	// Verify resources are still valid for this context
-	if (texture != 0 && !glIsTexture(texture)) {
-		write_log("render_external_shader: texture lost, resetting\n");
-		texture = 0;
-		shader->set_input_texture(0);
-	}
-	if (vbo != 0 && !glIsBuffer(vbo)) {
-		write_log("render_external_shader: VBO lost, resetting\n");
-		vbo = 0;
-		shader->set_input_vbo(0);
-	}
-	if (vao != 0 && !glIsVertexArray(vao)) {
-		write_log("render_external_shader: VAO lost, resetting\n");
-		vao = 0;
-		shader->set_input_vao(0);
+	// Per-shader texture upload cache. last_w/last_h/last_texture track whether
+	// we need a full glTexImage2D allocation or just a glTexSubImage2D upload.
+	// Reset when the shader program changes (i.e. user picked a different shader).
+	static GLuint last_shader_program = 0;
+	static int last_w = 0, last_h = 0;
+	static GLuint last_texture = 0;
+	const GLuint current_program = shader->get_program();
+	if (current_program != last_shader_program) {
+		last_shader_program = current_program;
+		last_w = 0;
+		last_h = 0;
+		last_texture = 0;
 	}
 
-	// Create texture if needed
+	// --- One-time resource setup -------------------------------------------
+	// Resources are created the first time this shader renders and then reused.
+	// We don't validate them with glIs* every frame — those calls cost a
+	// driver round-trip and are unnecessary when destruction goes through
+	// ExternalShader::cleanup().
 	if (texture == 0) {
 		glGenTextures(1, &texture);
 		if (texture == 0) {
-			write_log("ERROR: Failed to create texture!\n");
+			write_log("render_external_shader: glGenTextures failed\n");
 			return;
 		}
 		shader->set_input_texture(texture);
@@ -788,141 +983,109 @@ void OpenGLRenderer::render_external_shader(ExternalShader* shader, const int mo
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	}
 
-	// Create VAO if needed
-	if (vao == 0) {
-		glGenVertexArrays(1, &vao);
+	if (vao == 0 || vbo == 0) {
 		if (vao == 0) {
-			write_log("ERROR: Failed to create VAO!\n");
-			return;
+			glGenVertexArrays(1, &vao);
+			if (vao == 0) {
+				write_log("render_external_shader: glGenVertexArrays failed\n");
+				return;
+			}
+			shader->set_input_vao(vao);
 		}
-		shader->set_input_vao(vao);
-	}
-	glBindVertexArray(vao);
-
-	// Create VBO if needed
-	if (vbo == 0) {
-		glGenBuffers(1, &vbo);
 		if (vbo == 0) {
-			write_log("ERROR: Failed to create VBO!\n");
-			return;
+			glGenBuffers(1, &vbo);
+			if (vbo == 0) {
+				write_log("render_external_shader: glGenBuffers failed\n");
+				return;
+			}
+			shader->set_input_vbo(vbo);
 		}
-		shader->set_input_vbo(vbo);
+
+		// Configure the VAO once: bind buffer, upload static quad, wire up
+		// attributes. GL captures the attribute→buffer binding inside the VAO
+		// so per-frame dispatch only needs glBindVertexArray + glDrawArrays.
+		glBindVertexArray(vao);
 		glBindBuffer(GL_ARRAY_BUFFER, vbo);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(k_external_shader_quad),
+			k_external_shader_quad, GL_STATIC_DRAW);
+
+		const GLsizei stride = 8 * sizeof(float);
+		// Attribute 0: VertexCoord (vec4)
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, stride, nullptr);
+		// Attribute 1: Color (vec4) — constant white. Set the generic
+		// attribute once; it persists with the VAO's state.
+		glDisableVertexAttribArray(1);
+		glVertexAttrib4f(1, 1.0f, 1.0f, 1.0f, 1.0f);
+		// Attribute 2: TexCoord (vec2 of 4 floats per vertex)
+		glEnableVertexAttribArray(2);
+		glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride,
+			reinterpret_cast<void*>(4 * sizeof(float)));
+
+		glBindVertexArray(0);
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
 	}
 
-	// Ensure we're rendering to the default framebuffer (screen)
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-	// Set viewport explicitly
+	// --- Per-frame fast path -----------------------------------------------
+	glBindFramebuffer(GL_FRAMEBUFFER, target_framebuffer);
 	glViewport(viewport_x, viewport_y, viewport_width, viewport_height);
-
-	// Set up GL state for 2D rendering
-	glDisable(GL_DEPTH_TEST);
-	glDisable(GL_CULL_FACE);
-	glDisable(GL_BLEND);
-	glDisable(GL_SCISSOR_TEST);
 
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, texture);
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 	glPixelStorei(GL_UNPACK_ROW_LENGTH, pitch / m_gl_format.bpp);
 
-	// Track texture changes per-shader to handle shader switches properly
-	GLuint current_program = shader->get_program();
-	static int last_w = 0, last_h = 0;
-	static GLuint last_texture = 0;
-	static GLuint last_shader_program = 0;
-
-	// Reset cache if shader changed
-	if (current_program != last_shader_program) {
-		last_w = 0;
-		last_h = 0;
-		last_texture = 0;
-		last_shader_program = current_program;
-	}
-
 	if (width != last_w || height != last_h || texture != last_texture) {
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, m_gl_format.fmt, m_gl_format.type, pixels);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
+			m_gl_format.fmt, m_gl_format.type, pixels);
 		last_w = width;
 		last_h = height;
 		last_texture = texture;
 	} else {
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, m_gl_format.fmt, m_gl_format.type, pixels);
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
+			m_gl_format.fmt, m_gl_format.type, pixels);
 	}
-
 	glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 
-	// Use the shader
 	shader->use();
 
-	// Set uniforms
+	// Standard shader uniforms. Drivers cache uniform state per-program so
+	// setting these every frame is cheap; frame_count must update per call.
 	shader->set_texture_size(static_cast<float>(width), static_cast<float>(height));
 	shader->set_input_size(static_cast<float>(width), static_cast<float>(height));
 
-	int safe_output_w = (viewport_width >= width) ? viewport_width : width;
-	int safe_output_h = (viewport_height >= height) ? viewport_height : height;
-	shader->set_output_size(static_cast<float>(safe_output_w), static_cast<float>(safe_output_h));
+	const int safe_output_w = (viewport_width >= width) ? viewport_width : width;
+	const int safe_output_h = (viewport_height >= height) ? viewport_height : height;
+	shader->set_output_size(static_cast<float>(safe_output_w),
+		static_cast<float>(safe_output_h));
 	shader->set_frame_count(frame_count++);
 
-	// Set MVP matrix (orthographic projection for fullscreen quad)
-	float mvp[16] = {
+	// Identity MVP — no projection is needed for the fullscreen clip-space quad.
+	static const float mvp_identity[16] = {
 		1.0f, 0.0f, 0.0f, 0.0f,
 		0.0f, 1.0f, 0.0f, 0.0f,
 		0.0f, 0.0f, 1.0f, 0.0f,
 		0.0f, 0.0f, 0.0f, 1.0f
 	};
-	shader->set_mvp_matrix(mvp);
+	shader->set_mvp_matrix(mvp_identity);
 
-	// Apply parameter uniforms
 	shader->apply_parameter_uniforms();
-
-	// Bind texture
 	shader->bind_texture(texture, 0);
 
-	// Set up vertex data for fullscreen quad
-	glBindBuffer(GL_ARRAY_BUFFER, vbo);
-
-	float vertices[] = {
-		// VertexCoord (x,y,z,w), TexCoord (s,t,0,0)
-		-1.0f, -1.0f, 0.0f, 1.0f,   0.0f, 1.0f, 0.0f, 0.0f,  // Bottom-left
-		 1.0f, -1.0f, 0.0f, 1.0f,   1.0f, 1.0f, 0.0f, 0.0f,  // Bottom-right
-		 1.0f,  1.0f, 0.0f, 1.0f,   1.0f, 0.0f, 0.0f, 0.0f,  // Top-right
-		-1.0f,  1.0f, 0.0f, 1.0f,   0.0f, 0.0f, 0.0f, 0.0f   // Top-left
-	};
-	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
-
-	glDisableVertexAttribArray(0);
-	glDisableVertexAttribArray(1);
-	glDisableVertexAttribArray(2);
-
-	const GLsizei stride = 8 * sizeof(float);
-
-	// Attribute 0: VertexCoord (vec4: x, y, z, w)
-	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, stride, nullptr);
-
-	// Attribute 1: Color (vec4) - Set to white by default
-	glVertexAttrib4f(1, 1.0f, 1.0f, 1.0f, 1.0f);
-
-	// Attribute 2: TexCoord (vec2: s, t)
-	glEnableVertexAttribArray(2);
-	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (void*)(4 * sizeof(float)));
-
-	// Draw fullscreen quad
+	glBindVertexArray(vao);
 	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-
-	// Cleanup
-	glDisableVertexAttribArray(0);
-	glDisableVertexAttribArray(2);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-	glBindTexture(GL_TEXTURE_2D, 0);
 	glBindVertexArray(0);
+	glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 // --- Shader management ---
 
 void OpenGLRenderer::destroy_shaders()
 {
+	// Shared-window GUI entry must release the GL shader objects, but the
+	// parameter editor still needs their CPU-side metadata and current values.
+	cache_shader_parameters();
+
 	// Clear tracked name so next alloc_texture call will recreate
 	m_shader.loaded_name.clear();
 
@@ -933,6 +1096,11 @@ void OpenGLRenderer::destroy_shaders()
 		m_shader.crtemu = nullptr;
 		m_shader.external = nullptr;
 		m_shader.preset = nullptr;
+		m_shader.bezel_enabled = false;
+		m_shader.resolve_framebuffer = 0;
+		m_shader.resolve_texture = 0;
+		m_shader.resolve_width = 0;
+		m_shader.resolve_height = 0;
 		m_vsync.gl_initialized = false;
 		return;
 	}
@@ -952,6 +1120,8 @@ void OpenGLRenderer::destroy_shaders()
 		destroy_shader_preset(m_shader.preset);
 		m_shader.preset = nullptr;
 	}
+	destroy_shader_resolve_target();
+	m_shader.bezel_enabled = false;
 	if (m_overlay.osd_program != 0 && glIsProgram(m_overlay.osd_program))
 	{
 		glDeleteProgram(m_overlay.osd_program);
@@ -1016,13 +1186,66 @@ bool OpenGLRenderer::has_valid_shader() const
 
 bool OpenGLRenderer::has_shader_parameters() const
 {
-	if (m_shader.preset && m_shader.preset->is_valid() &&
-		!m_shader.preset->get_all_parameters().empty())
-		return true;
-	if (m_shader.external && m_shader.external->is_valid() &&
-		!m_shader.external->get_parameters().empty())
-		return true;
-	return false;
+	const bool rtg = AMonitors[0].screen_is_picasso;
+	return has_shader_parameters(get_selected_shader_name(&AMonitors[0]), rtg);
+}
+
+void OpenGLRenderer::cache_shader_parameter_template()
+{
+	const std::vector<ShaderParameter>* params = nullptr;
+	if (m_shader.preset && m_shader.preset->is_valid()) {
+		params = &m_shader.preset->get_all_parameters();
+	} else if (m_shader.external && m_shader.external->is_valid()) {
+		params = &m_shader.external->get_parameters();
+	}
+
+	if (params) {
+		m_shader.parameter_template.shader_name = m_shader.loaded_name;
+		m_shader.parameter_template.parameters = *params;
+	}
+}
+
+void OpenGLRenderer::cache_shader_parameters()
+{
+	const std::vector<ShaderParameter>* params = nullptr;
+	if (m_shader.preset && m_shader.preset->is_valid()) {
+		params = &m_shader.preset->get_all_parameters();
+	} else if (m_shader.external && m_shader.external->is_valid()) {
+		params = &m_shader.external->get_parameters();
+	}
+
+	if (params) {
+		auto& cache = m_shader.loaded_for_rtg
+			? m_shader.rtg_parameter_cache
+			: m_shader.native_parameter_cache;
+		cache.shader_name = m_shader.loaded_name;
+		cache.parameters = *params;
+	}
+}
+
+void OpenGLRenderer::restore_shader_parameters(const char* shader_name, const bool rtg)
+{
+	if (!shader_name)
+		return;
+
+	auto apply_parameter = [&](const std::string& name, const float value) {
+		if (m_shader.preset) {
+			m_shader.preset->set_parameter(name, value);
+		} else if (m_shader.external) {
+			m_shader.external->set_parameter(name, value);
+		}
+	};
+
+	for (const auto& parameter : amiberry_options.shader_parameters) {
+		if (parameter.rtg == rtg && parameter.shader == shader_name)
+			apply_parameter(parameter.name, parameter.value);
+	}
+
+	const auto& cache = rtg ? m_shader.rtg_parameter_cache : m_shader.native_parameter_cache;
+	if (cache.shader_name == shader_name) {
+		for (const auto& parameter : cache.parameters)
+			apply_parameter(parameter.name, parameter.current_value);
+	}
 }
 
 // --- Bezel overlay ---
@@ -1045,13 +1268,15 @@ void OpenGLRenderer::update_crtemu_bezel()
 {
 	if (m_shader.crtemu == nullptr)
 		return;
-	if (amiberry_options.use_bezel) {
+	const bool use_bezel = get_active_filter_prefs().use_bezel;
+	if (use_bezel) {
 		static CRTEMU_U32 frame_pixels[CRT_FRAME_WIDTH * CRT_FRAME_HEIGHT];
 		crt_frame(frame_pixels);
 		crtemu_frame(m_shader.crtemu, frame_pixels, CRT_FRAME_WIDTH, CRT_FRAME_HEIGHT);
 	} else {
 		crtemu_frame(m_shader.crtemu, nullptr, 0, 0);
 	}
+	m_shader.bezel_enabled = use_bezel;
 }
 
 BezelHoleInfo OpenGLRenderer::get_bezel_hole_info() const
@@ -1093,23 +1318,8 @@ void OpenGLRenderer::get_gfx_offset(int monid, float src_w, float src_h, float s
 
 void OpenGLRenderer::get_drawable_size(SDL_Window* w, int* width, int* height)
 {
-	if (is_kmsdrm_video_driver()) {
-		int win_w = 0, win_h = 0;
-		int pix_w = 0, pix_h = 0;
-		SDL_GetWindowSize(w, &win_w, &win_h);
-		SDL_GetWindowSizeInPixels(w, &pix_w, &pix_h);
-		if ((pix_w != 0 && pix_w != win_w) || (pix_h != 0 && pix_h != win_h)) {
-			static bool logged_kmsdrm_drawable_mismatch = false;
-			if (!logged_kmsdrm_drawable_mismatch) {
-				write_log("KMSDRM: using window size as drawable size (window=%dx%d pixels=%dx%d)\n",
-					win_w, win_h, pix_w, pix_h);
-				logged_kmsdrm_drawable_mismatch = true;
-			}
-		}
-		*width = win_w;
-		*height = win_h;
+	if (get_kmsdrm_drawable_size(w, width, height))
 		return;
-	}
 	SDL_GetWindowSizeInPixels(w, width, height);
 }
 
@@ -1135,7 +1345,8 @@ void OpenGLRenderer::restore_emulation_context(SDL_Window* window)
 	if (window && has_context()) {
 		SDL_GL_MakeCurrent(window, m_gl_context);
 		reset_state();
-		clear_shader_cache();
+		m_vsync.current_interval = INVALID_SWAP_INTERVAL;
+		amiberry_hw_vsync_pacing_set_blocking(false);
 	}
 }
 
@@ -1486,23 +1697,23 @@ void OpenGLRenderer::destroy_bezel()
 
 void OpenGLRenderer::render_bezel(int x, int y, int w, int h)
 {
-	// Only re-evaluate bezel state when dirty (avoids per-frame string comparisons)
-	if (m_overlay.bezel_dirty) {
-		if (!amiberry_options.use_custom_bezel ||
-			strcmp(amiberry_options.custom_bezel, "none") == 0) {
-			if (m_overlay.bezel_texture != 0) {
-				destroy_bezel();
-			}
-			m_overlay.bezel_dirty = false;
-			return;
+	const auto& filter_prefs = get_active_filter_prefs();
+	if (!filter_prefs.use_custom_bezel ||
+		strcmp(filter_prefs.custom_bezel, "none") == 0) {
+		if (m_overlay.bezel_texture != 0) {
+			destroy_bezel();
 		}
+		m_overlay.bezel_dirty = false;
+		return;
+	}
 
-		if (m_overlay.loaded_bezel_name != amiberry_options.custom_bezel) {
-			if (m_overlay.bezel_texture != 0) {
-				destroy_bezel();
-			}
-			if (!load_bezel_texture(amiberry_options.custom_bezel)) return;
+	// Re-evaluate when explicitly invalidated or when the active config selects
+	// a different bezel than the one currently loaded.
+	if (m_overlay.bezel_dirty || m_overlay.loaded_bezel_name != filter_prefs.custom_bezel) {
+		if (m_overlay.bezel_texture != 0) {
+			destroy_bezel();
 		}
+		if (!load_bezel_texture(filter_prefs.custom_bezel)) return;
 		m_overlay.bezel_dirty = false;
 	}
 	if (m_overlay.bezel_texture == 0) return;
@@ -1569,8 +1780,15 @@ void OpenGLRenderer::render_software_cursor(const int monid, int x, int y, int w
 					glGenTextures(1, &m_overlay.cursor_texture);
 				}
 				glBindTexture(GL_TEXTURE_2D, m_overlay.cursor_texture);
-				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+				// Pixel-art cursor: GL_NEAREST keeps the sprite crisp when the
+				// RTG surface is scaled. GL_CLAMP_TO_EDGE prevents the default
+				// GL_REPEAT wrap from sampling the opposite edge at sub-pixel
+				// boundaries, which produced 1px fringe artifacts that
+				// flickered as the cursor moved (issue #2022).
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
 				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, s->w, s->h, 0, GL_RGBA, GL_UNSIGNED_BYTE, s->pixels);
 			}
@@ -1679,6 +1897,139 @@ ShaderState& OpenGLRenderer::shader_state()
 const ShaderState& OpenGLRenderer::shader_state() const
 {
 	return m_shader;
+}
+
+std::vector<ShaderParameter>* OpenGLRenderer::shader_parameters(const char* shader_name, const bool rtg)
+{
+	auto* params = const_cast<std::vector<ShaderParameter>*>(
+		static_cast<const OpenGLRenderer*>(this)->shader_parameters(shader_name, rtg));
+	if (params || !shader_name)
+		return params;
+
+	// The same shader can be configured independently for Native and RTG modes.
+	// Start with the values supplied by the shader/preset before target overrides.
+	const std::vector<ShaderParameter>* source = nullptr;
+	bool use_template_values = false;
+	if (m_shader.parameter_template.shader_name == shader_name) {
+		source = &m_shader.parameter_template.parameters;
+		use_template_values = true;
+	} else {
+		source = static_cast<const OpenGLRenderer*>(this)->shader_parameters(shader_name, !rtg);
+	}
+	if (!source)
+		return nullptr;
+
+	auto& cache = rtg ? m_shader.rtg_parameter_cache : m_shader.native_parameter_cache;
+	cache.shader_name = shader_name;
+	cache.parameters = *source;
+	for (auto& parameter : cache.parameters) {
+		if (!use_template_values)
+			parameter.current_value = parameter.default_value;
+		for (const auto& saved : amiberry_options.shader_parameters) {
+			if (saved.rtg == rtg && saved.shader == shader_name && saved.name == parameter.name) {
+				parameter.current_value = std::max(parameter.min_value,
+					std::min(parameter.max_value, saved.value));
+				break;
+			}
+		}
+	}
+	return &cache.parameters;
+}
+
+const std::vector<ShaderParameter>* OpenGLRenderer::shader_parameters(const char* shader_name, const bool rtg) const
+{
+	if (!shader_name)
+		return nullptr;
+
+	if (m_shader.loaded_name == shader_name && m_shader.loaded_for_rtg == rtg) {
+		if (m_shader.preset && m_shader.preset->is_valid())
+			return &m_shader.preset->get_all_parameters();
+		if (m_shader.external && m_shader.external->is_valid())
+			return &m_shader.external->get_parameters();
+	}
+
+	const auto& cache = rtg ? m_shader.rtg_parameter_cache : m_shader.native_parameter_cache;
+	if (cache.shader_name == shader_name)
+		return &cache.parameters;
+
+	return nullptr;
+}
+
+bool OpenGLRenderer::ensure_shader_parameters(const char* shader_name, const bool rtg)
+{
+	if (!shader_name)
+		return false;
+
+	// Reuse active, target-cached, template, or opposite-target metadata first.
+	if (shader_parameters(shader_name, rtg))
+		return true;
+
+	std::vector<ShaderParameter> parameters;
+	if (!load_shader_parameter_metadata(shader_name, parameters))
+		return false;
+
+	auto& cache = rtg ? m_shader.rtg_parameter_cache : m_shader.native_parameter_cache;
+	cache.shader_name = shader_name;
+	cache.parameters = std::move(parameters);
+	for (auto& parameter : cache.parameters) {
+		for (const auto& saved : amiberry_options.shader_parameters) {
+			if (saved.rtg == rtg && saved.shader == shader_name && saved.name == parameter.name) {
+				parameter.current_value = std::max(parameter.min_value,
+					std::min(parameter.max_value, saved.value));
+				break;
+			}
+		}
+	}
+	return true;
+}
+
+bool OpenGLRenderer::has_shader_parameters(const char* shader_name, const bool rtg) const
+{
+	const auto* params = shader_parameters(shader_name, rtg);
+	return params && !params->empty();
+}
+
+bool OpenGLRenderer::set_shader_parameter(const char* shader_name, const bool rtg,
+	const std::string& name, const float value)
+{
+	bool updated = false;
+	if (shader_name && m_shader.loaded_name == shader_name && m_shader.loaded_for_rtg == rtg) {
+		if (m_shader.preset && m_shader.preset->is_valid())
+			updated = m_shader.preset->set_parameter(name, value) || updated;
+		else if (m_shader.external && m_shader.external->is_valid())
+			updated = m_shader.external->set_parameter(name, value) || updated;
+	}
+
+	auto& cache = rtg ? m_shader.rtg_parameter_cache : m_shader.native_parameter_cache;
+	if (shader_name && cache.shader_name == shader_name) {
+		for (auto& param : cache.parameters) {
+			if (param.name == name) {
+				param.current_value = std::max(param.min_value, std::min(param.max_value, value));
+				updated = true;
+				break;
+			}
+		}
+	}
+
+	return updated;
+}
+
+void OpenGLRenderer::save_shader_parameters(const char* shader_name, const bool rtg)
+{
+	const auto* params = shader_parameters(shader_name, rtg);
+	if (!params || !shader_name)
+		return;
+
+	auto& saved = amiberry_options.shader_parameters;
+	saved.erase(std::remove_if(saved.begin(), saved.end(),
+		[&](const amiberry_shader_parameter& parameter) {
+			return parameter.rtg == rtg && parameter.shader == shader_name;
+		}), saved.end());
+
+	for (const auto& parameter : *params) {
+		if (parameter.current_value != parameter.default_value)
+			saved.push_back({rtg, shader_name, parameter.name, parameter.current_value});
+	}
 }
 
 GLOverlayState& OpenGLRenderer::overlay_state()

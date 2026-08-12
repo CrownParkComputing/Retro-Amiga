@@ -306,6 +306,7 @@ static int SelectedFunction = 0;
 
 using ConfigCategory = struct config_category
 {
+	const char* id;
 	const char* category;
 	const char* imagepath;
 	const char* icon; // Font icon UTF-8 codepoint (Font Awesome), nullptr to fall back to imagepath
@@ -330,13 +331,19 @@ extern std::string current_dir;
 extern char last_loaded_config[MAX_DPATH];
 extern char last_active_config[MAX_DPATH];
 
+// Config dirty tracking: true when changed_prefs differs from last load/save
+extern bool gui_config_dirty;
+void gui_config_mark_clean();
+
 extern int quickstart_model;
 extern int quickstart_conf;
+extern int quickstart_compa;
 
 typedef struct {
 	char Name[MAX_DPATH];
 	char FullPath[MAX_DPATH];
 	char Description[MAX_DPATH];
+	char Category[256];
 	int BuiltInID;
 } ConfigFileInfo;
 
@@ -379,10 +386,7 @@ extern bool handle_joyaxis(const SDL_Event& event, bool& nav_left, bool& nav_rig
 extern bool handle_finger(const SDL_Event& event, SDL_Event& touch_event);
 extern bool handle_mousewheel(const SDL_Event& event);
 
-enum
-{
-	MAX_HD_DEVICES = 8
-};
+
 
 extern void CreateDefaultDevicename(char* name);
 extern bool DevicenameExists(const char* name);
@@ -418,7 +422,6 @@ extern int last_y;
 
 extern struct romdata *scan_single_rom (const TCHAR *path);
 extern void update_gui_screen();
-extern void cap_fps(uint64_t start);
 extern long get_file_size(const std::string& filename);
 extern bool download_file(const std::string& source, const std::string& destination, bool keep_backup);
 extern bool download_file(const std::string& source, const std::string& destination, bool keep_backup,
@@ -462,7 +465,7 @@ extern void clear_whdload_prefs();
 extern void create_startup_sequence();
 
 extern std::vector<int> parse_color_string(const std::string& input);
-extern void save_theme(const std::string& theme_filename);
+extern bool save_theme(const std::string& theme_filename);
 extern void load_theme(const std::string& theme_filename);
 extern void load_default_theme();
 extern void load_default_dark_theme();
@@ -471,6 +474,7 @@ extern void rebuild_gui_fonts();
 
 extern void SetLastLoadedConfig(const char* filename);
 extern void set_last_active_config(const char* filename);
+extern void set_last_active_config_from_media(const char* filename);
 extern void disk_selection(const int shortcut, uae_prefs* prefs);
 extern int disk_swap(int entry, int mode);
 extern int disk_in_drive(int entry);

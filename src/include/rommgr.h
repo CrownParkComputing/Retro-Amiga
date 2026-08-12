@@ -219,6 +219,8 @@ extern int decode_cloanto_rom_do(uae_u8 *mem, int size, int real_size);
 #define ROMTYPE_KBMCU		0x00100094
 #define ROMTYPE_RIPPLE		0x00100095
 #define ROMTYPE_512KWOM		0x00100096
+#define ROMTYPE_AIDE		0x00100097
+#define ROMTYPE_ATONCE		0x00100098
 
 #define ROMTYPE_NOT			0x00800000
 #define ROMTYPE_QUAD		0x01000000
@@ -305,6 +307,7 @@ extern struct zfile *read_rom_name_guess (const TCHAR *filename, TCHAR *out);
 extern void addkeydir (const TCHAR *path);
 extern void addkeyfile (const TCHAR *path);
 extern int romlist_count (void);
+extern int romlist_get_generation (void);
 extern struct romlist *romlist_getit (void);
 extern int configure_rom (struct uae_prefs *p, const int *rom, int msg);
 
@@ -320,6 +323,7 @@ void clear_device_rom(struct uae_prefs *p, int romtype, int devnum, bool deleteD
 struct boardromconfig *get_boardromconfig(struct uae_prefs *p, int romtype, int *index);
 bool is_board_enabled(struct uae_prefs *p, int romtype, int devnum);
 void board_prefs_changed(int romtype, int devnum);
+const struct cpuboardsubtype *get_cpuboard_rom(struct uae_prefs *p, int romtype);
 
 #define LOADROM_FILL 1
 #define LOADROM_EVENONLY 2
@@ -330,6 +334,7 @@ void board_prefs_changed(int romtype, int devnum);
 bool load_rom_rc(struct romconfig *rc, uae_u32 romtype, int maxfilesize, int fileoffset, uae_u8 *rom, int maxromsize, int flags);
 struct zfile *load_rom_rc_zfile(struct romconfig *rc, uae_u32 romtype, int maxfilesize, int fileoffset, uae_u8 *rom, int maxromsize, int flags);
 struct zfile *flashromfile_open(const TCHAR *name);
+struct zfile *flashromfile_open_accelerator(const TCHAR *name);
 
 #define EXPANSION_ORDER_MAX 10000
 

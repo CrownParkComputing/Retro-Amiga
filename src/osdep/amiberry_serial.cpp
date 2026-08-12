@@ -190,7 +190,7 @@ bool shmem_serial_create()
 	}
 
 	if (ftruncate(fd, sizeof(sermap_buffer) * 2) == -1) {
-		write_log("Failed to set size of shared memory");
+		write_log("Failed to set size of shared memory: %s\n", strerror(errno));
 		close(fd);
 		return false;
 	}
@@ -706,8 +706,9 @@ static void checkreceive_serial ()
 	static int ninebitdata;
 	int recdata;
 
-	if (!canreceive())
+	if (!canreceive()) {
 		return;
+	}
 
 	if (ninebit) {
 		bool breakcond;
@@ -821,6 +822,16 @@ static void checkreceive_serial ()
 				}
 			}
 			serial_recv_previous = recdata;
+			if (currprefs.serial_crlf && recdata == 10) {
+				// Lone LF (the CR+LF case is stripped above): Unix clients
+				// (nc, telnet, socat) terminate lines with LF, but AmigaOS
+				// line handlers (AUX:/console, shell) only submit a line on
+				// CR. Map the LF to CR so typed input is acted upon. Opt-in
+				// via the Convert CR/LF option. See issue #2052.
+				// serial_recv_previous keeps the original LF so a run of LFs
+				// each maps to CR instead of being mistaken for a CR+LF pair.
+				recdata = 13;
+			}
 			serdatr = recdata;
 			serdatr |= 0x0100;
 			if (break_in_serdatr < -1) {
@@ -836,26 +847,49 @@ static void checkreceive_serial ()
 #endif
 }
 
-static void outser()
+static bool outser()
 {
 	if (datainoutput <= 0)
-		return;
+		return true;
 #ifdef USE_LIBSERIALPORT
+	if (!port) {
+		datainoutput = 0;
+		return true;
+	}
 	memcpy(outputbufferout, outputbuffer, datainoutput);
-	int bytes_written = sp_blocking_write(port, outputbufferout, datainoutput, 1000);
+	int bytes_written = sp_blocking_write(port, outputbufferout, datainoutput, timeout);
 	if (bytes_written < 0) {
 		write_log("Failed to write to serial port: %d\n", bytes_written);
+		datainoutput = 0;
+		return false;
 	}
-	else if (bytes_written != datainoutput) {
-		write_log("Only wrote %d of %d bytes!\n", bytes_written, datainoutput);
+	if (bytes_written > datainoutput) {
+		bytes_written = datainoutput;
 	}
-#endif
+	if (bytes_written > 0) {
+		const int remaining = datainoutput - bytes_written;
+		if (remaining > 0) {
+			memmove(outputbuffer, outputbuffer + bytes_written, remaining);
+		}
+		datainoutput = remaining;
+	}
+	if (datainoutput > 0) {
+		return false;
+	}
+#else
 	datainoutput = 0;
+#endif
+	return true;
 }
 
 void writeser_flush()
 {
-	outser();
+	while (datainoutput > 0) {
+		const int pending = datainoutput;
+		if (!outser() && datainoutput >= pending) {
+			break;
+		}
+	}
 }
 
 void writeser(int c)
@@ -1370,7 +1404,7 @@ void SERPER(uae_u16 w)
 		serial_period_receive_ccks = maxhpos;
 		safe_receive = true;
 	}
-	if (sermap_enabled || serxdevice_enabled) {
+	if (sermap_enabled || serxdevice_enabled || currprefs.m68k_speed < 0) {
 		safe_receive = true;
 	}
 
@@ -1508,6 +1542,7 @@ uae_u16 SERDATR()
 		// Clear it now when SERDATR was read.
 		INTREQ_f(1 << 11);
 	}
+	serdatr_last_got = 0;
 	return serdatr;
 }
 
@@ -1586,15 +1621,16 @@ static void serial_status_debug(const TCHAR* s)
 uae_u8 serial_readstatus(uae_u8 v, uae_u8 dir)
 {
 #ifdef USE_LIBSERIALPORT
-	sp_signal signal;
+	int signal = 0;
 	uae_u8 serbits = oldserbits;
 
 	if (serloop_enabled) {
 		if (serstatus & 0x80) { // DTR -> DSR + CD
-			signal = SP_SIG_DSR;
+			signal |= SP_SIG_DSR;
+			signal |= SP_SIG_DCD;
 		}
 		if (serstatus & 0x10) { // RTS -> CTS
-			signal = SP_SIG_CTS;
+			signal |= SP_SIG_CTS;
 		}
 #ifdef RETROPLATFORM
 	} else if (rp_ismodem()) {
@@ -1616,20 +1652,30 @@ uae_u8 serial_readstatus(uae_u8 v, uae_u8 dir)
 #ifdef SERIAL_MAP
 	} else if (sermap_enabled) {
 		if (sermap_flags & 1) {
-			signal = SP_SIG_DSR;
+			signal |= SP_SIG_DSR;
 		}
 		if (sermap_flags & 2) {
-			signal = SP_SIG_DCD;
+			signal |= SP_SIG_DCD;
 		}
 		if (sermap_flags & 4) {
-			signal = SP_SIG_CTS;
+			signal |= SP_SIG_CTS;
 		}
 #endif
+	} else if (tcpserial) {
+		if (tcp_is_connected()) {
+			signal |= SP_SIG_DSR;
+			signal |= SP_SIG_DCD;
+			signal |= SP_SIG_CTS;
+		}
 	} else if (currprefs.use_serial) {
 #ifdef SERIAL_PORT
 		/* Read the current config from the port into that configuration. */
-		if (port != nullptr)
-			check(sp_get_signals(port, &signal));
+		if (port != nullptr) {
+			sp_signal port_signal = static_cast<sp_signal>(0);
+			if (check(sp_get_signals(port, &port_signal)) == SP_OK) {
+				signal = port_signal;
+			}
+		}
 #endif
 	}
 	else {

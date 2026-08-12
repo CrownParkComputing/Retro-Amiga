@@ -6,6 +6,7 @@
 #include "threaddep/thread.h"
 #include "machdep/rpt.h"
 #include "memory.h"
+#include "newcpu.h"
 #include "cpuboard.h"
 #include "debug.h"
 #include "custom.h"
@@ -41,6 +42,9 @@ static volatile int spinlock_cnt;
 #endif
 
 static volatile bool ppc_spinlock_waiting;
+static volatile bool qemu_ppc_jit_flush_pending;
+static constexpr int QEMU_QUICK_HANDOFF_IDLE_MAX = 10;
+static int qemu_ppc_quick_handoff_count;
 
 #ifdef WIN32_SPINLOCK
 #define CRITICAL_SECTION_SPIN_COUNT 5000
@@ -48,6 +52,37 @@ static CRITICAL_SECTION ppc_cs1, ppc_cs2;
 static bool ppc_cs_initialized;
 #else
 static SDL_Mutex* ppc_mutex, *ppc_mutex2;
+/* Userspace spin budget before falling back to a blocking lock. Mirrors the
+ * Windows CRITICAL_SECTION spin count (CRITICAL_SECTION_SPIN_COUNT): the
+ * PPC<->emulation handoff lock is taken on every PPC access to a non-thread-safe
+ * memory bank, so contention is usually for only a handful of cycles. Spinning
+ * with SDL_TryLockMutex (a userspace CAS, no syscall) avoids a kernel sleep/wake
+ * on that common short-hold case; we only block once the spin budget is spent.
+ * Without this, the SDL/pthread mutex blocks immediately on every contention,
+ * which is a large slowdown on this extremely hot path (the Windows path never
+ * had this problem because CRITICAL_SECTIONs spin first). */
+#define PPC_SPINLOCK_SPIN_COUNT 5000
+/* CPU "pause"/"yield" hint for spin-wait loops. Self-contained (no SDL
+ * dependency) so it builds in every configuration, including the libretro
+ * target whose threaddep does not pull in SDL3's SDL_atomic.h
+ * (SDL_CPUPauseInstruction). */
+static inline void ppc_spinlock_cpu_relax(void)
+{
+#if defined(__x86_64__) || defined(__i386__)
+	__asm__ __volatile__("pause");
+#elif defined(__aarch64__) || defined(__arm__)
+	__asm__ __volatile__("yield");
+#endif
+}
+static void ppc_spinlock_lock(SDL_Mutex *mutex)
+{
+	for (int i = 0; i < PPC_SPINLOCK_SPIN_COUNT; i++) {
+		if (SDL_TryLockMutex(mutex))
+			return;
+		ppc_spinlock_cpu_relax();
+	}
+	SDL_LockMutex(mutex);
+}
 #endif
 
 void uae_ppc_spinlock_get(void)
@@ -59,9 +94,9 @@ void uae_ppc_spinlock_get(void)
 	ppc_spinlock_waiting = false;
 	LeaveCriticalSection(&ppc_cs2);
 #else
-	SDL_LockMutex(ppc_mutex2);
+	ppc_spinlock_lock(ppc_mutex2);
 	ppc_spinlock_waiting = true;
-	SDL_LockMutex(ppc_mutex);
+	ppc_spinlock_lock(ppc_mutex);
 	ppc_spinlock_waiting = false;
 	SDL_UnlockMutex(ppc_mutex2);
 #endif
@@ -102,6 +137,22 @@ static void uae_ppc_spinlock_create(void)
 	spinlock_cnt = 0;
 #endif
 	ppc_cs_initialized = true;
+#else
+	/* Create the SDL mutexes backing the PPC<->emulation handoff lock. Without
+	 * this they stay NULL and SDL_LockMutex(NULL)/SDL_UnlockMutex(NULL) are
+	 * no-ops, so on macOS/Linux there was NO mutual exclusion between the PPC
+	 * CPU thread and the emulation thread at all (the Windows CRITICAL_SECTION
+	 * path was the only one that initialized the lock). SDL mutexes are
+	 * recursive, matching the CRITICAL_SECTION semantics this code relies on. */
+	if (ppc_mutex) {
+		SDL_DestroyMutex(ppc_mutex);
+		SDL_DestroyMutex(ppc_mutex2);
+	}
+	ppc_mutex = SDL_CreateMutex();
+	ppc_mutex2 = SDL_CreateMutex();
+#if SPINLOCK_DEBUG
+	spinlock_cnt = 0;
+#endif
 #endif
 }
 
@@ -156,6 +207,7 @@ typedef void (PPCCALL *ppc_cpu_pause_function)(int pause);
 typedef bool (PPCCALL *ppc_cpu_check_state_function)(int state);
 typedef void (PPCCALL *ppc_cpu_set_state_function)(int state);
 typedef void (PPCCALL *ppc_cpu_reset_function)(void);
+typedef void (PPCCALL *ppc_cpu_flush_jit_function)(void);
 
 /* Function pointers to active PPC implementation */
 
@@ -181,6 +233,7 @@ static struct impl {
 	ppc_cpu_check_state_function check_state;
 	ppc_cpu_set_state_function set_state;
 	ppc_cpu_reset_function reset;
+	ppc_cpu_flush_jit_function flush_jit;
 	qemu_uae_ppc_in_cpu_thread_function in_cpu_thread;
 	qemu_uae_ppc_external_interrupt_function external_interrupt;
 	qemu_uae_lock_function lock;
@@ -195,11 +248,22 @@ static void load_dummy_implementation(void)
 	impl.stop = dummy_ppc_cpu_stop;
 	impl.atomic_raise_ext_exception = dummy_ppc_cpu_atomic_raise_ext_exception;
 	impl.atomic_cancel_ext_exception = dummy_ppc_cpu_atomic_cancel_ext_exception;
-	impl.map_memory = dummy_ppc_cpu_map_memory;
 	impl.set_pc = dummy_ppc_cpu_set_pc;
 	impl.run_continuous = dummy_ppc_cpu_run_continuous;
 	impl.run_single = dummy_ppc_cpu_run_single;
 	impl.pause = dummy_ppc_cpu_pause;
+}
+
+template<typename T>
+static bool require_qemu_symbol(UAE_DLHANDLE handle, T& function, const char *name)
+{
+	function = (T)uae_dlsym(handle, name);
+	if (!function) {
+		write_log("PPC: qemu-uae plugin missing required symbol: %s\n", name);
+		return false;
+	}
+	write_log("PPC: Imported %s\n", name);
+	return true;
 }
 
 static void uae_patch_library_ppc(UAE_DLHANDLE handle)
@@ -225,7 +289,7 @@ static void uae_patch_library_ppc(UAE_DLHANDLE handle)
 
 static bool load_qemu_implementation(void)
 {
-#ifdef WITH_QEMU_CPU
+#ifdef WITH_QEMU_PPC
 	write_log(_T("PPC: Loading QEmu implementation\n"));
 	memset(&impl, 0, sizeof(impl));
 
@@ -238,17 +302,23 @@ static bool load_qemu_implementation(void)
 
 	/* Retrieve function pointers from library */
 
-	impl.init = (ppc_cpu_init_function) uae_dlsym(handle, "ppc_cpu_init");
+	if (!require_qemu_symbol(handle, impl.init, "ppc_cpu_init") ||
+		!require_qemu_symbol(handle, impl.external_interrupt, "qemu_uae_ppc_external_interrupt") ||
+		!require_qemu_symbol(handle, impl.map_memory, "ppc_cpu_map_memory") ||
+		!require_qemu_symbol(handle, impl.run_continuous, "ppc_cpu_run_continuous") ||
+		!require_qemu_symbol(handle, impl.set_state, "ppc_cpu_set_state") ||
+		!require_qemu_symbol(handle, impl.reset, "ppc_cpu_reset") ||
+		!require_qemu_symbol(handle, impl.in_cpu_thread, "qemu_uae_ppc_in_cpu_thread") ||
+		!require_qemu_symbol(handle, impl.lock, "qemu_uae_lock")) {
+		notify_user(NUMSG_NO_PPC);
+		return false;
+	}
 	//impl.free = (ppc_cpu_free_function) uae_dlsym(handle, "ppc_cpu_free");
 	//impl.stop = (ppc_cpu_stop_function) uae_dlsym(handle, "ppc_cpu_stop");
-	impl.external_interrupt = (qemu_uae_ppc_external_interrupt_function) uae_dlsym(handle, "qemu_uae_ppc_external_interrupt");
-	impl.map_memory = (ppc_cpu_map_memory_function) uae_dlsym(handle, "ppc_cpu_map_memory");
-	impl.run_continuous = (ppc_cpu_run_continuous_function) uae_dlsym(handle, "ppc_cpu_run_continuous");
-	impl.check_state = (ppc_cpu_check_state_function) uae_dlsym(handle, "ppc_cpu_check_state");
-	impl.set_state = (ppc_cpu_set_state_function) uae_dlsym(handle, "ppc_cpu_set_state");
-	impl.reset = (ppc_cpu_reset_function) uae_dlsym(handle, "ppc_cpu_reset");
-	impl.in_cpu_thread = (qemu_uae_ppc_in_cpu_thread_function) uae_dlsym(handle, "qemu_uae_ppc_in_cpu_thread");
-	impl.lock = (qemu_uae_lock_function) uae_dlsym(handle, "qemu_uae_lock");
+	impl.flush_jit = (ppc_cpu_flush_jit_function) uae_dlsym(handle, "ppc_cpu_flush_jit");
+	if (impl.flush_jit) {
+		write_log(_T("PPC: Imported optional ppc_cpu_flush_jit\n"));
+	}
 
 	// FIXME: not needed, handled internally by uae_dlopen_plugin
 	// uae_dlopen_patch_common(handle);
@@ -311,6 +381,49 @@ static bool using_pearpc(void)
 	return ppc_implementation == PPC_IMPLEMENTATION_PEARPC;
 }
 
+static int qemu_ppc_quick_handoff_sleep_ms(void)
+{
+	if (!using_qemu()) {
+		qemu_ppc_quick_handoff_count = 0;
+		return 1;
+	}
+
+	const int idle = currprefs.ppc_cpu_idle;
+	if (idle <= 0) {
+		qemu_ppc_quick_handoff_count = 0;
+		return 0;
+	}
+	if (idle >= QEMU_QUICK_HANDOFF_IDLE_MAX) {
+		qemu_ppc_quick_handoff_count = 0;
+		return 1;
+	}
+
+	const int sleep_interval = QEMU_QUICK_HANDOFF_IDLE_MAX + 1 - idle;
+	if (++qemu_ppc_quick_handoff_count >= sleep_interval) {
+		qemu_ppc_quick_handoff_count = 0;
+		return 1;
+	}
+	return 0;
+}
+
+void uae_ppc_mark_code_cache_dirty(void)
+{
+	qemu_ppc_jit_flush_pending = true;
+}
+
+/* QEMU PPC can execute direct-mapped shared RAM that the m68k patched outside
+ * QEMU's softmmu. Use m68k cache flushes as the dirty signal and consume one
+ * JIT/TLB flush at the next m68k->PPC handoff (#2114), instead of flushing on
+ * every scheduler poll. */
+static void request_qemu_ppc_jit_flush(void)
+{
+	if (!qemu_ppc_jit_flush_pending || !using_qemu() || !impl.flush_jit || regs.halted) {
+		return;
+	}
+	qemu_ppc_jit_flush_pending = false;
+	impl.flush_jit();
+}
+
 enum PPCLockMethod {
 	PPC_RELEASE_SPINLOCK,
 	PPC_KEEP_SPINLOCK,
@@ -324,6 +437,9 @@ enum PPCLockStatus {
 
 static PPCLockStatus get_ppc_lock(PPCLockMethod method)
 {
+	if (!using_qemu() || !impl.in_cpu_thread || !impl.lock) {
+		return PPC_NO_LOCK_NEEDED;
+	}
 	if (impl.in_cpu_thread()) {
 		return PPC_NO_LOCK_NEEDED;
 	} else if (method == PPC_RELEASE_SPINLOCK) {
@@ -359,6 +475,9 @@ static PPCLockStatus get_ppc_lock(PPCLockMethod method)
 
 static void release_ppc_lock(PPCLockStatus status)
 {
+	if (!impl.lock) {
+		return;
+	}
 	if (status == PPC_NO_LOCK_NEEDED) {
 		return;
 	} else if (status == PPC_LOCKED_WITHOUT_SPINLOCK) {
@@ -455,7 +574,7 @@ bool uae_self_is_ppc(void)
 {
 	if (ppc_state == PPC_STATE_INACTIVE)
 		return false;
-	return impl.in_cpu_thread();
+	return impl.in_cpu_thread && impl.in_cpu_thread();
 }
 
 void uae_ppc_wakeup_main(void)
@@ -598,6 +717,7 @@ static void uae_ppc_cpu_reset(void)
 
 	if (using_qemu()) {
 		impl.reset();
+		qemu_ppc_jit_flush_pending = true;
 	} else if (using_pearpc()) {
 		write_log(_T("PPC: Init\n"));
 		impl.set_pc(0, 0xfff00100);
@@ -627,6 +747,7 @@ static int ppc_thread(void *v)
 void uae_ppc_execute_check(void)
 {
 	if (ppc_spinlock_waiting) {
+		request_qemu_ppc_jit_flush();
 		uae_ppc_spinlock_release();
 		uae_ppc_spinlock_get();
 	}
@@ -634,8 +755,9 @@ void uae_ppc_execute_check(void)
 
 void uae_ppc_execute_quick()
 {
+	request_qemu_ppc_jit_flush();
 	uae_ppc_spinlock_release();
-	sleep_millis_main(1);
+	sleep_millis_main(qemu_ppc_quick_handoff_sleep_ms());
 	uae_ppc_spinlock_get();
 }
 
@@ -938,8 +1060,11 @@ void uae_ppc_interrupt(bool active)
 		}
 		return;
 	}
+	if (!using_qemu() || !impl.external_interrupt) {
+		return;
+	}
 
-	PPCLockStatus status = get_ppc_lock(PPC_KEEP_SPINLOCK);
+	PPCLockStatus status = get_ppc_lock(PPC_RELEASE_SPINLOCK);
 	impl.external_interrupt(active);
 	release_ppc_lock(status);
 }
