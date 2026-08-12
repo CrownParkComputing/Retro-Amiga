@@ -144,11 +144,19 @@ void main() {
           contains('cdimage0=/path/game.iso,image'));
     });
 
-    test('drops a cd path whose extension is not a recognised cd image', () {
-      // Only iso and chd are accepted; a .cue is dropped rather than written.
-      expect(FileCategory.cdImages.extensions, <String>{'iso', 'chd'});
-      expect(gen(const EmulatorSettings(cdImage: '/path/game.cue')),
-          isNot(contains('cdimage0=/path/game.cue')));
+    test('accepts every cd format the core can actually mount', () {
+      // The launcher this replaces allowed only iso and chd, so a .cue was
+      // dropped despite blkdev_cdimage.cpp having a parser for it.
+      for (final String ext in <String>['cue', 'ccd', 'mds', 'nrg', 'chd', 'iso']) {
+        expect(gen(EmulatorSettings(cdImage: '/path/game.$ext')),
+            contains('cdimage0=/path/game.$ext,image'),
+            reason: '.$ext is mountable by the core and must survive');
+      }
+    });
+
+    test('still drops a path that is not a cd image at all', () {
+      expect(gen(const EmulatorSettings(cdImage: '/path/notes.txt')),
+          isNot(contains('cdimage0=')));
     });
 
     test('the cd consoles declare an absent disc rather than none at all', () {
