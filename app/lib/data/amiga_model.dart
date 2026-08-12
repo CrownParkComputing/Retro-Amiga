@@ -105,6 +105,32 @@ enum AmigaModel {
 
   String get artworkPath => 'assets/machines/$artwork.png';
 
+  /// Whether the JIT can do anything here.
+  ///
+  /// It recompiles 68020 and later; on a 68000 or 68010 there is nothing for
+  /// it to translate, so the toggle would be a switch that does nothing.
+  /// Read from the description rather than a new field, because that string
+  /// already names the CPU and two sources of the same fact drift apart.
+  bool get canJit =>
+      description.contains('68020') ||
+      description.contains('68030') ||
+      description.contains('68040') ||
+      description.contains('68060');
+
+  /// Whether a graphics card can be plugged in. It needs a Zorro bus, which
+  /// the wedge machines and both consoles do not have.
+  bool get canRtg => switch (this) {
+        AmigaModel.a2000 ||
+        AmigaModel.a3000 ||
+        AmigaModel.a4000 =>
+          true,
+        _ => false,
+      };
+
+  /// A CD console needs its own Kickstart and an extended ROM alongside it.
+  /// Without the second one it starts and shows nothing.
+  bool get needsExtendedRom => hasCd;
+
   static AmigaModel? fromCmdArg(String arg) {
     for (final AmigaModel model in AmigaModel.values) {
       if (model.cmdArg.toUpperCase() == arg.toUpperCase()) return model;

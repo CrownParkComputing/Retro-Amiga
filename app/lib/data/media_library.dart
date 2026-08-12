@@ -5,6 +5,7 @@ import 'dart:isolate';
 
 import 'package:flutter/services.dart';
 
+import 'amiga_model.dart';
 import 'file_category.dart';
 import 'host_paths.dart';
 
@@ -110,6 +111,72 @@ class MediaIndex {
       files.where((MediaFile f) => f.category == category).length;
 
   bool get isEmpty => files.isEmpty;
+}
+
+/// Picks the ROMs a machine needs out of what the scan found.
+///
+/// A CD console needs two: its own Kickstart and an extended ROM holding the
+/// CD firmware. Amiberry will not boot one without both, and it does not
+/// complain - it starts and shows nothing, which is what "CD32 does not boot"
+/// looks like from outside.
+///
+/// Matching is on the filename, because that is what ROM sets carry: TOSEC
+/// names them "Kickstart v3.1 r40.060 (1993-05)(Commodore)(CD32)[!].rom" and
+/// "CD32 Extended-ROM r40.60 (1993)(Commodore)(CD32).rom", and both say what
+/// they are.
+class RomPicker {
+  const RomPicker._();
+
+  static bool _isExtended(String name) {
+    final String lower = name.toLowerCase();
+    return lower.contains('ext');
+  }
+
+  static bool _mentions(String name, List<String> needles) {
+    final String lower = name.toLowerCase();
+    return needles.any(lower.contains);
+  }
+
+  /// The main Kickstart for [model], or null.
+  static MediaFile? kickstartFor(AmigaModel model, List<MediaFile> roms) {
+    final List<MediaFile> candidates = roms
+        .where((MediaFile r) => !_isExtended(r.name))
+        .toList();
+    if (candidates.isEmpty) return null;
+
+    final List<String> wanted = switch (model) {
+      AmigaModel.cd32 => <String>['cd32'],
+      AmigaModel.cdtv => <String>['cdtv'],
+      AmigaModel.a1200 => <String>['a1200', '40.068'],
+      AmigaModel.a4000 => <String>['a4000', '40.068'],
+      AmigaModel.a600 => <String>['a600', '37.300', '40.063'],
+      AmigaModel.a500Plus => <String>['a500+', '37.', '2.04'],
+      _ => <String>['1.3', '34.005', 'a500'],
+    };
+
+    for (final String needle in wanted) {
+      for (final MediaFile rom in candidates) {
+        if (_mentions(rom.name, <String>[needle])) return rom;
+      }
+    }
+    return candidates.first;
+  }
+
+  /// The extended ROM for [model], or null when it needs none.
+  static MediaFile? extendedRomFor(AmigaModel model, List<MediaFile> roms) {
+    if (!model.needsExtendedRom) return null;
+    final String machine = model == AmigaModel.cd32 ? 'cd32' : 'cdtv';
+    for (final MediaFile rom in roms) {
+      if (_isExtended(rom.name) && _mentions(rom.name, <String>[machine])) {
+        return rom;
+      }
+    }
+    // An extended ROM with no machine in its name is still better than none.
+    for (final MediaFile rom in roms) {
+      if (_isExtended(rom.name)) return rom;
+    }
+    return null;
+  }
 }
 
 /// Finds Amiga media by walking folders, rather than making the user pick

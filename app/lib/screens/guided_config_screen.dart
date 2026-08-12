@@ -4,6 +4,7 @@ import '../data/amiga_model.dart';
 import '../data/config_store.dart';
 import '../data/emulator_settings.dart';
 import '../data/file_category.dart';
+import '../data/media_library.dart';
 import '../emulator.dart';
 import '../widgets/amiga_logo.dart';
 import '../widgets/media_chooser.dart';
@@ -116,9 +117,44 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
   }
   String? _error;
 
+  /// The scan, for picking ROMs without asking. Empty until it loads, which is
+  /// why _autoPickRoms runs from build rather than once at startup.
+  MediaIndex _index = const MediaIndex.empty();
+
+  /// Chooses the ROMs the machine needs, where the user has not.
+  ///
+  /// A CD console needs two - its Kickstart and an extended ROM with the CD
+  /// firmware - and picking them by hand from a list of eight means knowing
+  /// which of them is which. Anything already chosen is left alone.
+  void _autoPickRoms() {
+    if (_index.files.isEmpty) return;
+    final List<MediaFile> roms = _index.of(FileCategory.roms);
+    if (roms.isEmpty) return;
+
+    EmulatorSettings updated = _settings;
+    if (updated.romFile.isEmpty) {
+      final MediaFile? rom =
+          RomPicker.kickstartFor(updated.baseModel, roms);
+      if (rom != null) updated = updated.copyWith(romFile: rom.path);
+    }
+    if (updated.baseModel.needsExtendedRom && updated.romExtFile.isEmpty) {
+      final MediaFile? ext =
+          RomPicker.extendedRomFor(updated.baseModel, roms);
+      if (ext != null) updated = updated.copyWith(romExtFile: ext.path);
+    }
+    if (!identical(updated, _settings) && updated != _settings) {
+      // Assigned directly: this runs during build, and setState there is an
+      // error. The frame being built already reads the new value.
+      _settings = updated;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    MediaLibrary.cached().then((MediaIndex index) {
+      if (mounted) setState(() => _index = index);
+    });
     _settings =
         widget.initialSettings ??
         EmulatorSettings.fromModel(widget.mode.initialModel);
@@ -145,8 +181,12 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
   /// Next does.
   List<WizardStep> get _route {
     final List<WizardStep> steps = <WizardStep>[WizardStep.machine];
-    // The CD consoles carry their own ROMs, picked with the machine.
-    if (!_settings.baseModel.hasCd) steps.add(WizardStep.rom);
+    // Every machine needs its ROM chosen, consoles included. They were skipped
+    // here on the assumption that a console carries its own, which is wrong in
+    // the way that matters: a CD32 needs both a Kickstart and an extended ROM
+    // holding the CD firmware, and with neither set the core starts and shows
+    // nothing at all.
+    steps.add(WizardStep.rom);
     steps.add(WizardStep.mediaPrimary);
     if (widget.mode == WizardMode.floppy ||
         widget.mode == WizardMode.hardDrive) {
@@ -160,7 +200,14 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
   bool get _canAdvance {
     switch (_step) {
       case WizardStep.rom:
-        return _settings.romFile.isNotEmpty;
+        if (_settings.romFile.isEmpty) return false;
+        // Without the extended ROM a CD console boots to nothing, so this is
+        // a requirement rather than an option.
+        if (_settings.baseModel.needsExtendedRom &&
+            _settings.romExtFile.isEmpty) {
+          return false;
+        }
+        return true;
       case WizardStep.mediaPrimary:
         switch (widget.mode) {
           case WizardMode.floppy:
@@ -208,6 +255,7 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
 
   @override
   Widget build(BuildContext context) {
+    _autoPickRoms();
     _refreshSuggestedName();
     final List<WizardStep> route = _route;
     final int index = route.indexOf(_step);
@@ -292,6 +340,15 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
         );
 
       case WizardStep.rom:
+        if (_settings.baseModel.needsExtendedRom) {
+          return _CdRomStep(
+            settings: _settings,
+            onKickstart: (String p) =>
+                setState(() => _settings = _settings.copyWith(romFile: p)),
+            onExtended: (String p) =>
+                setState(() => _settings = _settings.copyWith(romExtFile: p)),
+          );
+        }
         return _ChooseStep(
           title: 'Kickstart ROM',
           blurb:
@@ -503,7 +560,11 @@ class _TailorStep extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bool canJit = settings.cpuModel >= 68020;
+    // What the machine can actually use. A console has no Zorro bus, so RTG is
+    // not an option however fast its CPU; and the JIT has nothing to translate
+    // below a 68020. Showing either would be a switch that does nothing.
+    final bool canJit = settings.cpuModel >= 68020 && settings.baseModel.canJit;
+    final bool canRtg = settings.baseModel.canRtg;
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       children: <Widget>[
@@ -524,7 +585,7 @@ class _TailorStep extends StatelessWidget {
               settings.copyWith(jitCacheSize: on ? 16384 : 0, jitFpu: on),
             ),
           ),
-        if (canJit)
+        if (canRtg)
           SwitchListTile(
             title: const Text('RTG graphics (uaegfx)'),
             subtitle: const Text('A Zorro III graphics card for Workbench.'),
@@ -637,6 +698,112 @@ class _SaveStep extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+
+/// Both ROMs a CD console needs, on one step.
+///
+/// The Kickstart and the extended ROM are two files with almost the same name
+/// in most ROM sets, and getting them the wrong way round produces a machine
+/// that starts and shows nothing. Both are pre-selected from the scan; this is
+/// where that guess can be corrected.
+class _CdRomStep extends StatelessWidget {
+  const _CdRomStep({
+    required this.settings,
+    required this.onKickstart,
+    required this.onExtended,
+  });
+
+  final EmulatorSettings settings;
+  final ValueChanged<String> onKickstart;
+  final ValueChanged<String> onExtended;
+
+  static String _name(String path) {
+    if (path.isEmpty) return 'not chosen';
+    final int slash = path.lastIndexOf('/');
+    return slash < 0 ? path : path.substring(slash + 1);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      children: <Widget>[
+        Text('ROMs', style: Theme.of(context).textTheme.titleLarge),
+        const SizedBox(height: 8),
+        Text(
+          'A ${settings.baseModel.displayName} needs two: its Kickstart, and '
+          'an extended ROM holding the CD firmware. Without the second one it '
+          'starts and shows nothing.',
+        ),
+        const SizedBox(height: 16),
+        _RomRow(
+          label: 'Kickstart',
+          value: _name(settings.romFile),
+          selected: settings.romFile,
+          onSelected: onKickstart,
+        ),
+        const SizedBox(height: 8),
+        _RomRow(
+          label: 'Extended ROM',
+          value: _name(settings.romExtFile),
+          selected: settings.romExtFile,
+          onSelected: onExtended,
+        ),
+      ],
+    );
+  }
+}
+
+class _RomRow extends StatelessWidget {
+  const _RomRow({
+    required this.label,
+    required this.value,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final String label;
+  final String value;
+  final String selected;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool chosen = selected.isNotEmpty;
+    return Card(
+      child: ListTile(
+        leading: Icon(
+          chosen ? Icons.check_circle : Icons.error_outline,
+          color: chosen ? Theme.of(context).colorScheme.primary : null,
+        ),
+        title: Text(label),
+        subtitle: Text(value, maxLines: 2, overflow: TextOverflow.ellipsis),
+        trailing: TextButton(
+          onPressed: () async {
+            final String? picked = await showModalBottomSheet<String>(
+              context: context,
+              isScrollControlled: true,
+              showDragHandle: true,
+              builder: (BuildContext sheet) => SafeArea(
+                child: SizedBox(
+                  height: MediaQuery.of(sheet).size.height * 0.7,
+                  child: MediaChooser(
+                    category: FileCategory.roms,
+                    selected: selected,
+                    onSelected: (String path) =>
+                        Navigator.of(sheet).pop(path),
+                  ),
+                ),
+              ),
+            );
+            if (picked != null) onSelected(picked);
+          },
+          child: const Text('Change'),
+        ),
+      ),
     );
   }
 }
