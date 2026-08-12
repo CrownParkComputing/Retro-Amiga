@@ -102,7 +102,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
                 title: const Text('File everything into the media folder'),
                 subtitle: const Text(
                   'Moves what is elsewhere into Floppies, HardDrives, CDROMs, '
-                  'LHA and Kickstarts.',
+                  'LHA and Kickstarts, and unpacks disk images out of zips.',
                 ),
                 trailing: TextButton(
                   onPressed: _busy
@@ -113,6 +113,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
                             await MediaLibrary.scan();
                             return '${result.moved} moved, '
                                 '${result.alreadyInPlace} already in place'
+                                '${result.extracted > 0 ? ', ${result.extracted} unzipped' : ''}'
                                 '${result.failed > 0 ? ', ${result.failed} failed' : ''}.';
                           }),
                   child: const Text('Import'),

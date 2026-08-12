@@ -411,11 +411,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                           ? 'File everything into it'
                           : '${_imported!.moved} moved, '
                               '${_imported!.alreadyInPlace} already in place'
+                              '${_imported!.extracted > 0 ? ', ${_imported!.extracted} unzipped' : ''}'
                               '${_imported!.failed > 0 ? ', ${_imported!.failed} failed' : ''}',
                     ),
                     subtitle: const Text(
                       'Moves what is elsewhere into Floppies, HardDrives, '
-                      'CDROMs, LHA and Kickstarts.',
+                      'CDROMs, LHA and Kickstarts, and unpacks disk images '
+                      'out of zips.',
                     ),
                     trailing: _importing
                         ? const SizedBox(

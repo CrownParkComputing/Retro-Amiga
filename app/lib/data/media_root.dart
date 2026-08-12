@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:archive/archive.dart';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'file_category.dart';
@@ -108,11 +110,15 @@ class ImportResult {
     required this.moved,
     required this.alreadyInPlace,
     required this.failed,
+    this.extracted = 0,
   });
 
   final int moved;
   final int alreadyInPlace;
   final int failed;
+
+  /// Disk images taken out of zips and written as real files.
+  final int extracted;
 
   int get total => moved + alreadyInPlace + failed;
 }
@@ -165,10 +171,84 @@ class MediaImporter {
       }
     }
 
+    final int extracted = await _extractArchives(index, root);
+
     return ImportResult(
       moved: moved,
       alreadyInPlace: inPlace,
       failed: failed,
+      extracted: extracted,
     );
+  }
+
+  /// Unpacks disk images out of zips, so the library holds Amiga files rather
+  /// than containers.
+  ///
+  /// Most Amiga collections are distributed zipped - a whole floppy library
+  /// arrives as one .zip per disk - and the launcher used to either hide them
+  /// or offer the zip itself. Neither is what anyone wants: the emulator can
+  /// open some of them, but nothing else can tell you what is inside.
+  ///
+  /// Only archives already inside the media folder are opened. That is the
+  /// difference between unpacking a user's Amiga disks and grinding through
+  /// the 1800 Spectrum and C64 zips that also live on a handheld: if a zip
+  /// sits in the Amiga folder, it is an Amiga zip.
+  ///
+  /// The zip is kept, moved aside into Archives/, rather than deleted. It is
+  /// the user's file and the extraction may have missed something.
+  static Future<int> _extractArchives(MediaIndex index, String root) async {
+    int extracted = 0;
+
+    for (final MediaFile file in index.files) {
+      if (file.category != FileCategory.archives) continue;
+      if (!file.path.startsWith('$root/')) continue;
+      if (!file.name.toLowerCase().endsWith('.zip')) continue;
+
+      final File source = File(file.path);
+      if (!source.existsSync()) continue;
+
+      List<ArchiveFile> entries;
+      try {
+        entries = ZipDecoder().decodeBytes(source.readAsBytesSync()).files;
+      } on Object {
+        // Not a zip, encrypted, or truncated: leave it alone.
+        continue;
+      }
+
+      bool tookSomething = false;
+      for (final ArchiveFile entry in entries) {
+        if (!entry.isFile) continue;
+        final String name = entry.name.split('/').last;
+        final FileCategory? category = FileCategory.fromPath(name);
+        // Only media, and never an archive inside an archive.
+        if (category == null || category == FileCategory.archives) continue;
+
+        final Directory target = await MediaRoot.folderFor(category);
+        final File destination = File('${target.path}/$name');
+        if (destination.existsSync()) {
+          tookSomething = true;
+          continue;
+        }
+        try {
+          destination.writeAsBytesSync(entry.content as List<int>);
+          extracted++;
+          tookSomething = true;
+        } on Object {
+          // One bad entry should not lose the rest of the archive.
+        }
+      }
+
+      if (tookSomething) {
+        // Out of the way, but not destroyed.
+        try {
+          final Directory kept = await MediaRoot.folderFor(FileCategory.archives);
+          source.renameSync('${kept.path}/${file.name}');
+        } on FileSystemException {
+          // Leaving it where it is only means it is scanned again.
+        }
+      }
+    }
+
+    return extracted;
   }
 }

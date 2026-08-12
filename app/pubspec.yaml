@@ -7,6 +7,7 @@ environment:
   sdk: ^3.11.5
 
 dependencies:
+  archive: ^4.0.9
   file_picker: ^8.1.7
   flutter:
     sdk: flutter
