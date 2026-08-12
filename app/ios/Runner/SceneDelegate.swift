@@ -65,6 +65,13 @@ class SceneDelegate: FlutterSceneDelegate {
       return
     }
 
+    // Register the plugins here for the same reason the channel lives here:
+    // our AppDelegate is not the one that runs, so its
+    // GeneratedPluginRegistrant.register call never happens and every plugin
+    // channel is left with no handler. A call into one then never returns -
+    // path_provider simply hangs rather than failing - so this is why.
+    GeneratedPluginRegistrant.register(with: controller.engine)
+
     let channel = FlutterMethodChannel(
       name: SceneDelegate.channelName,
       binaryMessenger: controller.binaryMessenger)

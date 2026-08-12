@@ -2,7 +2,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:uae4arm2026/data/amiga_model.dart';
 import 'package:uae4arm2026/data/config_generator.dart';
 import 'package:uae4arm2026/data/emulator_settings.dart';
-import 'package:uae4arm2026/data/file_category.dart';
 
 /// Ported from the launcher's ConfigGeneratorTest.kt, with three expectations
 /// corrected: seven of that suite's 103 tests fail against the code they test,
