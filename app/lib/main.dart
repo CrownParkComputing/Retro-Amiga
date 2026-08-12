@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'data/amiga_model.dart';
 import 'emulator.dart';
 import 'widgets/amiga_logo.dart';
 
@@ -92,7 +93,7 @@ class _QuickStartScreenState extends State<QuickStartScreen> {
   Future<void> _launch(AmigaModel model) async {
     setState(() => _error = null);
     try {
-      await Emulator.launchModel(model.id);
+      await Emulator.launchModel(model.cmdArg);
     } on Exception catch (e) {
       if (mounted) setState(() => _error = '$e');
     }
@@ -135,9 +136,9 @@ class _QuickStartScreenState extends State<QuickStartScreen> {
             ),
             Expanded(
               child: ListView.builder(
-                itemCount: AmigaModel.all.length,
+                itemCount: AmigaModel.values.length,
                 itemBuilder: (BuildContext context, int index) {
-                  final AmigaModel model = AmigaModel.all[index];
+                  final AmigaModel model = AmigaModel.values[index];
                   return ListTile(
                     contentPadding:
                         const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
@@ -153,8 +154,8 @@ class _QuickStartScreenState extends State<QuickStartScreen> {
                             const AmigaLogo(height: 32),
                       ),
                     ),
-                    title: Text(model.name),
-                    subtitle: Text(model.blurb),
+                    title: Text(model.displayName),
+                    subtitle: Text(model.description),
                     trailing: const Icon(Icons.play_arrow),
                     onTap: () => _launch(model),
                   );

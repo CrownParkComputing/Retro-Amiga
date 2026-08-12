@@ -44,29 +44,3 @@ class Emulator {
   }
 }
 
-/// The machines the core knows, with the command-line name it expects.
-class AmigaModel {
-  const AmigaModel(this.id, this.name, this.blurb, this.artwork);
-
-  final String id;
-  final String name;
-  final String blurb;
-
-  /// Machine photo, carried over from the launcher this replaces. Several
-  /// machines share one: the 3000 and 4000 look alike in a tower shot, and the
-  /// CD32 stands in for both CD consoles.
-  final String artwork;
-
-  String get artworkPath => 'assets/machines/$artwork.png';
-
-  static const List<AmigaModel> all = <AmigaModel>[
-    AmigaModel('A500', 'Amiga 500', 'OCS, 512K chip — the one under the telly', 'a500'),
-    AmigaModel('A500P', 'Amiga 500+', 'ECS, 1MB chip', 'a500'),
-    AmigaModel('A600', 'Amiga 600', 'ECS, IDE', 'a500'),
-    AmigaModel('A1200', 'Amiga 1200', 'AGA, 68020 — the one you saved up for', 'a1200'),
-    AmigaModel('A3000', 'Amiga 3000', 'ECS, 68030', 'a3000'),
-    AmigaModel('A4000', 'Amiga 4000', 'AGA, 68040', 'a4000'),
-    AmigaModel('CD32', 'CD32', 'AGA console, CD drive', 'cd32'),
-    AmigaModel('CDTV', 'CDTV', 'ECS, CD drive', 'cd32'),
-  ];
-}
