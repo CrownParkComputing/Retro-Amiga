@@ -14,6 +14,7 @@
 #include "disk.h"
 #include "inputdevice.h"
 #include "target.h"
+#include "amiberry_input.h"
 
 extern void uae_restart(struct uae_prefs* p, int opengui, const TCHAR* cfgfile);
 extern void apply_android_controller_remap(const int* sdl_to_target, int count);
@@ -119,4 +120,86 @@ void uae4arm_host_apply_controller_mapping(const int* sdl_to_target, int count)
 	if (!sdl_to_target || count <= 0)
 		return;
 	apply_android_controller_remap(sdl_to_target, count);
+}
+
+/* ---- inbound: host-drawn controls ------------------------------------- */
+
+/* Number of buttons each virtual pad registers, used by release_all. */
+static int pad_button_count(int pad)
+{
+	return pad == UAE4ARM_HOST_PAD_CD32 ? 7 : 2;
+}
+
+/* Registers on demand, then returns the device index, or -1 if the pad could
+   not be registered (input device table full). */
+static int pad_device(int pad)
+{
+	if (pad == UAE4ARM_HOST_PAD_CD32) {
+		ensure_onscreen_cd32pad_registered();
+		return get_onscreen_cd32pad_device_index();
+	}
+	if (pad == UAE4ARM_HOST_PAD_JOYSTICK) {
+		ensure_onscreen_joystick_registered();
+		return get_onscreen_joystick_device_index();
+	}
+	return -1;
+}
+
+void uae4arm_host_pad_attach(int pad)
+{
+	pad_device(pad);
+}
+
+void uae4arm_host_pad_axis(int pad, int axis, int value)
+{
+	if (axis != 0 && axis != 1)
+		return;
+	const int dev = pad_device(pad);
+	if (dev < 0)
+		return;
+
+	if (value > UAE4ARM_HOST_AXIS_MAX)
+		value = UAE4ARM_HOST_AXIS_MAX;
+	else if (value < -UAE4ARM_HOST_AXIS_MAX)
+		value = -UAE4ARM_HOST_AXIS_MAX;
+
+	setjoystickstate(dev, axis, value, UAE4ARM_HOST_AXIS_MAX);
+}
+
+void uae4arm_host_pad_direction(int pad, bool left, bool right, bool up, bool down)
+{
+	int x = 0;
+	if (left)  x -= UAE4ARM_HOST_AXIS_MAX;
+	if (right) x += UAE4ARM_HOST_AXIS_MAX;
+
+	int y = 0;
+	if (up)   y -= UAE4ARM_HOST_AXIS_MAX;
+	if (down) y += UAE4ARM_HOST_AXIS_MAX;
+
+	uae4arm_host_pad_axis(pad, 0, x);
+	uae4arm_host_pad_axis(pad, 1, y);
+}
+
+void uae4arm_host_pad_button(int pad, int button, bool pressed)
+{
+	if (button < 0 || button >= pad_button_count(pad))
+		return;
+	const int dev = pad_device(pad);
+	if (dev < 0)
+		return;
+	setjoybuttonstate(dev, button, pressed ? 1 : 0);
+}
+
+void uae4arm_host_pad_release_all(int pad)
+{
+	const int dev = pad_device(pad);
+	if (dev < 0)
+		return;
+
+	setjoystickstate(dev, 0, 0, UAE4ARM_HOST_AXIS_MAX);
+	setjoystickstate(dev, 1, 0, UAE4ARM_HOST_AXIS_MAX);
+
+	const int buttons = pad_button_count(pad);
+	for (int button = 0; button < buttons; button++)
+		setjoybuttonstate(dev, button, 0);
 }

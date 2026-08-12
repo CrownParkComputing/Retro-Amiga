@@ -72,6 +72,51 @@ bool uae4arm_host_get_correct_aspect(void);
 /* sdl_to_target maps SDL button indices onto target button indices. */
 void uae4arm_host_apply_controller_mapping(const int* sdl_to_target, int count);
 
+/* ---- inbound: host-drawn controls ------------------------------------- */
+/*
+ * Lets a host that draws its own touch controls feed the emulation directly.
+ * Both pads are virtual input devices registered with the core's input layer,
+ * so a host pad is indistinguishable from a physical one: it obeys the user's
+ * port assignment and custom mappings.
+ */
+
+#define UAE4ARM_HOST_PAD_JOYSTICK 1 /* 2-button Amiga joystick */
+#define UAE4ARM_HOST_PAD_CD32     2 /* 7-button CD32 pad */
+
+/* Button indices, matching the device registration order. */
+#define UAE4ARM_HOST_JOY_FIRE1  0
+#define UAE4ARM_HOST_JOY_FIRE2  1
+
+#define UAE4ARM_HOST_CD32_RED    0
+#define UAE4ARM_HOST_CD32_BLUE   1
+#define UAE4ARM_HOST_CD32_GREEN  2
+#define UAE4ARM_HOST_CD32_YELLOW 3
+#define UAE4ARM_HOST_CD32_PLAY   4
+#define UAE4ARM_HOST_CD32_RWD    5
+#define UAE4ARM_HOST_CD32_FFW    6
+
+/* Full deflection on either axis; the value passed to uae4arm_host_pad_axis. */
+#define UAE4ARM_HOST_AXIS_MAX 32767
+
+/* Registers the virtual device if it is not already present. Safe to call
+ * repeatedly, and cheap enough to call before each batch of input. Physical
+ * devices are not re-enumerated, so custom mappings survive. */
+void uae4arm_host_pad_attach(int pad);
+
+/* axis: 0 = X (left negative), 1 = Y (up negative).
+ * value is clamped to +/-UAE4ARM_HOST_AXIS_MAX. */
+void uae4arm_host_pad_axis(int pad, int axis, int value);
+
+/* Digital d-pad convenience, equivalent to two uae4arm_host_pad_axis calls at
+ * full deflection. Opposing directions cancel, as they do on real hardware. */
+void uae4arm_host_pad_direction(int pad, bool left, bool right, bool up, bool down);
+
+void uae4arm_host_pad_button(int pad, int button, bool pressed);
+
+/* Releases every axis and button on the pad. Hosts should call this when the
+ * touch surface is dismissed, otherwise a held direction sticks. */
+void uae4arm_host_pad_release_all(int pad);
+
 #ifdef __cplusplus
 }
 #endif
