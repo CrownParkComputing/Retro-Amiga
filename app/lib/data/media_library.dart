@@ -29,6 +29,17 @@ class MediaFile {
   /// "Lotus Turbo Challenge", not "Lotus Turbo Challenge.adf".
   String get title {
     final String base = name;
+
+    // Amiga names put the type first - mod.axel_f - so the title is what
+    // follows the prefix, not what precedes the last dot. Stripping the
+    // extension the usual way would leave every module called "mod".
+    final String lower = base.toLowerCase();
+    for (final String prefix in const <String>['mod.', 'med.']) {
+      if (lower.startsWith(prefix) && base.length > prefix.length) {
+        return base.substring(prefix.length);
+      }
+    }
+
     final int dot = base.lastIndexOf('.');
     return dot <= 0 ? base : base.substring(0, dot);
   }

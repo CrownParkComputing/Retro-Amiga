@@ -177,6 +177,67 @@ Java_com_uae4arm2026_Uae4ArmEmulatorActivity_nativeApplyControllerMapping(JNIEnv
 	}
 }
 
+/* ---- music -------------------------------------------------------------
+ *
+ * Bound to MainActivity, not the emulator activity: on Android the emulator
+ * runs in its own :sdl process, and the launcher's music has to play in the
+ * Flutter process while nothing is emulating. Both processes load the same
+ * .so, and the player's state is per-process, which is what we want - the
+ * launcher's music stops mattering the moment the emulator takes over.
+ */
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_uae4arm2026_MainActivity_nativeMusicPlay(JNIEnv* env, jclass, jstring path)
+{
+	if (!path) return JNI_FALSE;
+	const char* utf = env->GetStringUTFChars(path, nullptr);
+	const bool ok = utf && uae4arm_host_music_play(utf);
+	if (utf) env->ReleaseStringUTFChars(path, utf);
+	return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_uae4arm2026_MainActivity_nativeMusicStop(JNIEnv*, jclass)
+{
+	uae4arm_host_music_stop();
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_uae4arm2026_MainActivity_nativeMusicSetPaused(JNIEnv*, jclass, jboolean paused)
+{
+	uae4arm_host_music_set_paused(paused != JNI_FALSE);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_uae4arm2026_MainActivity_nativeMusicIsPlaying(JNIEnv*, jclass)
+{
+	return uae4arm_host_music_is_playing() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_uae4arm2026_MainActivity_nativeMusicIsPaused(JNIEnv*, jclass)
+{
+	return uae4arm_host_music_is_paused() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_uae4arm2026_MainActivity_nativeMusicTitle(JNIEnv* env, jclass)
+{
+	return env->NewStringUTF(uae4arm_host_music_title());
+}
+
+extern "C" JNIEXPORT jfloat JNICALL
+Java_com_uae4arm2026_MainActivity_nativeMusicLevel(JNIEnv*, jclass)
+{
+	return uae4arm_host_music_level();
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_uae4arm2026_MainActivity_nativeMusicSetVolume(JNIEnv*, jclass, jfloat volume)
+{
+	uae4arm_host_music_set_volume(volume);
+}
+
 #else
 
 void android_install_host_callbacks() {}

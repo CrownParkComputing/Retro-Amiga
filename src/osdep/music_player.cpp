@@ -15,6 +15,12 @@
 
 #include <SDL3/SDL.h>
 
+/* SDL_SetMainReady lives here, and SDL_MAIN_HANDLED is what stops this header
+   also redefining main - which it does by default, and which would collide
+   with the core's own entry point. */
+#define SDL_MAIN_HANDLED
+#include <SDL3/SDL_main.h>
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -79,6 +85,14 @@ bool ensure_stream()
 {
 	if (g_stream)
 		return true;
+
+	/* Without this SDL refuses to initialise anything, with "Application
+	   didn't initialize properly, did you include SDL_main.h": it expects to
+	   have been entered through SDL_RunApp, which sets the flag. The launcher
+	   process never runs SDL's entry point - it is a Flutter app that happens
+	   to want an audio device - so it has to say so itself. Harmless when the
+	   emulator later does the same. */
+	SDL_SetMainReady();
 
 	if (!SDL_WasInit(SDL_INIT_AUDIO) && !SDL_InitSubSystem(SDL_INIT_AUDIO)) {
 		write_log("music: SDL audio init failed: %s\n", SDL_GetError());

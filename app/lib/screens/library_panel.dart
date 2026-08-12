@@ -89,6 +89,14 @@ class _LibraryPanelState extends State<LibraryPanel> {
     return _files.where((MediaFile file) {
       // Music has its own panel, so it never appears here.
       if (file.category == FileCategory.music) return false;
+      // Archives only on their own tab. A zip is not Amiga media until
+      // something opens it, and a device with a few thousand zips of other
+      // machines' games - which is normal on a handheld - buries the disks
+      // that are.
+      if (file.category == FileCategory.archives &&
+          _selected != FileCategory.archives) {
+        return false;
+      }
       // Kickstarts are shown only on their own tab: mixed into "All" they
       // would bury the games, and they are not games.
       if (file.category == FileCategory.roms && _selected != FileCategory.roms) {
@@ -117,9 +125,12 @@ class _LibraryPanelState extends State<LibraryPanel> {
 
   Widget _tabRow() {
     // Total excludes Kickstarts for the same reason the grid does.
+    // Matches what "All" actually shows, which is Amiga media only.
     final int total = _files
         .where((MediaFile f) =>
-            f.category != FileCategory.roms && f.category != FileCategory.music)
+            f.category != FileCategory.roms &&
+            f.category != FileCategory.music &&
+            f.category != FileCategory.archives)
         .length;
 
     return SingleChildScrollView(

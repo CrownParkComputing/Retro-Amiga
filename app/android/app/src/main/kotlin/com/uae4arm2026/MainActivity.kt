@@ -18,6 +18,49 @@ class MainActivity : FlutterActivity() {
 
 	private companion object {
 		const val CHANNEL = "uae4arm2026/emulator"
+
+		/**
+		 * The launcher's ProTracker player, which lives in the same native
+		 * library as the emulator but is independent of it: it opens its own
+		 * audio device and plays while nothing is emulating.
+		 *
+		 * Loaded lazily, on the first music call. The library is tens of
+		 * megabytes and the launcher may never play anything; loading it at
+		 * startup would slow every cold start for a feature most sessions do
+		 * not touch. The emulator process loads its own copy separately.
+		 */
+		private var musicLibraryLoaded = false
+
+		fun ensureMusicLibrary(activity: android.app.Activity): Boolean {
+			if (musicLibraryLoaded) return true
+			return try {
+				System.loadLibrary("uae4arm")
+
+				// SDL's Android audio backend calls back into Java from its
+				// audio thread, and aborts the process if the Java side was
+				// never wired up - which it is not here, because SDL's own
+				// activity lives in the :sdl process and this is the Flutter
+				// one. setupJNI registers the native methods; setContext gives
+				// SDL the activity it needs to attach that thread. Without
+				// both, the first tune crashes in Android_AudioThreadInit.
+				org.libsdl.app.SDL.setupJNI()
+				org.libsdl.app.SDL.setContext(activity)
+
+				musicLibraryLoaded = true
+				true
+			} catch (e: UnsatisfiedLinkError) {
+				false
+			}
+		}
+
+		@JvmStatic external fun nativeMusicPlay(path: String): Boolean
+		@JvmStatic external fun nativeMusicStop()
+		@JvmStatic external fun nativeMusicSetPaused(paused: Boolean)
+		@JvmStatic external fun nativeMusicIsPlaying(): Boolean
+		@JvmStatic external fun nativeMusicIsPaused(): Boolean
+		@JvmStatic external fun nativeMusicTitle(): String
+		@JvmStatic external fun nativeMusicLevel(): Float
+		@JvmStatic external fun nativeMusicSetVolume(volume: Float)
 	}
 
 	override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -58,6 +101,56 @@ class MainActivity : FlutterActivity() {
 							result.success(true)
 						} else {
 							result.success(openAllFilesAccessSettings())
+						}
+					}
+					"musicPlay" -> {
+						val path = call.argument<String>("path")
+						result.success(
+							path != null && ensureMusicLibrary(this) && nativeMusicPlay(path)
+						)
+					}
+					"musicStop" -> {
+						if (ensureMusicLibrary(this)) nativeMusicStop()
+						result.success(null)
+					}
+					"musicSetPaused" -> {
+						if (ensureMusicLibrary(this)) {
+							nativeMusicSetPaused(call.argument<Boolean>("paused") ?: false)
+						}
+						result.success(null)
+					}
+					"musicSetVolume" -> {
+						if (ensureMusicLibrary(this)) {
+							nativeMusicSetVolume(
+								(call.argument<Double>("volume") ?: 1.0).toFloat()
+							)
+						}
+						result.success(null)
+					}
+					// One call rather than four: the music UI polls this
+					// several times a second.
+					"musicState" -> {
+						if (!musicLibraryLoaded) {
+							// Not loaded means nothing can be playing, and
+							// loading it just to answer would defeat the point
+							// of loading it lazily.
+							result.success(
+								mapOf(
+									"playing" to false,
+									"paused" to false,
+									"title" to "",
+									"level" to 0.0,
+								)
+							)
+						} else {
+							result.success(
+								mapOf(
+									"playing" to nativeMusicIsPlaying(),
+									"paused" to nativeMusicIsPaused(),
+									"title" to nativeMusicTitle(),
+									"level" to nativeMusicLevel().toDouble(),
+								)
+							)
 						}
 					}
 					else -> result.notImplemented()
