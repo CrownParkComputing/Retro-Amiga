@@ -112,6 +112,14 @@ class SceneDelegate: FlutterSceneDelegate {
                               details: nil))
         }
 
+      // Must match what the core computes for itself: on iOS it uses
+      // <home>/Documents/Amiberry, so the boot archive has to land there or
+      // the WHDLoad booter will not find it.
+      case "emulatorHomeDirectory":
+        let documents = NSSearchPathForDirectoriesInDomains(
+          .documentDirectory, .userDomainMask, true).first
+        result(documents.map { $0 + "/Amiberry" })
+
       case "musicPlay":
         let path = (call.arguments as? [String: Any])?["path"] as? String ?? ""
         result(EmulatorHost.shared.musicPlay(path: path))

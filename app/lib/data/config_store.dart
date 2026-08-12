@@ -12,6 +12,7 @@ class SavedConfig {
     required this.path,
     required this.model,
     required this.summary,
+    this.mediaPaths = const <String>[],
   });
 
   final String name;
@@ -23,6 +24,13 @@ class SavedConfig {
 
   /// One line describing what is in the drives, for the shelf card.
   final String summary;
+
+  /// Every file this setup refers to - floppies, hard drives, CD, Kickstart.
+  /// The library uses it to tell which games already have a setup, since a
+  /// game can only be played through one.
+  final List<String> mediaPaths;
+
+  bool uses(String path) => mediaPaths.contains(path);
 }
 
 /// Where saved setups live, and how they get there.
@@ -119,6 +127,29 @@ class ConfigStore {
     r'/[^\s=]*/Containers/Data/Application/[0-9A-Fa-f-]{36}/',
   );
 
+  /// Every absolute path a config file names.
+  ///
+  /// Works on the text rather than a key list because the core has many
+  /// path-valued keys - floppy0..3, hardfile2, filesystem2, uaehf0.., cdimage0,
+  /// kickstart_rom_file - and several take a path in the middle of a
+  /// comma-separated value rather than as the whole of it.
+  static List<String> mediaPathsIn(String configText) {
+    final Set<String> paths = <String>{};
+    for (final String line in configText.split('\n')) {
+      final int equals = line.indexOf('=');
+      if (equals < 0) continue;
+      for (final String part in line.substring(equals + 1).split(',')) {
+        final String value = part.trim().replaceAll('"', '');
+        // An absolute path with an extension: enough to exclude the drive
+        // names, flags and numbers that share these lines.
+        if (value.startsWith('/') && value.contains('.')) {
+          paths.add(value);
+        }
+      }
+    }
+    return paths.toList();
+  }
+
   static Future<List<SavedConfig>> list() async {
     final Directory dir = await configDirectory();
     final List<SavedConfig> configs = <SavedConfig>[];
@@ -141,6 +172,7 @@ class ConfigStore {
           path: entity.path,
           model: _modelFrom(text),
           summary: _summaryFrom(text),
+          mediaPaths: mediaPathsIn(text),
         ),
       );
     }

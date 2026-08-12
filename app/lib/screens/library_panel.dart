@@ -1,19 +1,24 @@
 import 'package:flutter/material.dart';
 
-import '../data/file_category.dart';
+import '../data/config_store.dart';
 import '../data/emulator_settings.dart';
+import '../data/file_category.dart';
 import '../data/media_library.dart';
+import '../emulator.dart';
 import '../theme/amiga_theme.dart';
-import '../widgets/media_card.dart';
 import 'guided_config_screen.dart';
 
-/// Everything the scan found, split by what it is.
+/// Every Amiga file the scan found, listed by what it is.
 ///
-/// The tabs are the media types the core actually loads, not a curated subset:
-/// floppies, hard drives, WHDLoad archives, CD images. They are pills across
-/// the top rather than rail entries because the rail is for places, and these
-/// are filters on one place - and because a count next to each is the fastest
-/// way to see that a scan worked.
+/// A list rather than a wall of cards: these are files, and what tells them
+/// apart is the name, where it came from and whether it is set up - three
+/// things a row shows at a glance and a cover-art-shaped card with no cover
+/// art does not.
+///
+/// Nothing here launches straight into the emulator. A game runs from a setup,
+/// because the file alone does not say which machine, how much memory or which
+/// Kickstart it wants, and guessing produces a black screen rather than an
+/// error. So a file with a setup offers Play, and a file without offers Set up.
 class LibraryPanel extends StatefulWidget {
   const LibraryPanel({super.key});
 
@@ -26,8 +31,7 @@ class _LibraryPanelState extends State<LibraryPanel> {
   ///
   /// Kickstarts are here even though a ROM is not something you launch: which
   /// ones you have decides which machines you can set up at all, and an A1200
-  /// or a CD32 needs a different ROM from an A500. Tapping one starts a setup
-  /// with that ROM already chosen.
+  /// or a CD32 needs a different ROM from an A500.
   ///
   /// Music is not here - it has its own panel with a player.
   static const List<FileCategory> _tabs = <FileCategory>[
@@ -46,6 +50,7 @@ class _LibraryPanelState extends State<LibraryPanel> {
   bool _loading = true;
   String? _error;
   List<MediaFile> _files = <MediaFile>[];
+  List<SavedConfig> _configs = <SavedConfig>[];
 
   @override
   void initState() {
@@ -67,9 +72,11 @@ class _LibraryPanelState extends State<LibraryPanel> {
       if (!rescan && index.files.isEmpty) {
         index = await MediaLibrary.scan();
       }
+      final List<SavedConfig> configs = await ConfigStore.list();
       if (!mounted) return;
       setState(() {
         _files = index.files;
+        _configs = configs;
         _loading = false;
       });
     } on Object catch (e) {
@@ -81,6 +88,14 @@ class _LibraryPanelState extends State<LibraryPanel> {
     }
   }
 
+  /// The setup that already uses [file], if there is one.
+  SavedConfig? _setupFor(MediaFile file) {
+    for (final SavedConfig config in _configs) {
+      if (config.uses(file.path)) return config;
+    }
+    return null;
+  }
+
   int _countOf(FileCategory category) =>
       _files.where((MediaFile f) => f.category == category).length;
 
@@ -89,17 +104,13 @@ class _LibraryPanelState extends State<LibraryPanel> {
     return _files.where((MediaFile file) {
       // Music has its own panel, so it never appears here.
       if (file.category == FileCategory.music) return false;
-      // Archives only on their own tab. A zip is not Amiga media until
-      // something opens it, and a device with a few thousand zips of other
-      // machines' games - which is normal on a handheld - buries the disks
-      // that are.
-      if (file.category == FileCategory.archives &&
-          _selected != FileCategory.archives) {
-        return false;
-      }
-      // Kickstarts are shown only on their own tab: mixed into "All" they
-      // would bury the games, and they are not games.
-      if (file.category == FileCategory.roms && _selected != FileCategory.roms) {
+      // Kickstarts and archives appear only on their own tabs. Mixed into
+      // "All" they bury the games: a ROM is not a game, and a device with a
+      // few thousand zips of other machines' software - normal on a handheld -
+      // hides the Amiga media completely.
+      if ((file.category == FileCategory.roms ||
+              file.category == FileCategory.archives) &&
+          _selected != file.category) {
         return false;
       }
       if (_selected != null && file.category != _selected) return false;
@@ -107,7 +118,7 @@ class _LibraryPanelState extends State<LibraryPanel> {
       return file.name.toLowerCase().contains(needle);
     }).toList()
       ..sort((MediaFile a, MediaFile b) =>
-          a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+          a.title.toLowerCase().compareTo(b.title.toLowerCase()));
   }
 
   @override
@@ -124,7 +135,6 @@ class _LibraryPanelState extends State<LibraryPanel> {
   }
 
   Widget _tabRow() {
-    // Total excludes Kickstarts for the same reason the grid does.
     // Matches what "All" actually shows, which is Amiga media only.
     final int total = _files
         .where((MediaFile f) =>
@@ -210,44 +220,44 @@ class _LibraryPanelState extends State<LibraryPanel> {
       );
     }
 
-    return LayoutBuilder(
-      builder: (BuildContext context, BoxConstraints constraints) {
-        final int columns =
-            (constraints.maxWidth / AmigaMetrics.cardCell).floor().clamp(2, 100);
-        return GridView.builder(
-          padding: const EdgeInsets.all(10),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            childAspectRatio: AmigaMetrics.cardWidth / AmigaMetrics.cardHeight,
-            crossAxisSpacing: 6,
-            mainAxisSpacing: 6,
-          ),
-          itemCount: visible.length,
-          itemBuilder: (BuildContext context, int i) => MediaCard(
-            file: visible[i],
-            onTap: () => _launch(visible[i]),
-          ),
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      itemCount: visible.length,
+      separatorBuilder: (BuildContext context, int index) =>
+          const Divider(height: 1, indent: 60, color: Color(0x14FFFFFF)),
+      itemBuilder: (BuildContext context, int i) {
+        final MediaFile file = visible[i];
+        return _FileRow(
+          file: file,
+          setup: _setupFor(file),
+          onPlay: _play,
+          onSetUp: () => _setUp(file),
         );
       },
     );
   }
 
-  /// Tapping a game opens the wizard with that media already in place, rather
-  /// than booting blind: the file alone does not say which machine it wants,
-  /// and getting that wrong is the difference between a game running and a
-  /// black screen. The wizard starts on the machine step because the one thing
-  /// the tap did settle is the media.
-  Future<void> _launch(MediaFile file) async {
-    final WizardMode mode = _modeFor(file.category);
+  Future<void> _play(SavedConfig config) async {
+    // Heals paths written by a previous install before the core is handed the
+    // file; see ConfigStore.repairConfigFile.
+    await ConfigStore.repairConfigFile(config.path);
+    await Emulator.launchConfig(config.path);
+  }
+
+  /// Opens the wizard with the file already in the right drive. The wizard is
+  /// where the machine, memory and Kickstart get decided, which is what turns
+  /// a file into something that can run.
+  Future<void> _setUp(MediaFile file) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (BuildContext context) => GuidedConfigScreen(
-          mode: mode,
+          mode: _modeFor(file.category),
           initialSettings: _settingsFor(file),
           initialName: file.title,
         ),
       ),
     );
+    // The wizard may have saved a setup, which changes this row's action.
     if (mounted) _load();
   }
 
@@ -286,6 +296,127 @@ class _LibraryPanelState extends State<LibraryPanel> {
       case FileCategory.music:
         return base;
     }
+  }
+}
+
+/// One file: what it is, what it is called, and what can be done with it.
+class _FileRow extends StatelessWidget {
+  const _FileRow({
+    required this.file,
+    required this.setup,
+    required this.onPlay,
+    required this.onSetUp,
+  });
+
+  final MediaFile file;
+  final SavedConfig? setup;
+  final void Function(SavedConfig) onPlay;
+  final VoidCallback onSetUp;
+
+  static const Map<FileCategory, String> _badges = <FileCategory, String>{
+    FileCategory.floppies: 'ADF',
+    FileCategory.whdloadGames: 'LHA',
+    FileCategory.hardDrives: 'HDF',
+    FileCategory.cdImages: 'CD',
+    FileCategory.roms: 'ROM',
+    FileCategory.archives: 'ZIP',
+    FileCategory.music: 'MOD',
+  };
+
+  static Color _colour(FileCategory category) {
+    switch (category) {
+      case FileCategory.floppies:
+        return AmigaColors.workbenchBlue;
+      case FileCategory.whdloadGames:
+        return const Color(0xFF7C3AED);
+      case FileCategory.hardDrives:
+        return const Color(0xFF0E7C66);
+      case FileCategory.cdImages:
+        return const Color(0xFFB45309);
+      case FileCategory.roms:
+        return AmigaColors.tickRed;
+      case FileCategory.archives:
+        return const Color(0xFF4B5563);
+      case FileCategory.music:
+        return const Color(0xFF9D174D);
+    }
+  }
+
+  String get _size {
+    final int bytes = file.size;
+    if (bytes <= 0) return '';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).round()} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final SavedConfig? config = setup;
+    final bool ready = config != null;
+
+    return ListTile(
+      dense: true,
+      // The whole row does whatever the button says, so a row that cannot run
+      // yet opens the wizard rather than failing quietly.
+      onTap: ready ? () => onPlay(config) : onSetUp,
+      leading: Container(
+        width: 42,
+        height: 26,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: _colour(file.category),
+          borderRadius: BorderRadius.circular(5),
+        ),
+        child: Text(
+          _badges[file.category] ?? '',
+          style: const TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w800,
+            color: Colors.white,
+          ),
+        ),
+      ),
+      title: Text(
+        file.title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+          color: AmigaColors.text,
+        ),
+      ),
+      subtitle: Text(
+        <String>[
+          if (ready) 'Set up as ${config.name}' else 'No setup yet',
+          if (file.folder.isNotEmpty) file.folder,
+          if (_size.isNotEmpty) _size,
+        ].join('  ·  '),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: 11,
+          color: ready ? AmigaColors.tickGreen : AmigaColors.textDim,
+        ),
+      ),
+      trailing: ready
+          ? FilledButton.icon(
+              onPressed: () => onPlay(config),
+              icon: const Icon(Icons.play_arrow, size: 18),
+              label: const Text('Play'),
+              style: FilledButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+              ),
+            )
+          : OutlinedButton.icon(
+              onPressed: onSetUp,
+              icon: const Icon(Icons.tune, size: 16),
+              label: const Text('Set up'),
+              style: OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+    );
   }
 }
 

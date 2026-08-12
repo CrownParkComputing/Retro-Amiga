@@ -88,6 +88,15 @@ class MainActivity : FlutterActivity() {
 
 					"documentsDirectory" -> result.success(filesDir.absolutePath)
 
+					// Where the core keeps WHDBoot/, Kickstarts/ and the rest.
+					// It must match what the core computes for itself, which on
+					// Android is SDL_GetAndroidExternalStoragePath - the same
+					// directory getExternalFilesDir(null) returns. Guessing a
+					// different one would leave the boot archive somewhere the
+					// booter never looks.
+					"emulatorHomeDirectory" ->
+						result.success(getExternalFilesDir(null)?.absolutePath)
+
 					// Scanning for media means walking folders, which scoped
 					// storage cannot do - it hands back one file at a time
 					// through a picker. All-files access is the only way to

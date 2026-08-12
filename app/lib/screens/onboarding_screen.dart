@@ -8,6 +8,7 @@ import '../data/app_prefs.dart';
 import '../data/file_category.dart';
 import '../data/host_paths.dart';
 import '../data/media_library.dart';
+import '../data/whdload_support.dart';
 import '../widgets/amiga_logo.dart';
 
 /// First-run setup.
@@ -34,6 +35,44 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   /// A Kickstart is the one thing that cannot be worked around later.
   bool get _hasRom => _index.countOf(FileCategory.roms) > 0;
+
+  WhdloadStatus _whdload = const WhdloadStatus(
+    bootArchiveInstalled: false,
+    kickstartCount: 0,
+  );
+  bool _installingWhdload = false;
+  String? _whdloadNotice;
+
+  /// Puts the WHDLoad system files where the core's booter looks, and copies
+  /// the Kickstarts it symlinks by name.
+  ///
+  /// Separate from the Kickstart step above because it answers a different
+  /// question: that one is "can this app run anything", this one is "can it
+  /// run the .lha files", and a device can easily have one and not the other.
+  Future<void> _installWhdload() async {
+    setState(() {
+      _installingWhdload = true;
+      _whdloadNotice = null;
+    });
+
+    final MediaFile? archive = WhdloadSupport.findBootArchive(_index);
+    bool installed = _whdload.bootArchiveInstalled;
+    if (archive != null) {
+      installed = await WhdloadSupport.installBootArchive(archive.path);
+    }
+    await WhdloadSupport.installKickstarts(_index);
+    final WhdloadStatus status = await WhdloadSupport.status();
+
+    if (!mounted) return;
+    setState(() {
+      _whdload = status;
+      _installingWhdload = false;
+      _whdloadNotice = archive == null && !installed
+          ? 'No WHDLoad boot archive on this device. Copy boot-data.zip '
+              '(or your whdload boot zip) onto it and scan again.'
+          : null;
+    });
+  }
 
   static const List<FileCategory> _shown = <FileCategory>[
     FileCategory.roms,
@@ -65,6 +104,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   void initState() {
     super.initState();
     _scan();
+    WhdloadSupport.status().then((WhdloadStatus status) {
+      if (mounted) setState(() => _whdload = status);
+    });
   }
 
   Future<void> _scan() async {
@@ -289,7 +331,53 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               const SizedBox(height: 16),
             ],
 
-            const _SectionHeader('2', 'Pick your usual Amiga'),
+            const _SectionHeader('2', 'WHDLoad support'),
+            const SizedBox(height: 8),
+            const Text(
+              'WHDLoad games are .lha archives that need WHDLoad itself to '
+              'boot. The core wants those files in one place, and a Kickstart '
+              'under the name it expects.',
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: ListTile(
+                leading: Icon(
+                  _whdload.ready ? Icons.check_circle : Icons.inventory_2_outlined,
+                  color: _whdload.ready
+                      ? Theme.of(context).colorScheme.primary
+                      : null,
+                ),
+                title: Text(
+                  _whdload.ready
+                      ? 'WHDLoad is ready'
+                      : _whdload.bootArchiveInstalled
+                          ? 'Boot files installed, no Kickstart yet'
+                          : 'Not installed',
+                ),
+                subtitle: Text(
+                  _whdloadNotice ??
+                      (_whdload.ready
+                          ? 'Boot archive installed, '
+                              '${_whdload.kickstartCount} Kickstart'
+                              '${_whdload.kickstartCount == 1 ? '' : 's'} in place.'
+                          : 'Installs from a boot archive already on this '
+                              'device.'),
+                ),
+                trailing: _installingWhdload
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : TextButton(
+                        onPressed: _scanning ? null : _installWhdload,
+                        child: Text(_whdload.ready ? 'Reinstall' : 'Install'),
+                      ),
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            const _SectionHeader('3', 'Pick your usual Amiga'),
             const SizedBox(height: 8),
             const Text('New setups start from this machine.'),
             const SizedBox(height: 12),
