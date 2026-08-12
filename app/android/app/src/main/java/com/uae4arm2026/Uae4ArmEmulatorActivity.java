@@ -1,0 +1,877 @@
+package com.uae4arm2026;
+
+import android.app.AlertDialog;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.ParcelFileDescriptor;
+import android.view.Gravity;
+import android.view.KeyEvent;
+import android.view.ViewGroup;
+import android.view.WindowManager;
+import android.widget.FrameLayout;
+import android.widget.ImageButton;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
+import org.libsdl.app.SDLActivity;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
+import android.view.MotionEvent;
+import android.view.View;
+import android.widget.LinearLayout;
+import android.os.Handler;
+import android.os.Looper;
+
+public class Uae4ArmEmulatorActivity extends SDLActivity {
+	public static boolean isRunning = false;
+	private final Handler uiHandler = new Handler(Looper.getMainLooper());
+	private final Runnable hideOverlaysRunnable = this::hideOverlays;
+	private LinearLayout overlayContainer;
+	// dispatchTouchEvent() fires for every MotionEvent - including every ACTION_MOVE while
+	// dragging the on-screen joystick, which can be dozens of events per second. Re-arming the
+	// Handler and touching View visibility on each one forces a layout/invalidate pass on the UI
+	// thread for every sample, competing with the SDL render thread and visibly slowing the
+	// emulation while a finger is down. Throttle so the timer is only actually reset at most
+	// once per this window; the 3s auto-hide delay makes the lost precision unnoticeable.
+	private static final long AUTO_HIDE_RESET_THROTTLE_MS = 500;
+	private long lastAutoHideResetUptimeMs = 0;
+
+	private OnBackInvokedCallback backCallback;
+	private Uae4ArmVirtualKeyboard virtualKeyboard;
+	private ImageButton keyboardButton;
+	private ImageButton pauseButton;
+	private ImageButton controllerButton;
+	private ImageButton aspectButton;
+	private ImageButton floppyButton;
+	private ImageButton editConfigButton;
+	private ImageButton rebootButton;
+	private ImageButton quitButton;
+	private boolean pauseMenuPausedEmulation = false;
+	private final List<ParcelFileDescriptor> openFileDescriptors = new ArrayList<>();
+
+	private static final String HINT_TRAP_BACK = "SDL_ANDROID_TRAP_BACK_BUTTON";
+	public static final String EXTRA_CONFIG_PATH = "com.uae4arm2026.CONFIG_PATH";
+
+	private String currentConfigPath;
+
+	@Override
+	protected void onCreate(Bundle savedInstanceState) {
+		isRunning = true;
+		cleanCache();
+		super.onCreate(savedInstanceState);
+		currentConfigPath = extractConfigPath(getIntent());
+		setupOverlayContainer();
+		ensureVirtualKeyboardOverlay();
+		if (shouldShowKeyboardButton()) {
+			ensureKeyboardButtonOverlay();
+		}
+		ensureControllerButtonOverlay();
+		ensureAspectButtonOverlay();
+		if (configHasFloppyDrive(0)) {
+			ensureFloppyButtonOverlay();
+		}
+		ensurePauseButtonOverlay();
+		ensureEditConfigButtonOverlay();
+		ensureRebootButtonOverlay();
+		ensureQuitButtonOverlay();
+		enterImmersiveMode();
+		registerBackHandler();
+		applyControllerMappingsFromPrefs();
+	}
+
+	private void cleanCache() {
+		File cacheDir = getCacheDir();
+		File[] files = cacheDir.listFiles();
+		if (files != null) {
+			for (File f : files) {
+				if (f.isDirectory() && f.getName().startsWith("fd_")) {
+					deleteRecursive(f);
+				} else if (f.getName().startsWith("bridge_") || f.getName().contains(".translated")) {
+					f.delete();
+				}
+			}
+		}
+	}
+
+	private void deleteRecursive(File f) {
+		if (f.isDirectory()) {
+			File[] children = f.listFiles();
+			if (children != null) {
+				for (File child : children) deleteRecursive(child);
+			}
+		}
+		f.delete();
+	}
+
+	@Override
+	public void onWindowFocusChanged(boolean hasFocus) {
+		super.onWindowFocusChanged(hasFocus);
+		if (hasFocus) {
+			enterImmersiveMode();
+		}
+	}
+
+	@Override
+	protected String[] getLibraries() {
+		return new String[] { "uae4arm" };
+	}
+
+	@Override
+	protected String[] getArguments() {
+		Intent intent = getIntent();
+		if (intent != null) {
+			String[] args = intent.getStringArrayExtra("SDL_ARGS");
+			if (args != null) {
+				android.util.Log.d("Uae4Arm-SDL", "Original args: " + java.util.Arrays.toString(args));
+				String[] translated = translateArguments(args);
+				android.util.Log.d("Uae4Arm-SDL", "Final translated args: " + java.util.Arrays.toString(translated));
+				return translated;
+			}
+		}
+		return new String[0];
+	}
+
+	private String[] translateArguments(String[] args) {
+		String[] result = new String[args.length];
+		for (int i = 0; i < args.length; i++) {
+			String arg = args[i];
+			if ("--config".equals(arg) && i + 1 < args.length) {
+				result[i] = arg;
+				result[i + 1] = translateConfigFile(args[i + 1]);
+				i++;
+				continue;
+			}
+
+			if (arg.contains("=") && !arg.startsWith("-")) {
+				int eq = arg.indexOf('=');
+				String key = arg.substring(0, eq);
+				String value = arg.substring(eq + 1);
+
+				if (isDirectoryKey(key)) {
+					result[i] = arg;
+					continue;
+				}
+
+				String translatedValue = translateStructuredValue(value);
+				if (translatedValue != null) {
+					result[i] = key + "=" + translatedValue;
+				} else {
+					result[i] = arg;
+				}
+			} else if (isExternalPath(arg)) {
+				result[i] = translatePathToFd(arg);
+			} else {
+				result[i] = arg;
+			}
+		}
+		return result;
+	}
+
+	private static final class ParsedPathValue {
+		final String pathPart;
+		final String suffix;
+
+		ParsedPathValue(String pathPart, String suffix) {
+			this.pathPart = pathPart;
+			this.suffix = suffix;
+		}
+	}
+
+	private ParsedPathValue parsePathValue(String value) {
+		if (value.startsWith("\"")) {
+			int start = 0;
+			while (start < value.length() && value.charAt(start) == '"') {
+				start++;
+			}
+
+			int endQuote = value.indexOf('"', start);
+			if (endQuote >= start) {
+				int suffixStart = endQuote;
+				while (suffixStart < value.length() && value.charAt(suffixStart) == '"') {
+					suffixStart++;
+				}
+				return new ParsedPathValue(value.substring(start, endQuote), value.substring(suffixStart));
+			}
+
+			return new ParsedPathValue(value.substring(start), "");
+		}
+
+		if (value.contains(",")) {
+			int comma = value.lastIndexOf(',');
+			return new ParsedPathValue(value.substring(0, comma), value.substring(comma));
+		}
+
+		return new ParsedPathValue(value, "");
+	}
+
+	private String translateStructuredValue(String value) {
+		int firstQuote = value.indexOf('"');
+		if (firstQuote >= 0) {
+			int secondQuote = value.indexOf('"', firstQuote + 1);
+			if (secondQuote > firstQuote + 1) {
+				String pathPart = value.substring(firstQuote + 1, secondQuote);
+				if (isExternalPath(pathPart)) {
+					String translated = translatePathToFd(pathPart);
+					return value.substring(0, firstQuote + 1) + translated + value.substring(secondQuote);
+				}
+			}
+		}
+
+		ParsedPathValue parsedValue = parsePathValue(value);
+		if (isExternalPath(parsedValue.pathPart)) {
+			String translated = translatePathToFd(parsedValue.pathPart);
+			return translated + parsedValue.suffix;
+		}
+
+		return null;
+	}
+
+	private boolean isDirectoryKey(String key) {
+		return key.endsWith("_path") || 
+			   key.equals("whdload_arch_path") || 
+			   key.equals("config_path") ||
+			   key.equals("path_rom") ||
+			   key.equals("filesystem") ||
+			   key.equals("filesystem2");
+	}
+
+	private boolean isExternalPath(String path) {
+		if (path == null || path.isEmpty()) return false;
+		if (path.startsWith("content://")) return true;
+		if (path.startsWith("/") && !HostSupport.isAppOwnedPath(this, path)) return true;
+		return false;
+	}
+
+	private String translateConfigFile(String configPath) {
+		File original = new File(configPath);
+		if (!original.exists()) return configPath;
+
+		try {
+			List<String> lines = java.nio.file.Files.readAllLines(original.toPath());
+			List<String> translatedLines = new ArrayList<>();
+			boolean changed = false;
+
+			for (String line : lines) {
+				String trimmed = line.trim();
+				if (trimmed.isEmpty() || trimmed.startsWith(";") || !trimmed.contains("=")) {
+					translatedLines.add(line);
+					continue;
+				}
+
+				int eq = line.indexOf('=');
+				String key = line.substring(0, eq).trim();
+				String value = line.substring(eq + 1).trim();
+
+				if (isDirectoryKey(key)) {
+					translatedLines.add(line);
+					continue;
+				}
+
+				String translatedValue = translateStructuredValue(value);
+				if (translatedValue != null) {
+					translatedLines.add(key + "=" + translatedValue);
+					changed = true;
+				} else {
+					translatedLines.add(line);
+				}
+			}
+
+			if (changed) {
+				File translatedFile = new File(getCacheDir(), ".translated.uae");
+				java.nio.file.Files.write(translatedFile.toPath(), translatedLines);
+				return translatedFile.getAbsolutePath();
+			}
+		} catch (IOException e) {
+			android.util.Log.e("Uae4Arm-SDL", "Failed to translate config: " + configPath, e);
+		}
+		return configPath;
+	}
+
+	private String translatePathToFd(String path) {
+		if (path.startsWith("/proc/self/fd/") || path.startsWith(getCacheDir().getAbsolutePath())) return path;
+		
+		try {
+			Uri contentUri = path.startsWith("content://") ? Uri.parse(path) : HostSupport.findContentUriForPath(this, path);
+			if (contentUri == null) return path;
+
+			ParcelFileDescriptor pfd;
+			try {
+				pfd = getContentResolver().openFileDescriptor(contentUri, "rw");
+			} catch (Exception e) {
+				try {
+					pfd = getContentResolver().openFileDescriptor(contentUri, "r");
+				} catch (Exception e2) {
+					return path;
+				}
+			}
+
+			if (pfd == null) {
+				return path;
+			}
+
+			openFileDescriptors.add(pfd);
+			int fd = pfd.getFd();
+			String fileName = getRealFileName(contentUri, path);
+			File bridgeDir = new File(getCacheDir(), "fd_" + fd);
+			if (!bridgeDir.exists() && !bridgeDir.mkdirs()) {
+				return path;
+			}
+
+			File bridgedFile = new File(bridgeDir, fileName);
+			if (bridgedFile.exists()) bridgedFile.delete();
+			android.system.Os.symlink("/proc/self/fd/" + fd, bridgedFile.getAbsolutePath());
+			return bridgedFile.getAbsolutePath();
+		} catch (Exception e) {
+			android.util.Log.e("Uae4Arm-SDL", "Error bridging " + path, e);
+		}
+		return path;
+	}
+
+	private String getRealFileName(Uri uri, String fallback) {
+		try (android.database.Cursor c = getContentResolver().query(uri, null, null, null, null)) {
+			if (c != null && c.moveToFirst()) {
+				int i = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
+				if (i >= 0) return c.getString(i);
+			}
+		} catch (Exception ignored) {}
+		int lastSlash = fallback.lastIndexOf('/');
+		return lastSlash >= 0 ? fallback.substring(lastSlash + 1) : fallback;
+	}
+
+	private boolean isBackTrapped() {
+		return SDLActivity.nativeGetHintBoolean(HINT_TRAP_BACK, false);
+	}
+
+	private void handleBackPress() {
+		if (virtualKeyboard != null && virtualKeyboard.isKeyboardVisible()) {
+			hideVirtualKeyboardFromNative();
+			return;
+		}
+		if (isBackTrapped()) {
+			showPauseMenu();
+		} else {
+			finish();
+		}
+	}
+
+	// Kept as "showPauseMenu" (rather than renamed) since native code invokes this exact method
+	// name by reflection (android_show_pause_menu() in android_keyboard_bridge.cpp, wired to the
+	// three-finger-tap gesture) and handleBackPress() below also calls it directly.
+	// There's no dialog/menu anymore — every action (keyboard, joypad, aspect, disk swap, pause)
+	// is its own always-available overlay icon, so this just toggles pause/resume.
+	public void showPauseMenu() {
+		togglePause();
+	}
+
+	private void togglePause() {
+		pauseMenuPausedEmulation = !pauseMenuPausedEmulation;
+		nativeSetPause(pauseMenuPausedEmulation);
+		runOnUiThread(() -> {
+			if (pauseButton != null) {
+				pauseButton.setImageResource(pauseMenuPausedEmulation
+					? android.R.drawable.ic_media_play
+					: android.R.drawable.ic_media_pause);
+			}
+			enterImmersiveMode();
+		});
+	}
+
+	private void showFloppyPicker(int drive) {
+		String title = getString(drive == 0 ? R.string.pause_menu_pick_df0 : R.string.pause_menu_pick_df1);
+		List<String> floppies = HostSupport.scanForFloppies(this);
+		if (floppies.isEmpty()) {
+			showEmptyMediaDialog(title, getString(R.string.quick_start_no_floppy_images));
+			return;
+		}
+
+		String[] labels = new String[floppies.size()];
+		for (int i = 0; i < floppies.size(); i++) {
+			labels[i] = new java.io.File(floppies.get(i)).getName();
+		}
+
+		new AlertDialog.Builder(this)
+			.setTitle(title)
+			.setItems(labels, (dialog, which) -> {
+				String path = floppies.get(which);
+				String translated = translatePathToFd(path);
+				nativeInsertFloppy(drive, translated);
+			})
+			.setNeutralButton(R.string.action_eject, (dialog, which) -> nativeEjectFloppy(drive))
+			.setNegativeButton(android.R.string.cancel, null)
+			.setOnDismissListener(d -> enterImmersiveMode())
+			.show();
+	}
+
+	private void showEmptyMediaDialog(String title, String message) {
+		new AlertDialog.Builder(this)
+			.setTitle(title)
+			.setMessage(message)
+			.setPositiveButton(android.R.string.ok, null)
+			.setNegativeButton(R.string.pause_menu_detailed_settings, (dialog, which) -> openDetailedSettings())
+			.setOnDismissListener(d -> enterImmersiveMode())
+			.show();
+	}
+
+	private final java.util.HashMap<Integer, Integer> kbButtonMap = new java.util.HashMap<>();
+
+	@Override
+	protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+		super.onActivityResult(requestCode, resultCode, data);
+		if (requestCode == 1001) {
+			applyControllerMappingsFromPrefs();
+		}
+	}
+
+	private void applyControllerMappingsFromPrefs() {
+		SharedPreferences prefs = getSharedPreferences("controller_map", MODE_PRIVATE);
+		int[] sdlToTarget = new int[21];
+		java.util.Arrays.fill(sdlToTarget, -1);
+		for (int t = 0; t < 7; t++) {
+			int androidKeycode = prefs.getInt("cd32_" + t, -1);
+			if (androidKeycode >= 0) {
+				int sdlBtn = ControllerMapActivity.androidToSdlButton(androidKeycode);
+				if (sdlBtn >= 0 && sdlBtn < sdlToTarget.length) {
+					sdlToTarget[sdlBtn] = t;
+				}
+			}
+		}
+		nativeApplyControllerMapping(sdlToTarget);
+
+		int oscMode = prefs.getInt("onscreen_mode", 0);
+		nativeSetOnScreenController(oscMode);
+
+		kbButtonMap.clear();
+		int[] extraButtons = {
+			KeyEvent.KEYCODE_BUTTON_SELECT,
+			KeyEvent.KEYCODE_BUTTON_L2,
+			KeyEvent.KEYCODE_BUTTON_R2,
+			KeyEvent.KEYCODE_BUTTON_THUMBL,
+			KeyEvent.KEYCODE_BUTTON_THUMBR
+		};
+		for (int i = 0; i < extraButtons.length; i++) {
+			int amigaKey = prefs.getInt("key_" + i, -1);
+			if (amigaKey >= 0) {
+				kbButtonMap.put(extraButtons[i], amigaKey);
+			}
+		}
+	}
+
+	@Override
+	public boolean dispatchKeyEvent(KeyEvent event) {
+		int keyCode = event.getKeyCode();
+		if (kbButtonMap.containsKey(keyCode)) {
+			int amigaKey = kbButtonMap.get(keyCode);
+			if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+				nativeSendAmigaKey(amigaKey, 1);
+			} else if (event.getAction() == KeyEvent.ACTION_UP) {
+				nativeSendAmigaKey(amigaKey, 0);
+			}
+			return true;
+		}
+		return super.dispatchKeyEvent(event);
+	}
+
+	private void resumeFromPauseMenuIfNeeded() {
+		if (pauseMenuPausedEmulation) {
+			nativeSetPause(false);
+			pauseMenuPausedEmulation = false;
+		}
+	}
+
+	private void openDetailedSettings() {
+		hideVirtualKeyboardFromNative();
+		HostSupport.writeCleanExitMarker(this);
+		// TODO: ask the Flutter launcher to open its settings route over the
+		// emulator MethodChannel; for now it returns to wherever it left off.
+		Intent intent = new Intent(this, MainActivity.class);
+		intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+		startActivity(intent);
+	}
+
+	private void openEditConfig() {
+		// Deliberately NOT writeCleanExitMarker() / FLAG_ACTIVITY_CLEAR_TOP here: this is a detour
+		// to edit the running game's config, not an exit. CLEAR_TOP would finish this activity
+		// (onDestroy() sets isRunning = false), which broke two things downstream: the "Reboot
+		// System" save button in the edit wizard couldn't tell the game was still running, and
+		// there was no live emulator instance left underneath to return to on back-press. Leaving
+		// this activity alive (just backgrounded) is what makes both of those work.
+		Intent intent = new Intent(this, MainActivity.class);
+		intent.putExtra(EXTRA_CONFIG_PATH, currentConfigPath);
+		intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+		startActivity(intent);
+	}
+
+	private static String extractConfigPath(Intent intent) {
+		if (intent == null) return null;
+		String[] args = intent.getStringArrayExtra("SDL_ARGS");
+		if (args == null) return null;
+		for (int i = 0; i < args.length - 1; i++) {
+			if ("--config".equals(args[i])) {
+				return args[i + 1];
+			}
+		}
+		return null;
+	}
+
+	private int currentOnScreenMode = 0; // 0=None, 1=Joystick, 2=CD32 Pad
+
+	private void toggleOnScreenController() {
+		currentOnScreenMode = (currentOnScreenMode + 1) % 3;
+		nativeSetOnScreenController(currentOnScreenMode);
+		getSharedPreferences("controller_map", MODE_PRIVATE).edit().putInt("onscreen_mode", currentOnScreenMode).apply();
+	}
+
+	private void ensureVirtualKeyboardOverlay() {
+		if (virtualKeyboard != null) {
+			return;
+		}
+		virtualKeyboard = new Uae4ArmVirtualKeyboard(this);
+		FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+		params.gravity = Gravity.BOTTOM;
+		addContentView(virtualKeyboard, params);
+	}
+
+	private boolean shouldShowKeyboardButton() {
+		String[] args = getArguments();
+		String configPath = null;
+		for (int i = 0; i < args.length - 1; i++) {
+			if ("--config".equals(args[i])) {
+				configPath = args[i + 1];
+				break;
+			}
+		}
+		if (configPath == null || configPath.isEmpty()) {
+			return true;
+		}
+
+		File configFile = new File(configPath);
+		if (!configFile.exists()) {
+			return true;
+		}
+
+		try {
+			List<String> lines = java.nio.file.Files.readAllLines(configFile.toPath());
+			Boolean androidKeyboardButtonEnabled = null;
+			Boolean nativeKeyboardEnabled = null;
+			for (String line : lines) {
+				String trimmed = line.trim();
+				if (trimmed.isEmpty() || trimmed.startsWith(";") || !trimmed.contains("=")) {
+					continue;
+				}
+				int eq = trimmed.indexOf('=');
+				String key = trimmed.substring(0, eq).trim();
+				String value = trimmed.substring(eq + 1).trim();
+				if (HostSupport.KEY_SHOW_ANDROID_KEYBOARD_BUTTON.equals(key)) {
+					androidKeyboardButtonEnabled = parseConfigBoolean(value, true);
+					continue;
+				}
+				if (HostSupport.KEY_DEFAULT_OSK.equals(key) || HostSupport.KEY_VIRTUAL_KEYBOARD_ENABLED.equals(key)) {
+					nativeKeyboardEnabled = parseConfigBoolean(value, true);
+				}
+			}
+			if (androidKeyboardButtonEnabled != null) {
+				return androidKeyboardButtonEnabled;
+			}
+			if (nativeKeyboardEnabled != null) {
+				return nativeKeyboardEnabled;
+			}
+		} catch (IOException ignored) {
+			return true;
+		}
+
+		return true;
+	}
+
+	private boolean parseConfigBoolean(String value, boolean defaultValue) {
+		if (value == null) {
+			return defaultValue;
+		}
+		if ("true".equalsIgnoreCase(value) || "yes".equalsIgnoreCase(value) || "1".equals(value)) {
+			return true;
+		}
+		if ("false".equalsIgnoreCase(value) || "no".equalsIgnoreCase(value) || "0".equals(value)) {
+			return false;
+		}
+		return defaultValue;
+	}
+
+	private void setupOverlayContainer() {
+		final float density = getResources().getDisplayMetrics().density;
+		overlayContainer = new LinearLayout(this);
+		overlayContainer.setOrientation(LinearLayout.VERTICAL);
+		overlayContainer.setPadding((int)(8 * density), (int)(8 * density), (int)(8 * density), (int)(8 * density));
+		
+		FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+			ViewGroup.LayoutParams.WRAP_CONTENT,
+			ViewGroup.LayoutParams.WRAP_CONTENT
+		);
+		params.gravity = Gravity.TOP | Gravity.END;
+		addContentView(overlayContainer, params);
+
+		// Hide overlays initially after a delay
+		resetAutoHideTimer();
+	}
+
+	/**
+	 * Cheap line-scan of the currently loaded .uae config for floppy drive presence, used to
+	 * decide whether to show the overlay disk-swap icon at all. This runs at onCreate time,
+	 * before the native core has necessarily parsed the config, so we can't rely on
+	 * nativeGetFloppyCount() yet (that's only safe once gameplay has actually started, e.g. from
+	 * the pause menu).
+	 */
+	private boolean configHasFloppyDrive(int drive) {
+		if (currentConfigPath == null) {
+			// No explicit config (e.g. quickstart floppy launch) - assume a floppy drive exists.
+			return true;
+		}
+		try {
+			File file = new File(currentConfigPath);
+			if (!file.exists()) return true;
+			String key = "floppy" + drive + "type=";
+			try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader(file))) {
+				String line;
+				while ((line = reader.readLine()) != null) {
+					if (line.startsWith(key)) {
+						String value = line.substring(key.length()).trim();
+						return !value.equals("-1");
+					}
+				}
+			}
+		} catch (IOException ignored) {
+		}
+		// floppy0type defaults to enabled (0) when unspecified; higher drives default to off.
+		return drive == 0;
+	}
+
+	private void resetAutoHideTimer() {
+		long now = android.os.SystemClock.uptimeMillis();
+		if (now - lastAutoHideResetUptimeMs < AUTO_HIDE_RESET_THROTTLE_MS) {
+			// Already reset recently (e.g. mid-drag on the on-screen joystick) - skip the UI-thread
+			// work below rather than doing it for every single MotionEvent.
+			return;
+		}
+		lastAutoHideResetUptimeMs = now;
+		uiHandler.removeCallbacks(hideOverlaysRunnable);
+		showOverlays();
+		uiHandler.postDelayed(hideOverlaysRunnable, 3000);
+	}
+
+	private void showOverlays() {
+		if (overlayContainer != null && overlayContainer.getVisibility() != View.VISIBLE) {
+			overlayContainer.setVisibility(View.VISIBLE);
+		}
+	}
+
+	private void hideOverlays() {
+		if (overlayContainer != null) overlayContainer.setVisibility(View.GONE);
+	}
+
+	@Override
+	public boolean onGenericMotionEvent(MotionEvent event) {
+		resetAutoHideTimer();
+		return super.onGenericMotionEvent(event);
+	}
+
+	@Override
+	public boolean onTouchEvent(MotionEvent event) {
+		resetAutoHideTimer();
+		return super.onTouchEvent(event);
+	}
+
+	// SDLActivity's game surface consumes touch events for gameplay input before they'd ever
+	// reach onTouchEvent() above, so relying on onTouchEvent alone means the overlay icons show
+	// once at startup and never come back once the auto-hide timer fires. dispatchTouchEvent()
+	// runs for every touch before any view gets a chance to consume it, so hook the timer here
+	// too (without altering dispatch) to keep the icons reachable throughout gameplay.
+	@Override
+	public boolean dispatchTouchEvent(MotionEvent event) {
+		resetAutoHideTimer();
+		return super.dispatchTouchEvent(event);
+	}
+
+	/**
+	 * Shared factory for overlay icon buttons: consistent (and touch-friendly) sizing, a
+	 * generous padded tap target well beyond the visible glyph, and vertical spacing suited to
+	 * the now-vertical overlay stack.
+	 */
+	private ImageButton addOverlayIconButton(int drawableRes, boolean isFirst, View.OnClickListener listener) {
+		final float density = getResources().getDisplayMetrics().density;
+		ImageButton button = new ImageButton(this);
+		button.setImageResource(drawableRes);
+		button.setColorFilter(0xFFFFFFFF);
+		button.setBackground(null);
+		button.setAlpha(0.75f);
+		int iconSize = (int) (28 * density);
+		int padding = (int) (10 * density);
+		button.setPadding(padding, padding, padding, padding);
+		button.setOnClickListener(v -> {
+			resetAutoHideTimer();
+			listener.onClick(v);
+		});
+
+		LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(iconSize + padding * 2, iconSize + padding * 2);
+		lp.setMargins(0, isFirst ? 0 : (int) (4 * density), 0, 0);
+		overlayContainer.addView(button, lp);
+		return button;
+	}
+
+	private void ensureKeyboardButtonOverlay() {
+		if (keyboardButton != null) return;
+		keyboardButton = addOverlayIconButton(android.R.drawable.ic_menu_edit, overlayContainer.getChildCount() == 0,
+			v -> toggleVirtualKeyboardFromNative());
+	}
+
+	private void ensureControllerButtonOverlay() {
+		if (controllerButton != null) return;
+		// Just toggles the on-screen joystick/CD32-pad overlay on/off (cycling None -> Joystick
+		// -> CD32 Pad), same as the pause menu's joypad entry. Port/device assignment (real
+		// mouse, external controller, or the touch joystick/mouse) now lives in the main
+		// Settings screen's "Controller Ports" section, not behind an in-game mapping screen.
+		controllerButton = addOverlayIconButton(R.drawable.ic_gamepad, overlayContainer.getChildCount() == 0,
+			v -> toggleOnScreenController());
+	}
+
+	private void ensureAspectButtonOverlay() {
+		if (aspectButton != null) return;
+		aspectButton = addOverlayIconButton(android.R.drawable.ic_menu_zoom, overlayContainer.getChildCount() == 0,
+			v -> nativeSetCorrectAspect(!nativeGetCorrectAspect()));
+	}
+
+	private void ensureFloppyButtonOverlay() {
+		if (floppyButton != null) return;
+		floppyButton = addOverlayIconButton(android.R.drawable.ic_menu_save, overlayContainer.getChildCount() == 0,
+			v -> showFloppySwapEntry());
+	}
+
+	private void showFloppySwapEntry() {
+		// Prefer the live native drive count (accurate once the core has actually booted);
+		// fall back to the config-file scan used at startup if it isn't available yet.
+		int floppyCount = nativeGetFloppyCount();
+		if (floppyCount <= 0) {
+			floppyCount = configHasFloppyDrive(1) ? 2 : (configHasFloppyDrive(0) ? 1 : 0);
+		}
+		if (floppyCount >= 2) {
+			new AlertDialog.Builder(this)
+				.setTitle(R.string.pause_menu_title)
+				.setItems(new String[]{
+					getString(R.string.pause_menu_swap_df0),
+					getString(R.string.pause_menu_swap_df1)
+				}, (dialog, which) -> showFloppyPicker(which))
+				.setNegativeButton(android.R.string.cancel, null)
+				.show();
+		} else {
+			showFloppyPicker(0);
+		}
+	}
+
+	private void ensurePauseButtonOverlay() {
+		if (pauseButton != null) return;
+		pauseButton = addOverlayIconButton(android.R.drawable.ic_media_pause, overlayContainer.getChildCount() == 0,
+			v -> showPauseMenu());
+	}
+
+	private void ensureEditConfigButtonOverlay() {
+		if (editConfigButton != null) return;
+		editConfigButton = addOverlayIconButton(android.R.drawable.ic_menu_preferences,
+			overlayContainer.getChildCount() == 0, v -> openEditConfig());
+	}
+
+	private void ensureRebootButtonOverlay() {
+		if (rebootButton != null) return;
+		rebootButton = addOverlayIconButton(android.R.drawable.ic_menu_revert,
+			overlayContainer.getChildCount() == 0, v -> nativeRestart());
+	}
+
+	private void ensureQuitButtonOverlay() {
+		if (quitButton != null) return;
+		quitButton = addOverlayIconButton(android.R.drawable.ic_menu_close_clear_cancel,
+			overlayContainer.getChildCount() == 0, v -> {
+				HostSupport.writeCleanExitMarker(Uae4ArmEmulatorActivity.this);
+				finish();
+			});
+	}
+
+	public void toggleVirtualKeyboardFromNative() {
+		runOnUiThread(() -> {
+			ensureVirtualKeyboardOverlay();
+			virtualKeyboard.toggle();
+			enterImmersiveMode();
+		});
+	}
+
+	public void hideVirtualKeyboardFromNative() {
+		runOnUiThread(() -> {
+			if (virtualKeyboard != null) {
+				virtualKeyboard.hide();
+			}
+			enterImmersiveMode();
+		});
+	}
+
+	public static native void nativeSendAmigaKey(int keycode, int pressed);
+	public static native void nativeSetPause(boolean paused);
+	public static native void nativeRestart();
+	public static native void nativeInsertFloppy(int drive, String path);
+	public static native void nativeEjectFloppy(int drive);
+	public static native void nativeSetOnScreenController(int mode);
+	public static native void nativeSetCorrectAspect(boolean enabled);
+	public static native boolean nativeGetCorrectAspect();
+	public static native int nativeGetFloppyCount();
+	public static native void nativeSetExternalControllerMode(int mode);
+	public static native void nativeApplyControllerMapping(int[] sdlToTarget);
+
+	private void registerBackHandler() {
+		if (Build.VERSION.SDK_INT >= 33) {
+			backCallback = this::handleBackPress;
+			getOnBackInvokedDispatcher().registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback);
+		}
+	}
+
+	@SuppressWarnings("deprecation")
+	@Override
+	public void onBackPressed() {
+		handleBackPress();
+	}
+
+	@Override
+	protected void onDestroy() {
+		isRunning = false;
+		resumeFromPauseMenuIfNeeded();
+		if (Build.VERSION.SDK_INT >= 33 && backCallback != null) {
+			getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
+			backCallback = null;
+		}
+		final boolean finishing = isFinishing();
+		if (finishing) {
+			HostSupport.writeCleanExitMarker(this);
+			HostSupport.clearSessionMarker(this);
+		}
+		super.onDestroy();
+		for (ParcelFileDescriptor pfd : openFileDescriptors) {
+			try {
+				pfd.close();
+			} catch (IOException ignored) {}
+		}
+		openFileDescriptors.clear();
+		if (finishing) {
+			android.os.Process.killProcess(android.os.Process.myPid());
+		}
+	}
+
+	private void enterImmersiveMode() {
+		WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+		WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+		controller.hide(WindowInsetsCompat.Type.statusBars() | WindowInsetsCompat.Type.navigationBars());
+		controller.setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+		getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+	}
+}

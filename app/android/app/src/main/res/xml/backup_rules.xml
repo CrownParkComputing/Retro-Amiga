@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Pre-Android 12 (API < 31) backup rules.
+    Backs up user configurations and preferences.
+-->
+<full-backup-content>
+    <include domain="external" path="conf/" />
+    <include domain="external" path="controllers/" />
+    <include domain="sharedpref" path="uae4arm_prefs.xml" />
+    <include domain="sharedpref" path="amiberry_prefs.xml" />
+</full-backup-content>

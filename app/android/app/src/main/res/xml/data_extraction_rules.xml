@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android 12+ (API 31+) backup and device transfer rules.
+    Backs up user configurations and preferences.
+    Excludes extracted assets (re-extracted on first launch) and session markers.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="external" path="conf/" />
+        <include domain="external" path="controllers/" />
+        <include domain="sharedpref" path="uae4arm_prefs.xml" />
+        <include domain="sharedpref" path="amiberry_prefs.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="external" path="conf/" />
+        <include domain="external" path="controllers/" />
+        <include domain="sharedpref" path="uae4arm_prefs.xml" />
+        <include domain="sharedpref" path="amiberry_prefs.xml" />
+    </device-transfer>
+</data-extraction-rules>
