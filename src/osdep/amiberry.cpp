@@ -100,8 +100,8 @@
 #include <gpiod.h>
 #endif
 
-// UAE4ARM 2026: Global stubs for removed GUI components
-#ifndef USE_IMGUI
+// UAE4ARM 2026: Global stubs for the removed native GUI. The Flutter host owns
+// all configuration UI; the core never draws its own panels.
 bool joystick_refresh_needed = false;
 bool gui_running = false;
 void gui_restart() {}
@@ -118,23 +118,7 @@ void target_startup_msg(const char*, const char*) {}
 std::string get_json_timestamp(const std::string&) { return ""; }
 std::string get_xml_timestamp(const std::string&) { return ""; }
 #endif
-#endif
 
-// Stubs for ImGuiFileDialog if referenced elsewhere
-struct ImVec2 { float x, y; };
-namespace IGFD {
-    class FileDialog {
-    public:
-        FileDialog() {}
-        ~FileDialog() {}
-        void Display(const std::string&, int, ImVec2, ImVec2) {}
-        bool IsOk() const { return false; }
-        void Close() {}
-        bool IsOpened(const std::string&) const { return false; }
-        std::string GetFilePathName(int) { return ""; }
-        std::string GetCurrentPath() { return ""; }
-    };
-}
 struct gpiod_chip* chip;
 #if defined(GPIOD_VERSION_MAJOR) && GPIOD_VERSION_MAJOR >= 2
 struct gpiod_line_request* gpio_request;

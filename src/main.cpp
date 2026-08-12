@@ -1586,17 +1586,6 @@ static int real_main2 (int argc, TCHAR **argv)
 	else if (restart_program == 3)
 		no_gui = false;
 	restart_program = 0;
-#ifdef USE_IMGUI
-		const auto err = gui_init ();
-		copy_prefs(&changed_prefs, &currprefs);
-		set_config_changed ();
-		if (err == -1) {
-			write_log (_T("Failed to initialize the GUI\n"));
-			return -1;
-		} else if (err == -2) {
-			return 1;
-		}
-#endif
 
 #ifndef LIBRETRO
 	if (amiberry_options.update_check && get_update_method() != UpdateMethod::DISABLED) {

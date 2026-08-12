@@ -615,11 +615,6 @@ if(DEFINED sdl3_image_SOURCE_DIR)
     target_include_directories(${PROJECT_NAME} PRIVATE "${sdl3_image_SOURCE_DIR}/include")
 endif()
 
-# ImGui support
-if (USE_IMGUI)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE USE_IMGUI)
-endif()
-
 set(libmt32emu_SHARED FALSE)
 add_subdirectory(external/mt32emu)
 add_subdirectory(external/floppybridge)
@@ -682,19 +677,6 @@ list(APPEND AMIBERRY_LIBS log android)
 list(REMOVE_ITEM AMIBERRY_LIBS SDL3 pthread)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE ${AMIBERRY_LIBS})
-
-# ImGui support
-if(USE_IMGUI)
-    if(USE_OPENGL)
-        set(IMGUI_USE_OPENGL ON CACHE BOOL "Build ImGui OpenGL3 backend" FORCE)
-    endif()
-    if(USE_VULKAN)
-        set(IMGUI_USE_VULKAN ON CACHE BOOL "Build ImGui Vulkan backend" FORCE)
-    endif()
-    set(IMGUI_USE_SDL3 ON CACHE BOOL "Build ImGui SDL3 backend" FORCE)
-    add_subdirectory(external/imgui)
-    target_link_libraries(${PROJECT_NAME} PRIVATE imgui)
-endif()
 
 # capsimage and floppybridge are plugins (not linked into amiberry) but are
 # copied by post-build commands. Explicit dependencies ensure they are built.

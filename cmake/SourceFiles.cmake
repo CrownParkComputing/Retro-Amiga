@@ -325,36 +325,6 @@ endif()
 
 list(APPEND SOURCE_FILES ${SLIRP_SOURCES})
 
-set(IMGUI_GUI_FILES
-		src/osdep/imgui/about.cpp
-		src/osdep/imgui/chipset.cpp
-		src/osdep/imgui/adv_chipset.cpp
-		src/osdep/imgui/controller_map.cpp
-		src/osdep/imgui/configurations.cpp
-		src/osdep/imgui/cpu.cpp
-		src/osdep/imgui/custom.cpp
-		src/osdep/imgui/diskswapper.cpp
-		src/osdep/imgui/display.cpp
-		src/osdep/imgui/filter.cpp
-		src/osdep/imgui/expansions.cpp
-		src/osdep/imgui/floppy.cpp
-		src/osdep/imgui/hd.cpp
-		src/osdep/imgui/hwinfo.cpp
-		src/osdep/imgui/input.cpp
-		src/osdep/imgui/io.cpp
-		src/osdep/imgui/misc.cpp
-		src/osdep/imgui/paths.cpp
-		src/osdep/imgui/prio.cpp
-		src/osdep/imgui/quickstart.cpp
-		src/osdep/imgui/ram.cpp
-		src/osdep/imgui/rom.cpp
-		src/osdep/imgui/rtg.cpp
-		src/osdep/imgui/savestates.cpp
-		src/osdep/imgui/sound.cpp
-		src/osdep/imgui/themes.cpp
-		src/osdep/imgui/virtualkeyboard.cpp
-		src/osdep/imgui/whdload.cpp
-)
 
 set(PCEM_SOURCE_FILES
         src/pcem/386.cpp
@@ -416,18 +386,6 @@ set(PCEM_SOURCE_FILES
         src/pcem/x87_timings.cpp
 )
 
-# ImGui GUI (Manual control for UAE4ARM 2026)
-option(USE_IMGUI "Enable native Amiberry ImGui GUI" OFF)
-if (USE_IMGUI)
-    message(STATUS "Using ImGui for GUI")
-    list(APPEND SOURCE_FILES external/ImGuiFileDialog/ImGuiFileDialog.cpp)
-    list(APPEND SOURCE_FILES src/osdep/gui/main_window.cpp)
-    list(APPEND SOURCE_FILES src/osdep/file_dialog.cpp)
-    list(APPEND SOURCE_FILES ${IMGUI_GUI_FILES})
-else()
-    message(STATUS "Native Amiberry GUI disabled for UAE4Arm 2026")
-endif()
-
 if (USE_PCEM)
     message(STATUS "PCem support enabled")
     list(APPEND SOURCE_FILES ${PCEM_SOURCE_FILES})
@@ -439,10 +397,6 @@ endif()
 list(APPEND SOURCE_FILES external/floppybridge/src/floppybridge_lib.cpp)
 
 add_library(${PROJECT_NAME} SHARED ${SOURCE_FILES})
-
-if (USE_IMGUI)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE USE_IMGUI)
-endif()
 
 # Pre-release flag (integer, usable in C if statements)
 if(VERSION_PRE_RELEASE)
@@ -500,6 +454,3 @@ target_include_directories(${PROJECT_NAME} PRIVATE
         src/ppc/pearpc
         external/floppybridge/src
 )
-
-# ImGui include dirs (always enabled)
-target_include_directories(${PROJECT_NAME} PRIVATE external/imgui external/ImGuiFileDialog)
