@@ -85,11 +85,19 @@ class Emulator {
     // about WHDLoad and, on iOS, could not even be left. Better to say so
     // before starting a machine that cannot run the game.
     if (whdloadArchive.isNotEmpty) {
-      final WhdloadStatus status = await WhdloadSupport.status();
+      WhdloadStatus status = await WhdloadSupport.status();
+      if (!status.ready) {
+        // The boot files ship with the app, so the first WHDLoad game a person
+        // plays installs them rather than failing and telling them to go to
+        // Settings. Only what is genuinely missing after that is worth
+        // stopping for - a Kickstart, which is theirs to supply.
+        await WhdloadSupport.installFromBundle();
+        status = await WhdloadSupport.status();
+      }
       if (!status.ready) {
         throw Exception(
-          'This game needs the WHDLoad boot files, which are not installed. '
-          'Settings > WHDLoad installs them from a boot archive.',
+          'This game needs ${status.missing.map((WhdloadRequirement r) => r.name).join(" and ")}. '
+          'Settings > WHDLoad shows what is missing.',
         );
       }
     }

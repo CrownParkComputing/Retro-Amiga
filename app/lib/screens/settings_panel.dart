@@ -252,30 +252,35 @@ class _SettingsPanelState extends State<SettingsPanel> {
                         ? 'Ready to run .lha games'
                         : 'Not ready - ${_whdload.missing.length} missing',
                   ),
-                  subtitle: Text(
-                    Platform.isAndroid
-                        ? 'Installs from a boot archive already on this device.'
-                        : 'Choose a WHDLoad boot archive to install from.',
+                  subtitle: const Text(
+                    'WHDLoad ships with the app. Choose your own boot archive '
+                    'instead if you would rather use that one.',
                   ),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
-                      if (Platform.isAndroid)
-                        TextButton(
-                          onPressed: _busy
-                              ? null
-                              : () => _run(() async {
-                                    final WhdloadStatus status =
-                                        await WhdloadSupport.install(_index);
-                                    return status.ready
-                                        ? 'WHDLoad is ready.'
-                                        : status.bootArchiveInstalled
-                                            ? 'Boot files installed, but no '
-                                                'Kickstart could be placed.'
-                                            : 'No boot archive found.';
-                                  }),
-                          child: Text(_whdload.ready ? 'Reinstall' : 'Install'),
-                        ),
+                      TextButton(
+                        onPressed: _busy
+                            ? null
+                            : () => _run(() async {
+                                  // The app's own copy first; a boot archive
+                                  // on the device only if this is Android,
+                                  // where there might be a newer one.
+                                  await WhdloadSupport.installFromBundle();
+                                  final WhdloadStatus status = Platform.isAndroid
+                                      ? await WhdloadSupport.install(_index)
+                                      : await WhdloadSupport.installAfterBundle(
+                                          _index);
+                                  return status.ready
+                                      ? 'WHDLoad is ready.'
+                                      : status.bootArchiveInstalled
+                                          ? 'Boot files installed, but no '
+                                              'Kickstart could be placed.'
+                                          : 'The boot files could not be '
+                                              'installed.';
+                                }),
+                        child: Text(_whdload.ready ? 'Reinstall' : 'Install'),
+                      ),
                       TextButton(
                         onPressed: _busy ? null : () => _run(_chooseBootArchive),
                         child: const Text('Choose'),

@@ -25,6 +25,7 @@ final class EmulatorControls {
 
   func show() {
     guard window == nil else { return }
+    target.controls = self
     guard let scene = UIApplication.shared.connectedScenes
       .compactMap({ $0 as? UIWindowScene })
       .first(where: { $0.activationState == .foregroundActive })
@@ -32,8 +33,9 @@ final class EmulatorControls {
     else { return }
 
     let window = PassthroughWindow(windowScene: scene)
-    // Above everything SDL puts up, including its own alerts.
-    window.windowLevel = .alert + 1
+    // Above everything SDL puts up, including its own alerts. Spelled through
+    // rawValue because UIWindow.Level has no arithmetic of its own.
+    window.windowLevel = UIWindow.Level(rawValue: UIWindow.Level.alert.rawValue + 1)
     window.backgroundColor = .clear
     window.isHidden = false
 
@@ -41,12 +43,8 @@ final class EmulatorControls {
     controller.view.backgroundColor = .clear
     window.rootViewController = controller
 
-    let pause = makeButton(systemName: "pause.fill") { [weak self] in
-      self?.togglePause()
-    }
-    let quit = makeButton(systemName: "xmark") { [weak self] in
-      self?.onQuit?()
-    }
+    let pause = makeButton(systemName: "pause.fill", action: #selector(Target.pause))
+    let quit = makeButton(systemName: "xmark", action: #selector(Target.quit))
     pauseButton = pause
 
     let stack = UIStackView(arrangedSubviews: [pause, quit])
@@ -72,14 +70,28 @@ final class EmulatorControls {
     paused = false
   }
 
-  private func togglePause() {
+  fileprivate func togglePause() {
     paused.toggle()
     pauseButton?.setImage(
       UIImage(systemName: paused ? "play.fill" : "pause.fill"), for: .normal)
     onPause?(paused)
   }
 
-  private func makeButton(systemName: String, action: @escaping () -> Void) -> UIButton {
+  /// The button targets.
+  ///
+  /// Target-action rather than UIAction: this app deploys to iOS 13 and
+  /// UIButton.addAction arrived in 14, which fails the build rather than
+  /// degrading.
+  private final class Target: NSObject {
+    weak var controls: EmulatorControls?
+
+    @objc func pause() { controls?.togglePause() }
+    @objc func quit() { controls?.onQuit?() }
+  }
+
+  private let target = Target()
+
+  private func makeButton(systemName: String, action: Selector) -> UIButton {
     let button = UIButton(type: .system)
     button.setImage(UIImage(systemName: systemName), for: .normal)
     button.tintColor = .white
@@ -92,7 +104,7 @@ final class EmulatorControls {
     button.translatesAutoresizingMaskIntoConstraints = false
     button.widthAnchor.constraint(equalToConstant: 44).isActive = true
     button.heightAnchor.constraint(equalToConstant: 44).isActive = true
-    button.addAction(UIAction { _ in action() }, for: .touchUpInside)
+    button.addTarget(target, action: action, for: .touchUpInside)
     return button
   }
 }

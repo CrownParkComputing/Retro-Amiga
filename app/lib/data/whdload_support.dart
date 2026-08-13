@@ -303,6 +303,47 @@ class WhdloadSupport {
     }
   }
 
+  /// Installs the boot files the app ships with.
+  ///
+  /// WHDLoad itself is freely distributable, so there is no reason to make
+  /// anyone go and find it: the archive and the game database are assets in
+  /// the app. This is what makes a .lha game work on iOS, where there is no
+  /// storage to search and no other app to borrow from.
+  ///
+  /// Only writes what is missing, so a boot archive somebody installed
+  /// themselves is left alone.
+  static Future<bool> installFromBundle() async {
+    final Directory? dir = await _whdBootDirectory();
+    if (dir == null) return false;
+    try {
+      final File archive = File('${dir.path}/boot-data.zip');
+      if (!archive.existsSync()) {
+        final ByteData data =
+            await rootBundle.load('assets/whdboot/boot-data.zip');
+        archive.writeAsBytesSync(data.buffer.asUint8List(), flush: true);
+      }
+
+      final Directory gameData = Directory('${dir.path}/game-data');
+      if (!gameData.existsSync()) gameData.createSync(recursive: true);
+      final File database = File('${gameData.path}/whdload_db.xml');
+      if (!database.existsSync()) {
+        final ByteData data =
+            await rootBundle.load('assets/whdboot/whdload_db.xml');
+        database.writeAsBytesSync(data.buffer.asUint8List(), flush: true);
+      }
+      return true;
+    } on Object {
+      return false;
+    }
+  }
+
+  /// Places Kickstarts and re-reads the status, for hosts that have just had
+  /// the bundled boot files written and cannot search storage for more.
+  static Future<WhdloadStatus> installAfterBundle(MediaIndex index) async {
+    await installKickstarts(index);
+    return status();
+  }
+
   /// Copies [sourcePath] into place as the boot archive.
   ///
   /// Copied rather than referenced: the core opens this by a fixed path, and a
