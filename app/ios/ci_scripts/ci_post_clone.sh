@@ -51,9 +51,16 @@ flutter pub get
 echo "--- generating the Xcode config Flutter's build phases rely on"
 flutter build ios --release --no-codesign --config-only
 
-echo "--- pod install"
+# Plugin linkage. This project resolves file_picker and shared_preferences
+# through Swift Package Manager, not CocoaPods, so there is normally no Podfile
+# and `pod install` would fail with "no Podfile found". Run it only if
+# --config-only actually produced one, so the script survives either mechanism.
 cd ios
-# This project has no committed Podfile; --config-only above generates one.
-pod install --repo-update
+if [ -f Podfile ]; then
+  echo "--- pod install"
+  pod install --repo-update
+else
+  echo "note: no Podfile -- plugins resolve via Swift Package Manager"
+fi
 
 echo "--- ready for xcodebuild"
