@@ -85,6 +85,23 @@
 		<integer>1</integer>
 		<integer>2</integer>
 	</array>
+	<!-- The app only ever opens files you pick yourself (ADFs, Kickstart
+	     ROMs, WHDLoad archives) through the system file picker. It has no
+	     camera, photo or location feature. These three strings exist because
+	     file_picker links against those frameworks, and App Store validation
+	     rejects the upload without them (warning 90683). A linked framework
+	     is enough; whether the app uses it is irrelevant. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Amiga-Retro does not use the camera. This permission is only requested if you choose to import a file from a source that offers the camera.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Amiga-Retro only reads a file you select yourself when importing disk images, Kickstart ROMs or WHDLoad archives. Nothing is read from your library without you picking it.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Amiga-Retro does not use your location and never requests it. This entry is required because a bundled file-picker component links against the location framework.</string>
+	<!-- Declared so testers are not gated on answering the encryption
+	     question by hand on every build. The app uses no encryption beyond
+	     the platform's own HTTPS. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>UILaunchScreen</key>
