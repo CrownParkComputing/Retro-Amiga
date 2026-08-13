@@ -1728,6 +1728,7 @@ static int real_main2 (int argc, TCHAR **argv)
 		currprefs.produce_sound = 0;
 	}
 	inputdevice_init ();
+	write_log(_T("startup: input ready\n"));
 
 	copy_prefs(&currprefs, &changed_prefs);
 	inputdevice_updateconfig(&currprefs, &changed_prefs);
@@ -1757,8 +1758,11 @@ static int real_main2 (int argc, TCHAR **argv)
 #ifdef JIT
 	compiler_init();
 #endif
+	write_log(_T("startup: compiler ready\n"));
 #ifdef NATMEM_OFFSET
+	write_log(_T("startup: reserving emulated memory\n"));
 	if (!init_shm ()) {
+		write_log(_T("startup: init_shm failed\n"));
 		if (currprefs.start_gui)
 			uae_restart(&currprefs, -1, nullptr);
 		return 0;
@@ -1774,7 +1778,9 @@ static int real_main2 (int argc, TCHAR **argv)
 #endif
 	uaerandomizeseed();
 	copy_prefs(&currprefs, &changed_prefs);
+	write_log(_T("startup: entering target_run\n"));
 	target_run ();
+	write_log(_T("startup: target_run returned\n"));
 	/* force sound settings change */
 	currprefs.produce_sound = 0;
 
@@ -1786,8 +1792,10 @@ static int real_main2 (int argc, TCHAR **argv)
 #ifdef DEBUGGER
 	disasm_init();
 #endif
+	write_log(_T("startup: resetting memory\n"));
 	memory_hardreset (2);
 	memory_reset ();
+	write_log(_T("startup: memory ready\n"));
 
 #ifdef AUTOCONFIG
 	native2amiga_install ();

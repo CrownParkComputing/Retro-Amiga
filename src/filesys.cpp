@@ -7511,9 +7511,13 @@ void filesys_reset (void)
 	if (isrestore ())
 		return;
 	load_injected_icons();
+	write_log(_T("filesys_reset: freeing old units\n"));
 	filesys_reset2 ();
+	write_log(_T("filesys_reset: rebuilding mountinfo\n"));
 	initialize_mountinfo ();
+	write_log(_T("filesys_reset: shellexecute\n"));
 	free_shellexecute();
+	write_log(_T("filesys_reset: done\n"));
 }
 
 static void filesys_prepare_reset2 (void)
@@ -7525,6 +7529,7 @@ static void filesys_prepare_reset2 (void)
 #ifdef UAE_FILESYS_THREADS
 	for (i = 0; i < MAX_FILESYSTEM_UNITS; i++) {
 		if (uip[i].open > 0 && uip[i].unit_pipe != 0) {
+			write_log(_T("filesys: unit %d going down (open=%d pipe=%p)\n"), i, uip[i].open, uip[i].unit_pipe);
 			uae_sem_init (&uip[i].reset_sync_sem, 0, 0);
 			uip[i].reset_state = FS_GO_DOWN;
 			/* send death message */
@@ -7532,8 +7537,10 @@ static void filesys_prepare_reset2 (void)
 			write_comm_pipe_int(uip[i].unit_pipe, 0, 0);
 			write_comm_pipe_int(uip[i].unit_pipe, 0, 0);
 			write_comm_pipe_int(uip[i].unit_pipe, 0, 1);
+			write_log(_T("filesys: unit %d death message sent, waiting\n"), i);
 			uae_sem_wait (&uip[i].reset_sync_sem);
 			uae_end_thread (&uip[i].tid);
+			write_log(_T("filesys: unit %d down\n"), i);
 		}
 	}
 #endif
@@ -9503,6 +9510,7 @@ void filesys_vsync (void)
 
 void filesys_cleanup(void)
 {
+	write_log(_T("filesys: cleanup begins\n"));
 	filesys_prepare_reset();
 	filesys_reset2();
 	filesys_free_handles();
@@ -9512,6 +9520,7 @@ void filesys_cleanup(void)
 	uae_sem_destroy(&shellexec_sem);
 	shell_execute_data = 0;
 	free_shellexecute();
+	write_log(_T("filesys: cleanup done\n"));
 }
 
 void filesys_install (void)

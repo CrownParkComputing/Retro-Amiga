@@ -274,13 +274,16 @@ void devices_reset(int hardreset)
 	ethernet_reset();
 	reset_traps();
 #ifdef FILESYS
+	write_log(_T("devices_reset: filesys prepare\n"));
 	filesys_prepare_reset();
+	write_log(_T("devices_reset: filesys reset\n"));
 	filesys_reset();
 #endif
 #if defined (BSDSOCKET)
 	bsdlib_reset();
 #endif
 #ifdef FILESYS
+	write_log(_T("devices_reset: filesys threads\n"));
 	filesys_start_threads();
 	hardfile_reset();
 #endif
