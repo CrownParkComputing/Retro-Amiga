@@ -88,7 +88,12 @@ class HostPaths {
   /// every launch would be worse than never showing it.
   static Future<String> buildStamp() async {
     try {
-      return await _channel.invokeMethod<String>('appBuildStamp') ?? '';
+      final String stamp =
+          await _channel.invokeMethod<String>('appBuildStamp') ?? '';
+      // A host that answers with a placeholder is a host that cannot tell.
+      // iOS answered "0" for a while, which compares equal to itself for ever
+      // and turned the walkthrough off without saying so.
+      return (stamp.isEmpty || stamp == '0') ? '' : stamp;
     } on MissingPluginException {
       return '';
     } on PlatformException {

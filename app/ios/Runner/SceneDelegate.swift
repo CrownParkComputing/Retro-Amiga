@@ -85,10 +85,24 @@ class SceneDelegate: FlutterSceneDelegate {
       // is stamped when the app is written to the device, and needs no
       // version number anybody has to remember to bump.
       case "appBuildStamp":
-        let url = Bundle.main.bundleURL
-        let values = try? url.resourceValues(forKeys: [.contentModificationDateKey])
-        let stamp = values?.contentModificationDate ?? Date(timeIntervalSince1970: 0)
-        result(String(Int(stamp.timeIntervalSince1970)))
+        // The executable's date, read through FileManager. The bundle URL's
+        // resourceValues came back empty here and the fallback was epoch zero
+        // - a constant, which compares equal to itself for ever and quietly
+        // meant the walkthrough never appeared again.
+        let paths = [Bundle.main.executablePath, Bundle.main.bundlePath].compactMap { $0 }
+        var stamp = 0
+        for path in paths {
+          if let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+             let date = attributes[.modificationDate] as? Date {
+            stamp = Int(date.timeIntervalSince1970)
+            if stamp > 0 { break }
+          }
+        }
+        let version = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
+        // Empty rather than a placeholder when nothing could be read: the
+        // launcher treats "cannot tell" as "not a new build", and a made-up
+        // value would be indistinguishable from a real one.
+        result(stamp > 0 ? "\(version)-\(stamp)" : "")
 
       // Asked of the host rather than path_provider. That package's iOS
       // implementation binds through package:objective_c FFI, whose native

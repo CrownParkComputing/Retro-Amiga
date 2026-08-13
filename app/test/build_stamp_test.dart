@@ -29,6 +29,16 @@ void main() {
     expect(await AppPrefs.isNewBuild(), isTrue);
   });
 
+  test('a placeholder stamp is treated as "cannot tell"', () async {
+    // iOS answered "0" for a while - a constant that compares equal to itself
+    // for ever, which turned the walkthrough off and said nothing about it.
+    stamp = '0';
+    expect(await AppPrefs.isNewBuild(), isFalse);
+    await AppPrefs.rememberBuild();
+    stamp = '1.0-1786620000';
+    expect(await AppPrefs.isNewBuild(), isTrue);
+  });
+
   test('a host that cannot say is not treated as new', () async {
     // Otherwise the walkthrough would come back on every single launch, which
     // is worse than never showing it.
