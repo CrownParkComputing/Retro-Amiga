@@ -61,13 +61,33 @@ static inline bool osdep_platform_init_sdl()
 	SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
 #endif
 
+#ifndef AMIBERRY_IOS
+	/* Not on iOS: the host runs the core inside its own process and expects to
+	   run it again, and SDL's UIKit backend does not come back from SDL_Quit -
+	   a second SDL_Init blocks. See osdep_platform_shutdown_sdl. */
 	(void)atexit(SDL_Quit);
+#endif
 	return true;
 }
 
 static inline void osdep_platform_shutdown_sdl()
 {
+#ifdef AMIBERRY_IOS
+	/* Deliberately left initialised.
+	 *
+	 * On iOS the launcher and the emulator share a process, so leaving a game
+	 * has to leave something that can start another one. SDL's UIKit backend
+	 * cannot be re-initialised: after SDL_Quit the next SDL_Init never
+	 * returns, which on a host that runs the core on the main thread hangs the
+	 * whole app. The same test on Linux runs the core twice with a real window
+	 * without complaint, which is what places the fault in that backend rather
+	 * than in the emulator.
+	 *
+	 * The window is destroyed by the graphics shutdown either way; what stays
+	 * is SDL's own initialisation, which the next run then reuses. */
+#else
 	SDL_Quit();
+#endif
 }
 
 static inline void osdep_platform_init_ui()

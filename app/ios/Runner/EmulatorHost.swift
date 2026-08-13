@@ -63,12 +63,13 @@ final class EmulatorHost {
     if running {
       throw HostError.message("Emulation is already running.")
     }
-    // A second game is a restart of the core that is already running, not a
-    // second run: the core cannot be run twice in one process.
-    if hasRun {
-      try restart(args: args)
-      return
-    }
+    // A second game runs the core again. That used to hang: SDL_Quit at the
+    // end of a run tears down a UIKit backend that never comes back, so the
+    // next SDL_Init blocked and took the app with it. The core keeps SDL
+    // initialised on iOS now (osdep_platform_shutdown_sdl), which is what
+    // lets this run again at all - a Linux harness runs the same core twice
+    // with a real window, which is how that was pinned to the backend rather
+    // than to the emulator.
     guard let handle = load() else {
       throw HostError.message("The emulator core could not be loaded.")
     }
@@ -154,9 +155,12 @@ final class EmulatorHost {
   /// which by then was SDL's own. The launcher's window is held explicitly
   /// now, and SDL's is put out of the way rather than merely hidden.
   func quit() {
-    setPaused(true)
-    setEmulationVisible(false)
-
+    // Ends the core. Pausing it instead leaves the launcher untouchable, and
+    // an app that has to be force-quit is worse than one that has to be
+    // reopened between games.
+    if let fn = symbol("uae4arm_host_quit") {
+      unsafeBitCast(fn, to: VoidFn.self)()
+    }
     controls.hide()
     // SDL's window is hidden but still in the scene, and a hidden window that
     // is still key keeps taking the touches. Everything that is not the

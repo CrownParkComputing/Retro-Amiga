@@ -413,9 +413,15 @@ endif()
 # FloppyBridge plugin source
 list(APPEND SOURCE_FILES external/floppybridge/src/floppybridge_lib.cpp)
 
-if(ANDROID OR IOS)
+if(ANDROID OR IOS OR UAE4ARM_CORE_LIBRARY)
     # Mobile hosts load the core as a library rather than launching a binary:
     # the Flutter app owns the process, and the emulator runs inside it.
+    #
+    # UAE4ARM_CORE_LIBRARY builds the same shape on a desktop. That is how the
+    # embedded core can be exercised where a debugger can be attached - a host
+    # that runs the core in its own process behaves differently from one that
+    # launches a binary, and those differences are otherwise only reproducible
+    # on a phone.
     add_library(${PROJECT_NAME} SHARED ${SOURCE_FILES})
     if(IOS)
         # Without this the install name is the absolute build path, which does
