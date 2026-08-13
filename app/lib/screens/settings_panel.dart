@@ -2,6 +2,9 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../data/ags_setup.dart';
+import '../data/file_category.dart';
+import '../data/amiga_model.dart';
 import '../data/media_library.dart';
 import '../data/media_root.dart';
 import '../data/whdload_support.dart';
@@ -29,6 +32,85 @@ class _SettingsPanelState extends State<SettingsPanel> {
 
   bool _busy = false;
   String? _notice;
+
+  List<AgsInstall> _ags = <AgsInstall>[];
+
+  /// Builds a config for an AGS set, with a Kickstart chosen the same way the
+  /// wizard chooses one.
+  Future<String> _setUpAgs(AgsInstall install) async {
+    final List<MediaFile> roms = _index.of(FileCategory.roms);
+    final MediaFile? rom = RomPicker.kickstartFor(AmigaModel.a1200, roms);
+    if (rom == null) {
+      return 'No Kickstart to boot it with. Add a 3.1 ROM and scan again.';
+    }
+    await AgsSetup.createConfig(install, rom.path);
+    return '${install.name}: ${install.driveCount} drives'
+        '${install.sharedFolder.isEmpty ? '' : ' and a shared folder'} '
+        'set up. It is on the Configs shelf.';
+  }
+
+  Future<void> _findAgs() async {
+    final List<AgsInstall> found = await AgsSetup.find(_index);
+    if (!mounted) return;
+    setState(() {
+      _ags = found;
+      _notice = found.isEmpty
+          ? 'No AGS set found. It is a folder of four or more HDF files - '
+              'use Browse if it is somewhere unusual.'
+          : null;
+    });
+  }
+
+  Future<void> _browseForAgs() async {
+    final TextEditingController controller = TextEditingController(
+      text: _root.isEmpty ? '/storage' : _root,
+    );
+    final String? folder = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('AGS folder'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            const Text(
+              'The folder holding Workbench.hdf, Games.hdf and the rest.',
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              decoration: const InputDecoration(
+                hintText: '/storage/XXXX-XXXX/AGS_UAE',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(controller.text),
+            child: const Text('Use this'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (folder == null || folder.trim().isEmpty) return;
+
+    final AgsInstall? install = AgsSetup.inspect(folder.trim());
+    if (!mounted) return;
+    if (install == null) {
+      setState(() => _notice =
+          'No hard drives in ${folder.trim()} - an AGS set is four or more.');
+      return;
+    }
+    setState(() => _ags = <AgsInstall>[install]);
+  }
 
   @override
   void initState() {
@@ -198,6 +280,54 @@ class _SettingsPanelState extends State<SettingsPanel> {
             ),
           ),
         ],
+
+        const _Header('AGS'),
+        Card(
+          color: AmigaColors.card,
+          child: Column(
+            children: <Widget>[
+              ListTile(
+                leading: const Icon(Icons.grid_view_outlined),
+                title: const Text('Amiga Game Selector'),
+                subtitle: const Text(
+                  'A folder of HDFs and a shared folder, mounted as one '
+                  'machine. Setting it up by hand means ten drives in the '
+                  'right order.',
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    TextButton(
+                      onPressed: _busy ? null : _browseForAgs,
+                      child: const Text('Browse'),
+                    ),
+                    TextButton(
+                      onPressed: _busy ? null : _findAgs,
+                      child: const Text('Find'),
+                    ),
+                  ],
+                ),
+              ),
+              for (final AgsInstall install in _ags)
+                ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.storage, size: 18),
+                  title: Text(install.name),
+                  subtitle: Text(
+                    '${install.driveCount} drives'
+                    '${install.sharedFolder.isEmpty ? '' : ' + shared folder'}'
+                    '  ·  boots ${install.bootDrive.split('/').last}',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  trailing: TextButton(
+                    onPressed:
+                        _busy ? null : () => _run(() => _setUpAgs(install)),
+                    child: const Text('Set up'),
+                  ),
+                ),
+            ],
+          ),
+        ),
 
         if (_busy)
           const Padding(

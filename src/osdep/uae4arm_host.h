@@ -84,6 +84,21 @@ bool uae4arm_host_get_correct_aspect(void);
 /* sdl_to_target maps SDL button indices onto target button indices. */
 void uae4arm_host_apply_controller_mapping(const int* sdl_to_target, int count);
 
+/* ---- save states ------------------------------------------------------- */
+
+/*
+ * Asks the core to write a save state to [path].
+ *
+ * It is a request, not a write: the state can only be captured at a safe point
+ * in the frame, so the core does it on the next vsync and this returns before
+ * the file exists. A host that wants to list the state afterwards has to wait
+ * for the file rather than assume it.
+ *
+ * Restoring is not here because it needs no API: a .uss handed to the core on
+ * the command line is restored at startup.
+ */
+void uae4arm_host_save_state(const char* path);
+
 /* ---- music ------------------------------------------------------------- */
 /*
  * The launcher's own music, which is a ProTracker replayer on its own audio

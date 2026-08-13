@@ -135,6 +135,58 @@ public final class HostSupport {
 		}
 	}
 
+	/**
+	 * Records a save state in the recent list, newest first, and keeps five.
+	 *
+	 * A flat text file rather than JSON: four fields per line, written by one
+	 * process and read by another, and a format that can be read with cat is
+	 * worth more here than one that needs a parser on both sides.
+	 *
+	 * Dropping the sixth deletes its .uss too, or the states directory grows
+	 * without bound for a list nothing shows.
+	 */
+	public static void recordSaveState(Context context, String title, String statePath, String configPath) {
+		try {
+			final File index = new File(context.getFilesDir(), "states/recent.txt");
+			final List<String> lines = new ArrayList<>();
+			lines.add(System.currentTimeMillis() + "\t" + title + "\t" + statePath + "\t" + configPath);
+
+			if (index.exists()) {
+				try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader(index))) {
+					String line;
+					while ((line = reader.readLine()) != null) {
+						final String[] parts = line.split("\t");
+						// Drop any earlier entry for the same game: one save
+						// per config, the most recent.
+						if (parts.length >= 3 && !parts[2].equals(statePath)) {
+							lines.add(line);
+						}
+					}
+				}
+			}
+
+			while (lines.size() > 5) {
+				final String dropped = lines.remove(lines.size() - 1);
+				final String[] parts = dropped.split("\t");
+				if (parts.length >= 3) {
+					final File old = new File(parts[2]);
+					if (old.exists() && !old.delete()) {
+						Log.w(TAG, "could not delete " + old);
+					}
+				}
+			}
+
+			try (java.io.FileWriter writer = new java.io.FileWriter(index, false)) {
+				for (String line : lines) {
+					writer.write(line);
+					writer.write("\n");
+				}
+			}
+		} catch (Exception e) {
+			Log.w(TAG, "recordSaveState failed", e);
+		}
+	}
+
 	/** Clears the marker showing a session is in progress. */
 	public static void clearSessionMarker(Context context) {
 		try {

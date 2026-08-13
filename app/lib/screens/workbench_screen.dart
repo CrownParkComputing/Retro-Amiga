@@ -6,6 +6,7 @@ import '../theme/amiga_theme.dart';
 import '../widgets/amiga_logo.dart';
 import '../widgets/boing_backdrop.dart';
 import '../widgets/workbench_sidebar.dart';
+import '../data/save_states.dart';
 import '../data/session.dart';
 import 'about_panel.dart';
 import 'configurations_screen.dart';
@@ -13,6 +14,7 @@ import 'history_screen.dart';
 import 'library_panel.dart';
 import 'logs_panel.dart';
 import 'music_panel.dart';
+import 'resume_panel.dart';
 import 'settings_panel.dart';
 
 /// The home screen: a nav rail and one content panel, floating over the boing
@@ -56,7 +58,10 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   }
 
   Future<void> _refreshSession() async {
-    final bool has = await Session.exists();
+    // Something to resume is either a game still running or a save state from
+    // one that was left. Both mean the same thing to the user.
+    final List<SaveState> states = await SaveStates.list();
+    final bool has = states.isNotEmpty || await Session.exists();
     if (!mounted || has == _hasSession) return;
     setState(() {
       _hasSession = has;
@@ -191,7 +196,7 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
       case WorkbenchSection.logs:
         return const LogsPanel();
       case WorkbenchSection.resume:
-        return _Placeholder(section: _section);
+        return const ResumePanel();
     }
   }
 }
@@ -243,38 +248,6 @@ class _DemoMasthead extends StatelessWidget {
   }
 }
 
-/// Named rather than blank, so an empty panel says what will live there.
-class _Placeholder extends StatelessWidget {
-  const _Placeholder({required this.section});
-
-  final WorkbenchSection section;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Icon(section.icon, size: 44, color: AmigaColors.textDim),
-          const SizedBox(height: 12),
-          Text(
-            section.title,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: AmigaColors.text,
-            ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Not built yet.',
-            style: TextStyle(color: AmigaColors.textDim),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 
 /// Calls back when the app comes back to the front, so state that changed

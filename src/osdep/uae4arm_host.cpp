@@ -16,6 +16,7 @@
 #include "target.h"
 #include "amiberry_input.h"
 #include "protracker.h"
+#include "savestate.h"
 
 extern void uae_restart(struct uae_prefs* p, int opengui, const TCHAR* cfgfile);
 extern int amiberry_main(int argc, char* argv[]);
@@ -127,6 +128,19 @@ void uae4arm_host_apply_controller_mapping(const int* sdl_to_target, int count)
 	if (!sdl_to_target || count <= 0)
 		return;
 	apply_android_controller_remap(sdl_to_target, count);
+}
+
+/* ---- save states ------------------------------------------------------- */
+
+void uae4arm_host_save_state(const char* path)
+{
+	if (!path || !*path)
+		return;
+	/* Same call the emulator's own save-state menu makes: compress, no
+	   dialogs, saving rather than loading. The core picks up the request on
+	   the next frame. */
+	savestate_initsave(path, 1, true, true);
+	save_state(path, _T("Amiga-Retro"));
 }
 
 /* ---- music ------------------------------------------------------------- */

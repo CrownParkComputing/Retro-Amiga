@@ -232,6 +232,8 @@ class ConfigGenerator {
     // Hard drives
     int physicalUnit = 0;
     bool bootPriSet = false;
+    final int driveCount =
+        settings.hardDrives.where((String d) => d.isNotEmpty).length;
     for (int i = 0; i < settings.hardDrives.length; i++) {
       final String path = settings.hardDrives[i];
       if (path.isEmpty) continue;
@@ -245,13 +247,17 @@ class ConfigGenerator {
         out.writeln('filesystem2=rw,DH$i:$name:"$path",$bootPri');
       } else {
         final bool rdbPresent = rdb(path);
-        final String controller = !rdbPresent
-            ? 'uae$physicalUnit'
-            : (settings.baseModel == AmigaModel.a600 ||
-                  settings.baseModel == AmigaModel.a1200 ||
-                  settings.baseModel == AmigaModel.a4000)
-            ? 'ide$physicalUnit'
-            : 'uae$physicalUnit';
+        // The IDE controller on a real A600/A1200/A4000 has two units, and
+        // the core models that. A set like AGS mounts ten drives, so past two
+        // they go on the UAE controller, which has no such limit - which is
+        // what a working AGS config does. Using ide for all of them produces a
+        // machine that starts and never boots.
+        final bool ideCapable = settings.baseModel == AmigaModel.a600 ||
+            settings.baseModel == AmigaModel.a1200 ||
+            settings.baseModel == AmigaModel.a4000;
+        final bool useIde = rdbPresent && ideCapable && driveCount <= 2;
+        final String controller =
+            useIde ? 'ide$physicalUnit' : 'uae$physicalUnit';
         // With an RDB the core detects geometry (0,0,0). Without one it needs
         // an explicit CHS to synthesise a bootable partition, otherwise the
         // mount fails with "no supported partition tables detected".

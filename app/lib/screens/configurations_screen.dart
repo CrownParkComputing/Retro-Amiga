@@ -37,9 +37,22 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
     return AmigaModel.values.where(present.contains).toList();
   }
 
-  List<SavedConfig> get _visible => _machine == null
-      ? _configs
-      : _configs.where((SavedConfig c) => c.model == _machine).toList();
+  List<SavedConfig> get _visible {
+    final AmigaModel? machine = _machine;
+    if (machine == null) return _configs;
+    return _configs.where((SavedConfig c) => c.model == machine).toList();
+  }
+
+  /// Selects a machine once the configs are known, since there is no longer an
+  /// All tab to fall back on.
+  void _selectFirstMachine() {
+    final List<AmigaModel> present = _machinesPresent;
+    if (present.isEmpty) {
+      _machine = null;
+    } else if (_machine == null || !present.contains(_machine)) {
+      _machine = present.first;
+    }
+  }
   bool _loading = true;
   String? _error;
 
@@ -56,6 +69,7 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
       if (mounted) {
         setState(() {
           _configs = configs;
+          _selectFirstMachine();
           _loading = false;
           _error = null;
         });
@@ -74,39 +88,42 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
     final WizardMode? mode = await showModalBottomSheet<WizardMode>(
       context: context,
       showDragHandle: true,
-      // Scrollable, and capped at half the screen: six options do not fit the
-      // short landscape screen of a handheld, where the sheet overflowed.
+      // Five short rows that fit without scrolling. The blurbs were what made
+      // this a scrolling list on a handheld's short landscape screen, and a
+      // one-line label answers "what are you setting up" on its own.
       builder: (BuildContext context) => SafeArea(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(context).size.height * 0.7,
-          ),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(24, 0, 24, 12),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'What are you setting up?',
-                      style: TextStyle(fontSize: 18),
-                    ),
-                  ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 0, 20, 6),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'What are you setting up?',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                 ),
-                ...WizardMode.values
-                    .where((WizardMode m) => m != WizardMode.edit)
-                    .map(
-                      (WizardMode m) => ListTile(
-                        title: Text(m.title),
-                        subtitle: Text(m.blurb),
-                        onTap: () => Navigator.of(context).pop(m),
+              ),
+            ),
+            ...WizardMode.values
+                .where((WizardMode m) => m != WizardMode.edit)
+                .map(
+                  (WizardMode m) => ListTile(
+                    dense: true,
+                    visualDensity: VisualDensity.compact,
+                    title: Text(m.title),
+                    trailing: Text(
+                      m.blurb,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: AmigaColors.textDim,
                       ),
                     ),
-              ],
-            ),
-          ),
+                    onTap: () => Navigator.of(context).pop(m),
+                  ),
+                ),
+            const SizedBox(height: 8),
+          ],
         ),
       ),
     );
@@ -230,12 +247,9 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
       padding: const EdgeInsets.fromLTRB(14, 8, 14, 2),
       child: Row(
         children: <Widget>[
-          _MachinePill(
-            label: 'All',
-            count: _configs.length,
-            selected: _machine == null,
-            onTap: () => setState(() => _machine = null),
-          ),
+          // No "All": with a machine tab per kind, All is the tab that shows
+          // an A500 disk next to a CD32 disc, which is the comparison nobody
+          // wants. The first machine is selected instead.
           for (final AmigaModel model in _machinesPresent)
             _MachinePill(
               label: model.displayName,

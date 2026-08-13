@@ -516,7 +516,43 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 	 * the home screen. Closing a game should return to where the game was
 	 * started from, not close the app.
 	 */
+	/**
+	 * Writes a save state for the session being left, so it can be picked up
+	 * again from the launcher.
+	 *
+	 * The core captures on its next frame rather than immediately, so this
+	 * gives it a moment before the activity goes away. Half a second is
+	 * generous for one frame and short enough not to be felt.
+	 */
+	private void captureSaveState() {
+		if (currentConfigPath == null) return;
+		try {
+			final File states = new File(getFilesDir(), "states");
+			if (!states.exists() && !states.mkdirs()) return;
+
+			String name = new File(currentConfigPath).getName();
+			if (name.endsWith(".uae")) name = name.substring(0, name.length() - 4);
+			final File state = new File(states, name + ".uss");
+
+			nativeSaveState(state.getAbsolutePath());
+			// The state is written on the emulation thread; wait for the file
+			// rather than assume, but never for long.
+			for (int i = 0; i < 10 && !state.exists(); i++) {
+				try {
+					Thread.sleep(50);
+				} catch (InterruptedException ignored) {
+					Thread.currentThread().interrupt();
+					break;
+				}
+			}
+			HostSupport.recordSaveState(this, name, state.getAbsolutePath(), currentConfigPath);
+		} catch (Exception e) {
+			android.util.Log.w("Uae4Arm", "could not save state", e);
+		}
+	}
+
 	private void returnToLauncher() {
+		captureSaveState();
 		HostSupport.writeCleanExitMarker(this);
 		// The session is over, so the launcher should stop offering to resume
 		// it. Leaving the marker is what a kill looks like, and that is worth
@@ -791,9 +827,33 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 		if (floppyButton != null) return;
 		floppyButton = addOverlayIconButton(android.R.drawable.ic_menu_save, overlayContainer.getChildCount() == 0,
 			v -> showFloppySwapEntry());
+		floppyButton.setOnLongClickListener(v -> {
+			showSecondFloppy();
+			return true;
+		});
 	}
 
+	/**
+	 * Opens the disk picker for DF0 straight away.
+	 *
+	 * It used to ask which drive first, through a dialog still titled "Pause
+	 * menu" - a menu in a strip of toggles, for a choice that is DF0 almost
+	 * every time. A second drive is reached by holding the icon instead.
+	 */
 	private void showFloppySwapEntry() {
+		showFloppyPicker(0);
+	}
+
+	/** The second drive, when there is one. */
+	private void showSecondFloppy() {
+		int floppyCount = nativeGetFloppyCount();
+		if (floppyCount <= 0) {
+			floppyCount = configHasFloppyDrive(1) ? 2 : 1;
+		}
+		showFloppyPicker(floppyCount >= 2 ? 1 : 0);
+	}
+
+	private void showFloppySwapEntryOld() {
 		// Prefer the live native drive count (accurate once the core has actually booted);
 		// fall back to the config-file scan used at startup if it isn't available yet.
 		int floppyCount = nativeGetFloppyCount();
@@ -857,6 +917,7 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 
 	public static native void nativeSendAmigaKey(int keycode, int pressed);
 	public static native void nativeSetPause(boolean paused);
+	public static native void nativeSaveState(String path);
 	public static native void nativeRestart();
 	public static native void nativeInsertFloppy(int drive, String path);
 	public static native void nativeEjectFloppy(int drive);

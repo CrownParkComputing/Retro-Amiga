@@ -177,6 +177,17 @@ Java_com_uae4arm2026_Uae4ArmEmulatorActivity_nativeApplyControllerMapping(JNIEnv
 	}
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_com_uae4arm2026_Uae4ArmEmulatorActivity_nativeSaveState(JNIEnv* env, jclass, jstring path)
+{
+	if (!path) return;
+	const char* utf = env->GetStringUTFChars(path, nullptr);
+	if (utf) {
+		uae4arm_host_save_state(utf);
+		env->ReleaseStringUTFChars(path, utf);
+	}
+}
+
 /* ---- music -------------------------------------------------------------
  *
  * Bound to MainActivity, not the emulator activity: on Android the emulator
