@@ -113,24 +113,24 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
                     (WizardMode m) => ListTile(
                       dense: true,
                       visualDensity: VisualDensity.compact,
-                      title: Text(m.title),
-                      // The blurb is constrained rather than free: a ListTile's
-                      // trailing slot takes its child's natural width, and
-                      // "ADF, ADZ, IPF and the rest" is wider than what is left
-                      // on a handheld - which is the overflow.
-                      trailing: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 220),
-                        child: Text(
-                          m.blurb,
-                          textAlign: TextAlign.right,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: AmigaColors.textDim,
-                          ),
+                      // The media itself rather than a description of it, in
+                      // the same uae4arm artwork the rest of the app uses. The
+                      // blurb was also what overflowed the row: a ListTile
+                      // gives its trailing child whatever width it asks for,
+                      // and "ADF, ADZ, IPF and the rest" asks for more than is
+                      // left on a handheld.
+                      leading: SizedBox(
+                        width: 64,
+                        height: 40,
+                        child: Image.asset(
+                          m.artworkPath,
+                          fit: BoxFit.contain,
+                          errorBuilder:
+                              (BuildContext c, Object e, StackTrace? s) =>
+                                  const Icon(Icons.folder_outlined, size: 22),
                         ),
                       ),
+                      title: Text(m.title),
                       onTap: () => Navigator.of(context).pop(m),
                     ),
                   ),

@@ -23,6 +23,25 @@ enum WizardMode {
   final String title;
   final String blurb;
 
+  /// The uae4arm artwork for this kind of media. A picture of a floppy says
+  /// "floppy" faster than the word does, and it is the same art the rest of
+  /// the app uses for the same things.
+  String get artworkPath {
+    switch (this) {
+      case WizardMode.floppy:
+        return 'assets/machines/floppy_inserted.png';
+      case WizardMode.hardDrive:
+        return 'assets/machines/drive_dh0.png';
+      case WizardMode.cd:
+        return 'assets/machines/cd32.png';
+      case WizardMode.whdload:
+        return 'assets/machines/a1200.png';
+      case WizardMode.custom:
+      case WizardMode.edit:
+        return 'assets/machines/default.png';
+    }
+  }
+
   /// Machines worth offering. WHDLoad wants a fast AGA machine; a CD game
   /// only runs on the console.
   List<AmigaModel> get models {
