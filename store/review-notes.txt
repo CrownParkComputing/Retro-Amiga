@@ -1,0 +1,23 @@
+This is a hardware emulator for the Commodore Amiga (1985), permitted under
+App Review Guideline 4.7. It ships with no games and no Kickstart ROMs.
+
+Amiga Kickstart ROMs are still under copyright, held by Cloanto, and cannot
+legally be distributed with the app, so the user supplies their own, exactly
+as with every other Amiga emulator. Cloanto sell them as Amiga Forever, and
+anyone who owns an Amiga may already have one. On first launch the app
+explains this and offers a scan that finds and installs whatever is provided.
+
+To evaluate a working emulator, place a Kickstart ROM (for example
+kick13.rom or kick31.rom) in the app's Documents folder via the Files app,
+then use Paths > Scan. A zipped ROM set works as-is, with no unpacking.
+Adding any .adf floppy image alongside it gives you something to boot.
+
+Without a Kickstart the app intentionally shows setup guidance rather than a
+black screen, so nothing here is a crash or a non-functional state.
+
+The app has no accounts, no login, no server, and no network features, so no
+demo account is needed. It collects no data at all; the privacy policy is at
+https://www.crownparkcomputing.com/privacy
+
+The Music tab is a player for tracker modules the user imports. It ships with
+none, so it is empty on a clean install; that is expected, not a fault.
