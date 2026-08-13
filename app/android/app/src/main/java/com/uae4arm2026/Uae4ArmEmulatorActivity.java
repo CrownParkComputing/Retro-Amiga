@@ -61,10 +61,18 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 	private static final String HINT_TRAP_BACK = "SDL_ANDROID_TRAP_BACK_BUTTON";
 	public static final String EXTRA_CONFIG_PATH = "com.uae4arm2026.CONFIG_PATH";
 
-	/** Where the on-screen controls sit, and any buttons the player added.
-	 *  Kept here rather than in the overlay engine, which has no plugins. */
-	private static final String PAD_LAYOUT_PREFS = "pad_layout";
-	private static final String PAD_LAYOUT_KEY = "layout";
+	/**
+	 * Where the on-screen controls sit, and any buttons the player added.
+	 *
+	 * A file in the app's own directory rather than preferences, because the
+	 * launcher designs the pad and the launcher is a DIFFERENT PROCESS to this
+	 * one - SDL owns a surface here, which is why the emulator runs on its
+	 * own. SharedPreferences is per-process and caches, so a layout saved by
+	 * the designer would not be seen here until something evicted it.
+	 * getFilesDir() is the same directory the launcher calls its app support
+	 * directory, so both ends agree on the path without passing it about.
+	 */
+	private static final String PAD_LAYOUT_FILE = "pad_layout.json";
 
 	private String currentConfigPath;
 
@@ -755,6 +763,30 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 		return false;
 	}
 
+	private String readPadLayout() {
+		File file = new File(getFilesDir(), PAD_LAYOUT_FILE);
+		if (!file.exists()) return null;
+		try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader(file))) {
+			StringBuilder text = new StringBuilder();
+			String line;
+			while ((line = reader.readLine()) != null) text.append(line);
+			return text.toString();
+		} catch (IOException e) {
+			// No layout is survivable - the defaults are a usable pad. A
+			// half-read one is not, so it is not returned.
+			return null;
+		}
+	}
+
+	private void writePadLayout(String json) {
+		if (json == null) return;
+		File file = new File(getFilesDir(), PAD_LAYOUT_FILE);
+		try (java.io.FileWriter writer = new java.io.FileWriter(file)) {
+			writer.write(json);
+		} catch (IOException ignored) {
+		}
+	}
+
 	private boolean configIsCd32() {
 		if (currentConfigPath == null) return false;
 		try {
@@ -1095,14 +1127,11 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 			}
 
 			@Override public String loadLayout() {
-				return getSharedPreferences(PAD_LAYOUT_PREFS, MODE_PRIVATE)
-					.getString(PAD_LAYOUT_KEY, null);
+				return readPadLayout();
 			}
 
 			@Override public void saveLayout(String json) {
-				if (json == null) return;
-				getSharedPreferences(PAD_LAYOUT_PREFS, MODE_PRIVATE)
-					.edit().putString(PAD_LAYOUT_KEY, json).apply();
+				writePadLayout(json);
 			}
 
 			@Override public void onMenuRequested() { runOnUiThread(() -> showPauseMenu()); }

@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'data/amiga_keys.dart';
 import 'data/pad_layout.dart';
 import 'widgets/cd32_pad.dart';
 import 'widgets/pad_key_button.dart';
@@ -164,7 +163,6 @@ class EmulatorOverlay extends StatefulWidget {
 
 class _EmulatorOverlayState extends State<EmulatorOverlay> {
   PadLayout _layout = PadLayout.defaults;
-  bool _editing = false;
   /// The drawn pad starts hidden when a real controller is attached: it would
   /// be sitting over the game covering a screen nobody needs to touch. It is
   /// a DEFAULT, not a rule - the pad icon still turns it on, which matters on
@@ -280,63 +278,6 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
     _sendDirections();
   }
 
-  Future<void> _move(_Control control, Offset2 to) async {
-    setState(() {
-      _layout = switch (control) {
-        _Control.stick => _layout.copyWith(stick: to),
-        _Control.buttons => _layout.copyWith(buttons: to),
-        _Control.transport => _layout.copyWith(transport: to),
-      };
-    });
-  }
-
-  Future<void> _commit() => OverlayPad.saveLayout(_layout.encode());
-
-  /// Switches between the joystick and the CD32 pad.
-  ///
-  /// The old pad is released first: it is a different input device to the
-  /// core, and one left holding a direction would go on holding it with
-  /// nothing on screen to let go of.
-  Future<void> _setStyle(PadStyle style) async {
-    if (_layout.style == style) return;
-    _stickMoved(false, false, false, false);
-    _heldButtons.clear();
-    await OverlayPad.releaseAll(_pad);
-    setState(() => _layout = _layout.copyWith(style: style));
-    _attach();
-    await _commit();
-  }
-
-  Future<void> _addButton() async {
-    final PadButton? button = await showPadButtonPicker(context);
-    if (button == null) return;
-    // Adding the same key twice would stack two identical buttons on top of
-    // each other, which looks like the tap did nothing.
-    if (_layout.customButtons.any((PadButton b) => b.id == button.id)) return;
-    setState(() {
-      _layout = _layout.copyWith(
-        customButtons: <PadButton>[..._layout.customButtons, button],
-      );
-    });
-    await _commit();
-  }
-
-  Future<void> _removeButton(PadButton button) async {
-    setState(() {
-      _layout = _layout.copyWith(
-        customButtons: _layout.customButtons
-            .where((PadButton b) => b.id != button.id)
-            .toList(),
-      );
-    });
-    await _commit();
-  }
-
-  Future<void> _reset() async {
-    setState(() => _layout = PadLayout.defaults);
-    await _commit();
-  }
-
   /// One swap button for however many drives there are.
   ///
   /// With a single drive it goes straight to the file picker, because asking
@@ -389,11 +330,10 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
           // The trackpad, when the mouse is on. Underneath the controls, so
           // the stick and the strip take their own touches first and this
           // gets the rest of the screen.
-          if (_mouseMode && !_editing)
-            const Positioned.fill(child: _TouchMouse()),
-          // The controls, wherever the player has put them. LayoutBuilder
-          // because the saved positions are fractions and can only become
-          // pixels once the play area has a size.
+          if (_mouseMode) const Positioned.fill(child: _TouchMouse()),
+          // The controls, where the designer in Settings put them.
+          // LayoutBuilder because the saved positions are fractions and can
+          // only become pixels once the play area has a size.
           if (_padVisible && !_keyboardUp)
             Positioned.fill(
               child: LayoutBuilder(
@@ -401,30 +341,17 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
                   final Size area = constraints.biggest;
                   return Stack(
                     children: <Widget>[
-                      _MovableControl(
+                      _Placed(
                         area: area,
                         fraction: _layout.stick,
-                        editing: _editing,
-                        label: 'Joystick',
-                        onMoved: (Offset2 to) => _move(_Control.stick, to),
-                        onMoveEnd: _commit,
-                        child: IgnorePointer(
-                          // While arranging, the drag has to move the stick
-                          // rather than steer with it.
-                          ignoring: _editing,
-                          child: WobbleJoystick(
-                            size: 150,
-                            onDirections: _stickMoved,
-                          ),
+                        child: WobbleJoystick(
+                          size: 150,
+                          onDirections: _stickMoved,
                         ),
                       ),
-                      _MovableControl(
+                      _Placed(
                         area: area,
                         fraction: _layout.buttons,
-                        editing: _editing,
-                        label: 'Buttons',
-                        onMoved: (Offset2 to) => _move(_Control.buttons, to),
-                        onMoveEnd: _commit,
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.end,
@@ -435,17 +362,13 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
                                 in _layout.customButtons) ...<Widget>[
                               PadKeyButton(
                                 button: button,
-                                enabled: !_editing,
                                 onKey: OverlayPad.sendKey,
                                 onDirection: _buttonDirection,
-                                onRemove:
-                                    _editing ? () => _removeButton(button) : null,
                               ),
                               const SizedBox(height: 8),
                             ],
                             if (_layout.style == PadStyle.cd32)
                               Cd32Pad(
-                                enabled: !_editing,
                                 onButton: (int button, bool pressed) =>
                                     OverlayPad.button(_pad, button, pressed),
                               )
@@ -453,7 +376,6 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
                               _FireButton(
                                 label: '2',
                                 colour: const Color(0xFF3050DC),
-                                enabled: !_editing,
                                 onChanged: (bool pressed) => OverlayPad.button(
                                     _pad, OverlayPad.fire2, pressed),
                               ),
@@ -461,7 +383,6 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
                               _FireButton(
                                 label: '1',
                                 colour: const Color(0xFFDC3232),
-                                enabled: !_editing,
                                 onChanged: (bool pressed) => OverlayPad.button(
                                     _pad, OverlayPad.fire1, pressed),
                               ),
@@ -470,16 +391,10 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
                         ),
                       ),
                       if (_layout.style == PadStyle.cd32)
-                        _MovableControl(
+                        _Placed(
                           area: area,
                           fraction: _layout.transport,
-                          editing: _editing,
-                          label: 'CD keys',
-                          onMoved: (Offset2 to) =>
-                              _move(_Control.transport, to),
-                          onMoveEnd: _commit,
                           child: Cd32Transport(
-                            enabled: !_editing,
                             onButton: (int button, bool pressed) =>
                                 OverlayPad.button(_pad, button, pressed),
                           ),
@@ -496,10 +411,10 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
             right: 12 + safe.right,
             top: 12 + safe.top,
             child: AnimatedOpacity(
-              opacity: _stripVisible || _editing ? 1 : 0,
+              opacity: _stripVisible ? 1 : 0,
               duration: const Duration(milliseconds: 250),
               child: IgnorePointer(
-                ignoring: !(_stripVisible || _editing),
+                ignoring: !_stripVisible,
                 child: Column(
                   children: <Widget>[
                 // Pause goes back to the workbench, saving where you were.
@@ -562,40 +477,13 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
                   icon: Icons.swap_horiz,
                   onPressed: _swapDisk,
                 ),
-                const SizedBox(height: 10),
-                // Arrange mode, the same open_with/check pair the C64 front
-                // end uses.
-                _OverlayIconButton(
-                  icon: _editing ? Icons.check : Icons.open_with,
-                  active: _editing,
-                  onPressed: () {
-                    setState(() => _editing = !_editing);
-                    if (!_editing) _commit();
-                  },
-                ),
+                // No arrange button: the pad is designed in Settings, where
+                // a game is not running underneath the fiddling.
                   ],
                 ),
               ),
             ),
           ),
-
-          // Says what mode you are in and how to leave it. Without this the
-          // controls just stop working and grow a border, which reads as a
-          // bug rather than a mode.
-          if (_editing)
-            Positioned(
-              left: 0,
-              right: 0,
-              top: 12 + safe.top,
-              child: Center(
-                child: _EditBar(
-                  style: _layout.style,
-                  onStyle: _setStyle,
-                  onAdd: _addButton,
-                  onReset: _reset,
-                ),
-              ),
-            ),
         ],
         ),
       ),
@@ -603,7 +491,31 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
   }
 }
 
-/// A control the player can drag while the layout is being arranged.
+/// A control at its saved place: the fraction says where its centre goes.
+class _Placed extends StatelessWidget {
+  const _Placed({
+    required this.area,
+    required this.fraction,
+    required this.child,
+  });
+
+  final Size area;
+  final Offset2 fraction;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      left: fraction.dx * area.width,
+      top: fraction.dy * area.height,
+      child: FractionalTranslation(
+        translation: const Offset(-0.5, -0.5),
+        child: child,
+      ),
+    );
+  }
+}
+
 /// The screen as a trackpad.
 ///
 /// Relative, not absolute: the Amiga has no idea where a finger is on a host
@@ -678,192 +590,16 @@ class _TouchMouseState extends State<_TouchMouse> {
   }
 }
 
-class _MovableControl extends StatelessWidget {
-  const _MovableControl({
-    required this.area,
-    required this.fraction,
-    required this.editing,
-    required this.label,
-    required this.onMoved,
-    required this.onMoveEnd,
-    required this.child,
-  });
-
-  final Size area;
-  final Offset2 fraction;
-  final bool editing;
-  final String label;
-  final ValueChanged<Offset2> onMoved;
-  final VoidCallback onMoveEnd;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      left: fraction.dx * area.width,
-      top: fraction.dy * area.height,
-      child: FractionalTranslation(
-        translation: const Offset(-0.5, -0.5),
-        child: editing
-            ? GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onPanUpdate: (DragUpdateDetails d) {
-                  if (area.width == 0 || area.height == 0) return;
-                  onMoved(fraction.shifted(
-                    d.delta.dx / area.width,
-                    d.delta.dy / area.height,
-                  ));
-                },
-                onPanEnd: (_) => onMoveEnd(),
-                child: _chrome(child),
-              )
-            : child,
-      ),
-    );
-  }
-
-  Widget _chrome(Widget inner) {
-    return Container(
-      padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        border: Border.all(color: Colors.tealAccent, width: 2),
-        borderRadius: BorderRadius.circular(12),
-        color: Colors.black.withValues(alpha: 0.35),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              const Icon(Icons.open_with, size: 14, color: Colors.tealAccent),
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: const TextStyle(
-                  color: Colors.tealAccent,
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          // Deliberately NOT wrapped in AbsorbPointer. It was, and that is
-          // what made the red delete badge on an added button do nothing:
-          // absorbing swallows the badge's taps along with everything else.
-          // The controls themselves go inert instead, each one knowing it is
-          // being arranged, which leaves the badge live. Dragging still works
-          // because the pan gesture is on the parent and a child's tap only
-          // takes taps.
-          inner,
-        ],
-      ),
-    );
-  }
-}
-
-/// The three things that can be dragged. The transport keys only exist on
-/// the CD32 pad, which is why they are not simply part of it.
-enum _Control { stick, buttons, transport }
-
-class _EditBar extends StatelessWidget {
-  const _EditBar({
-    required this.style,
-    required this.onStyle,
-    required this.onAdd,
-    required this.onReset,
-  });
-
-  final PadStyle style;
-  final ValueChanged<PadStyle> onStyle;
-  final VoidCallback onAdd;
-  final VoidCallback onReset;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.7),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.tealAccent),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          const Text(
-            'Drag the controls where you want them',
-            style: TextStyle(
-              color: Colors.tealAccent,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(width: 14),
-          // Which controller is drawn. Here rather than in settings because
-          // it is the same decision as where to put it, and a CD32 game that
-          // wants the blue button wants it now.
-          for (final PadStyle option in PadStyle.values) ...<Widget>[
-            GestureDetector(
-              onTap: () => onStyle(option),
-              child: Text(
-                option == PadStyle.cd32 ? 'CD32' : 'JOYSTICK',
-                style: TextStyle(
-                  color: option == style ? Colors.white : Colors.white38,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-          ],
-          const SizedBox(width: 4),
-          // Adding a button belongs in the mode where you are already
-          // arranging them: you add one and then want to put it somewhere.
-          GestureDetector(
-            onTap: onAdd,
-            child: const Text(
-              '+ ADD BUTTON',
-              style: TextStyle(
-                color: Colors.tealAccent,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          const SizedBox(width: 14),
-          GestureDetector(
-            onTap: onReset,
-            child: const Text(
-              'RESET',
-              style: TextStyle(
-                color: Colors.orangeAccent,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _FireButton extends StatefulWidget {
   const _FireButton({
     required this.label,
     required this.colour,
     required this.onChanged,
-    this.enabled = true,
   });
 
   final String label;
   final Color colour;
   final ValueChanged<bool> onChanged;
-
-  /// False while the layout is being arranged.
-  final bool enabled;
 
   @override
   State<_FireButton> createState() => _FireButtonState();
@@ -873,7 +609,7 @@ class _FireButtonState extends State<_FireButton> {
   bool _pressed = false;
 
   void _set(bool pressed) {
-    if (!widget.enabled || _pressed == pressed) return;
+    if (_pressed == pressed) return;
     setState(() => _pressed = pressed);
     widget.onChanged(pressed);
   }
@@ -945,130 +681,6 @@ class _OverlayIconButton extends StatelessWidget {
           size: 24,
         ),
       ),
-    );
-  }
-}
-
-/// Modal that asks what a new button should do.
-///
-/// Directions come first because they are four options against sixty, and
-/// because "UP to jump" is the commonest reason to add a button at all.
-Future<PadButton?> showPadButtonPicker(BuildContext context) {
-  return showDialog<PadButton>(
-    context: context,
-    builder: (BuildContext context) => Dialog(
-      backgroundColor: const Color(0xFF141A1F),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560, maxHeight: 460),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: Text(
-                'Choose what the new button does',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-            Flexible(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                children: <Widget>[
-                  const _PickerHeading('JOYSTICK DIRECTION'),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: <Widget>[
-                      for (final PadDirection direction in PadDirection.values)
-                        _PickerChip(
-                          label: direction.label,
-                          onTap: () => Navigator.of(context)
-                              .pop(PadButton.direction(direction)),
-                        ),
-                    ],
-                  ),
-                  for (final MapEntry<String, List<AmigaKey>> group
-                      in AmigaKeys.groups.entries) ...<Widget>[
-                    _PickerHeading(group.key.toUpperCase()),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: <Widget>[
-                        for (final AmigaKey key in group.value)
-                          _PickerChip(
-                            label: key.label,
-                            onTap: () =>
-                                Navigator.of(context).pop(PadButton.key(key)),
-                          ),
-                      ],
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            Align(
-              alignment: Alignment.centerRight,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(0, 0, 12, 8),
-                child: TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text(
-                    'Cancel',
-                    style: TextStyle(color: Colors.white70),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
-}
-
-class _PickerHeading extends StatelessWidget {
-  const _PickerHeading(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 12, bottom: 6),
-      child: Text(
-        text,
-        style: const TextStyle(
-          color: Colors.tealAccent,
-          fontSize: 11,
-          letterSpacing: 1.1,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-    );
-  }
-}
-
-class _PickerChip extends StatelessWidget {
-  const _PickerChip({required this.label, required this.onTap});
-
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return OutlinedButton(
-      onPressed: onTap,
-      style: OutlinedButton.styleFrom(
-        foregroundColor: Colors.white,
-        side: const BorderSide(color: Color(0xFF3D4652)),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        minimumSize: Size.zero,
-      ),
-      child: Text(label),
     );
   }
 }

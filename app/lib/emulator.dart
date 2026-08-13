@@ -38,6 +38,20 @@ class Emulator {
   /// Boots straight into a machine with no media, the quickest way to prove
   /// the whole chain works. `-G` keeps the core from expecting a GUI of its
   /// own — this fork has none.
+  /// Opens the screen that asks which physical button is which.
+  ///
+  /// Native, not Flutter: it has to see raw controller key events to learn a
+  /// pad, and reading those is the Activity's job.
+  static Future<void> openControllerMapping() async {
+    try {
+      await _channel.invokeMethod<void>('openControllerMapping');
+    } on MissingPluginException {
+      // Desktop has no such screen; nothing to open is not an error.
+    } on PlatformException {
+      // Same.
+    }
+  }
+
   static Future<void> launchModel(String model) {
     return launch(<String>['--rescan-roms', '--model', model, '-G']);
   }

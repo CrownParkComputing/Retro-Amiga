@@ -8,7 +8,9 @@ import '../data/amiga_model.dart';
 import '../data/media_library.dart';
 import '../data/media_root.dart';
 import '../data/whdload_support.dart';
+import '../emulator.dart';
 import '../theme/amiga_theme.dart';
+import 'pad_designer_screen.dart';
 
 /// Where things live and how they get there, after setup has run.
 ///
@@ -280,6 +282,40 @@ class _SettingsPanelState extends State<SettingsPanel> {
             ),
           ),
         ],
+
+        const _Header('Controls'),
+        Card(
+          color: AmigaColors.card,
+          child: Column(
+            children: <Widget>[
+              ListTile(
+                leading: const Icon(Icons.gamepad_outlined),
+                title: const Text('On-screen pad'),
+                subtitle: const Text(
+                  'Where the stick and buttons sit, joystick or CD32 pad, and '
+                  'any extra keys you want under a thumb.',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (BuildContext context) => const PadDesignerScreen(),
+                  ),
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.videogame_asset_outlined),
+                title: const Text('Controller buttons'),
+                subtitle: const Text(
+                  'Which button on a real controller is red, blue, green and '
+                  'yellow. A CD32 config uses all four; anything else uses the '
+                  'first two as fire.',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: Emulator.openControllerMapping,
+              ),
+            ],
+          ),
+        ),
 
         const _Header('AGS'),
         Card(

@@ -78,6 +78,13 @@ class MainActivity : FlutterActivity() {
 							result.success(true)
 						}
 					}
+					"openControllerMapping" -> {
+						// Learning a pad means reading raw controller key
+						// events, which is the Activity's job rather than
+						// Flutter's - so this hands over to the native screen.
+						startActivity(android.content.Intent(this, ControllerMapActivity::class.java))
+						result.success(true)
+					}
 					"platformName" -> result.success("android")
 
 					// Served here rather than by path_provider, whose iOS
