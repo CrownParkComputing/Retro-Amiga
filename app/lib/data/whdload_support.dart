@@ -6,13 +6,47 @@ import 'file_category.dart';
 import 'media_library.dart';
 import 'media_root.dart';
 
+/// One thing WHDLoad needs, and whether it is there.
+class WhdloadRequirement {
+  const WhdloadRequirement({
+    required this.name,
+    required this.detail,
+    required this.path,
+    required this.present,
+    this.essential = true,
+  });
+
+  final String name;
+
+  /// What it is for, so a missing one says what will break.
+  final String detail;
+
+  /// Where it is looked for. Shown because when something is missing the next
+  /// question is always "where should I put it".
+  final String path;
+
+  final bool present;
+
+  /// False for things a game will usually run without.
+  final bool essential;
+}
+
 /// What WHDLoad support looks like right now.
 class WhdloadStatus {
   const WhdloadStatus({
     required this.bootArchiveInstalled,
     required this.kickstartCount,
     this.source,
+    this.requirements = const <WhdloadRequirement>[],
   });
+
+  /// Every piece, present or not, for showing back to the user.
+  final List<WhdloadRequirement> requirements;
+
+  /// The ones that are missing and matter.
+  List<WhdloadRequirement> get missing => requirements
+      .where((WhdloadRequirement r) => !r.present && r.essential)
+      .toList();
 
   /// Whether `<home>/WHDBoot/boot-data.zip` is in place.
   final bool bootArchiveInstalled;
@@ -102,18 +136,53 @@ class WhdloadSupport {
     }
 
     final File archive = File('${dir.path}/boot-data.zip');
+    final bool hasArchive = archive.existsSync() && archive.lengthSync() > 0;
+
+    final File database = File('${dir.path}/game-data/whdload_db.xml');
+
+    // The ROMs, not the relocation tables. save-data/Kickstarts ships with a
+    // .RTB per Kickstart and no Kickstart at all - those are patch tables,
+    // and counting them would report a working setup that cannot boot.
     final Directory kickstarts = Directory('${dir.path}/save-data/Kickstarts');
     int count = 0;
     if (kickstarts.existsSync()) {
       count = kickstarts
           .listSync()
           .whereType<File>()
-          .where((File f) => f.lengthSync() > 0)
+          .where((File f) =>
+              !f.path.toLowerCase().endsWith('.rtb') && f.lengthSync() > 1024)
           .length;
     }
+
     return WhdloadStatus(
-      bootArchiveInstalled: archive.existsSync() && archive.lengthSync() > 0,
+      bootArchiveInstalled: hasArchive,
       kickstartCount: count,
+      requirements: <WhdloadRequirement>[
+        WhdloadRequirement(
+          name: 'Boot files',
+          detail: 'WHDLoad itself, mounted as DH3 while a game runs.',
+          path: '${dir.path}/boot-data.zip',
+          present: hasArchive,
+        ),
+        WhdloadRequirement(
+          name: 'Kickstart ROMs',
+          detail: count > 0
+              ? '$count in place, named the way the booter expects.'
+              : 'Copied from your own ROMs and renamed - a game asks for the '
+                  'Kickstart its slave was built against.',
+          path: kickstarts.path,
+          present: count > 0,
+        ),
+        WhdloadRequirement(
+          name: 'Game database',
+          detail: 'Per-game settings. Without it every game gets defaults, '
+              'and some need more memory or a different CPU than the '
+              'defaults give.',
+          path: database.path,
+          present: database.existsSync(),
+          essential: false,
+        ),
+      ],
     );
   }
 

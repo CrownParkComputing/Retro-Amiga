@@ -129,40 +129,72 @@ class _SettingsPanelState extends State<SettingsPanel> {
           const _Header('WHDLoad'),
           Card(
             color: AmigaColors.card,
-            child: ListTile(
-              leading: Icon(
-                _whdload.ready ? Icons.check_circle : Icons.inventory_2_outlined,
-                color: _whdload.ready ? AmigaColors.tickGreen : null,
-              ),
-              title: Text(
-                _whdload.ready
-                    ? 'Ready'
-                    : _whdload.bootArchiveInstalled
-                        ? 'Boot files installed, no Kickstart yet'
-                        : 'Not installed',
-              ),
-              subtitle: Text(
-                _whdload.ready
-                    ? '${_whdload.kickstartCount} Kickstart'
-                    '${_whdload.kickstartCount == 1 ? '' : 's'} in place.'
-                    : 'Needs boot-data.zip somewhere readable - the media '
-                        'folder is the obvious place.',
-              ),
-              trailing: TextButton(
-                onPressed: _busy
-                    ? null
-                    : () => _run(() async {
-                          final WhdloadStatus status =
-                              await WhdloadSupport.install(_index);
-                          return status.ready
-                              ? 'WHDLoad is ready.'
-                              : status.bootArchiveInstalled
-                                  ? 'Boot files installed, but no Kickstart '
-                                      'could be placed.'
-                                  : 'No boot archive found.';
-                        }),
-                child: Text(_whdload.ready ? 'Reinstall' : 'Install'),
-              ),
+            child: Column(
+              children: <Widget>[
+                ListTile(
+                  leading: Icon(
+                    _whdload.ready
+                        ? Icons.check_circle
+                        : Icons.inventory_2_outlined,
+                    color: _whdload.ready ? AmigaColors.tickGreen : null,
+                  ),
+                  title: Text(
+                    _whdload.ready
+                        ? 'Ready to run .lha games'
+                        : 'Not ready - ${_whdload.missing.length} missing',
+                  ),
+                  subtitle: const Text(
+                    'Installs from a boot archive already on this device.',
+                  ),
+                  trailing: TextButton(
+                    onPressed: _busy
+                        ? null
+                        : () => _run(() async {
+                              final WhdloadStatus status =
+                                  await WhdloadSupport.install(_index);
+                              return status.ready
+                                  ? 'WHDLoad is ready.'
+                                  : status.bootArchiveInstalled
+                                      ? 'Boot files installed, but no '
+                                          'Kickstart could be placed.'
+                                      : 'No boot archive found.';
+                            }),
+                    child: Text(_whdload.ready ? 'Reinstall' : 'Install'),
+                  ),
+                ),
+                // Each piece listed rather than one verdict: "not installed"
+                // does not say which half is missing, and the two halves come
+                // from different places - the boot archive from a download,
+                // the Kickstarts from the user's own ROMs.
+                for (final WhdloadRequirement item in _whdload.requirements)
+                  ListTile(
+                    dense: true,
+                    leading: Icon(
+                      item.present
+                          ? Icons.check
+                          : item.essential
+                              ? Icons.close
+                              : Icons.remove,
+                      size: 18,
+                      color: item.present
+                          ? AmigaColors.tickGreen
+                          : item.essential
+                              ? AmigaColors.tickRed
+                              : AmigaColors.textDim,
+                    ),
+                    title: Text(
+                      item.name,
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                    subtitle: Text(
+                      // The path only matters when something is missing, and
+                      // then it is the whole question.
+                      item.present ? item.detail : '${item.detail}\n${item.path}',
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    isThreeLine: !item.present,
+                  ),
+              ],
             ),
           ),
         ],
