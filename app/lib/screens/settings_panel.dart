@@ -1,6 +1,4 @@
-import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../data/ags_setup.dart';
@@ -8,7 +6,6 @@ import '../data/file_category.dart';
 import '../data/amiga_model.dart';
 import '../data/media_library.dart';
 import '../data/media_root.dart';
-import '../data/whdload_support.dart';
 import '../emulator.dart';
 import '../theme/amiga_theme.dart';
 import 'pad_designer_screen.dart';
@@ -28,11 +25,6 @@ class SettingsPanel extends StatefulWidget {
 class _SettingsPanelState extends State<SettingsPanel> {
   String _root = '';
   MediaIndex _index = const MediaIndex.empty();
-  WhdloadStatus _whdload = const WhdloadStatus(
-    bootArchiveInstalled: false,
-    kickstartCount: 0,
-  );
-
   bool _busy = false;
   String? _notice;
 
@@ -124,12 +116,10 @@ class _SettingsPanelState extends State<SettingsPanel> {
   Future<void> _load() async {
     final String root = await MediaRoot.path();
     final MediaIndex index = await MediaLibrary.cached();
-    final WhdloadStatus whdload = await WhdloadSupport.status();
     if (!mounted) return;
     setState(() {
       _root = root;
       _index = index;
-      _whdload = whdload;
     });
   }
 
@@ -145,28 +135,6 @@ class _SettingsPanelState extends State<SettingsPanel> {
       _notice = message;
     });
     await _load();
-  }
-
-  /// Installs the WHDLoad boot files from an archive the user points at.
-  ///
-  /// The picker rather than a scan, because iOS cannot search storage at all
-  /// and on Android the archive is often somewhere the scan does not look -
-  /// a download, or another emulator's folder.
-  Future<String> _chooseBootArchive() async {
-    final FilePickerResult? result = await FilePicker.platform.pickFiles(
-      type: FileType.any,
-    );
-    final String? path = result?.files.single.path;
-    if (path == null) return 'Nothing chosen.';
-    final bool installed = await WhdloadSupport.installBootArchive(path);
-    if (!installed) return 'That file could not be installed.';
-    final int roms = await WhdloadSupport.installKickstarts(_index);
-    final WhdloadStatus status = await WhdloadSupport.status();
-    if (mounted) setState(() => _whdload = status);
-    return status.ready
-        ? 'WHDLoad is ready.'
-        : 'Boot files installed'
-            '${roms == 0 ? ', but no Kickstart could be placed.' : '.'}';
   }
 
   @override
@@ -229,101 +197,6 @@ class _SettingsPanelState extends State<SettingsPanel> {
             ],
           ),
         ),
-
-        // On both now. Android can search storage for a boot archive; iOS
-        // cannot, but it can be handed one through the Files app, and a
-        // WHDLoad game without the boot files is a machine that starts and
-        // stops on a requester about DH3.
-        ...<Widget>[
-          const _Header('WHDLoad'),
-          Card(
-            color: AmigaColors.card,
-            child: Column(
-              children: <Widget>[
-                ListTile(
-                  leading: Icon(
-                    _whdload.ready
-                        ? Icons.check_circle
-                        : Icons.inventory_2_outlined,
-                    color: _whdload.ready ? AmigaColors.tickGreen : null,
-                  ),
-                  title: Text(
-                    _whdload.ready
-                        ? 'Ready to run .lha games'
-                        : 'Not ready - ${_whdload.missing.length} missing',
-                  ),
-                  subtitle: const Text(
-                    'WHDLoad ships with the app. Choose your own boot archive '
-                    'instead if you would rather use that one.',
-                  ),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      TextButton(
-                        onPressed: _busy
-                            ? null
-                            : () => _run(() async {
-                                  // The app's own copy first; a boot archive
-                                  // on the device only if this is Android,
-                                  // where there might be a newer one.
-                                  await WhdloadSupport.installFromBundle();
-                                  final WhdloadStatus status = Platform.isAndroid
-                                      ? await WhdloadSupport.install(_index)
-                                      : await WhdloadSupport.installAfterBundle(
-                                          _index);
-                                  return status.ready
-                                      ? 'WHDLoad is ready.'
-                                      : status.bootArchiveInstalled
-                                          ? 'Boot files installed, but no '
-                                              'Kickstart could be placed.'
-                                          : 'The boot files could not be '
-                                              'installed.';
-                                }),
-                        child: Text(_whdload.ready ? 'Reinstall' : 'Install'),
-                      ),
-                      TextButton(
-                        onPressed: _busy ? null : () => _run(_chooseBootArchive),
-                        child: const Text('Choose'),
-                      ),
-                    ],
-                  ),
-                ),
-                // Each piece listed rather than one verdict: "not installed"
-                // does not say which half is missing, and the two halves come
-                // from different places - the boot archive from a download,
-                // the Kickstarts from the user's own ROMs.
-                for (final WhdloadRequirement item in _whdload.requirements)
-                  ListTile(
-                    dense: true,
-                    leading: Icon(
-                      item.present
-                          ? Icons.check
-                          : item.essential
-                              ? Icons.close
-                              : Icons.remove,
-                      size: 18,
-                      color: item.present
-                          ? AmigaColors.tickGreen
-                          : item.essential
-                              ? AmigaColors.tickRed
-                              : AmigaColors.textDim,
-                    ),
-                    title: Text(
-                      item.name,
-                      style: const TextStyle(fontSize: 13),
-                    ),
-                    subtitle: Text(
-                      // The path only matters when something is missing, and
-                      // then it is the whole question.
-                      item.present ? item.detail : '${item.detail}\n${item.path}',
-                      style: const TextStyle(fontSize: 11),
-                    ),
-                    isThreeLine: !item.present,
-                  ),
-              ],
-            ),
-          ),
-        ],
 
         const _Header('Controls'),
         Card(

@@ -57,9 +57,45 @@ if [ -d "$REPO_ROOT/app/ios/Runner/LooseIcons" ]; then
 fi
 
 if [ -f "$CORE" ]; then
+    # As a framework, not a loose dylib: a bare .dylib in Frameworks/ makes App
+    # Store validation reject the upload with 90426 Invalid Swift Support. The
+    # app loads it by this path, so the two have to agree - when they did not,
+    # every build launched and then failed to start emulation.
     echo "==> bundling the emulator core"
-    mkdir -p "$APP/Frameworks"
-    cp -v "$CORE" "$APP/Frameworks/"
+    FW="$APP/Frameworks/libuae4arm.framework"
+    rm -rf "$FW"
+    mkdir -p "$FW"
+    cp -v "$CORE" "$FW/libuae4arm"
+    cat > "$FW/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>libuae4arm</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.crownparkcomputing.amigaretro.core</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>libuae4arm</string>
+	<key>CFBundlePackageType</key>
+	<string>FMWK</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>iPhoneOS</string>
+	</array>
+	<key>MinimumOSVersion</key>
+	<string>13.0</string>
+</dict>
+</plist>
+PLIST
 
     rm -rf "$REPO_ROOT/app/build/iosbox/Payload"
     mkdir -p "$REPO_ROOT/app/build/iosbox/Payload"

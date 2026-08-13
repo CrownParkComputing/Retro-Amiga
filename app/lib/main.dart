@@ -26,7 +26,7 @@ void main() {
   // install says about WHDLoad is "not ready" - about files it is carrying.
   // Only writes what is missing, and a failure here is not worth blocking a
   // launcher for: the game that needs them installs them too.
-  unawaited(WhdloadSupport.installFromBundle());
+  unawaited(WhdloadSupport.installEverything());
   runApp(const AmigaRetroApp());
 }
 

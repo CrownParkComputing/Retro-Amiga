@@ -387,6 +387,18 @@ class WhdloadSupport {
     return status();
   }
 
+  /// Everything WHDLoad needs, from everywhere it can come from.
+  ///
+  /// There is no longer a button for this. WHDLoad ships with the app and the
+  /// ROMs come out of the player's own library, so both halves can be put in
+  /// place without being asked - and a setting whose only correct value is
+  /// "yes, do the thing" is a chore, not a choice.
+  static Future<WhdloadStatus> installEverything() async {
+    await installFromBundle();
+    await installKickstarts(await MediaLibrary.cached());
+    return status();
+  }
+
   /// Copies [sourcePath] into place as the boot archive.
   ///
   /// Copied rather than referenced: the core opens this by a fixed path, and a
