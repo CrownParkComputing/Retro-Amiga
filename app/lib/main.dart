@@ -8,7 +8,10 @@ import 'package:flutter/material.dart';
 // over SDL's the emulator runs invisibly behind it.
 import 'overlay_main.dart' show emulatorOverlayMain;
 
+import 'dart:async';
+
 import 'data/app_prefs.dart';
+import 'data/whdload_support.dart';
 import 'screens/workbench_screen.dart';
 import 'screens/onboarding_screen.dart';
 
@@ -17,6 +20,13 @@ import 'screens/onboarding_screen.dart';
 const Object _overlayEntryPoint = emulatorOverlayMain;
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  // The boot files WHDLoad needs are assets, so put them in place before
+  // anything asks whether they are there. Otherwise the first thing a new
+  // install says about WHDLoad is "not ready" - about files it is carrying.
+  // Only writes what is missing, and a failure here is not worth blocking a
+  // launcher for: the game that needs them installs them too.
+  unawaited(WhdloadSupport.installFromBundle());
   runApp(const AmigaRetroApp());
 }
 
