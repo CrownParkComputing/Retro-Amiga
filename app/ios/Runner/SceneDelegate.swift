@@ -53,6 +53,35 @@ class SceneDelegate: FlutterSceneDelegate {
       // to a window it KNOWS is the launcher's, rather than to whatever
       // happened to be key when the game started - which by then is SDL's.
       EmulatorHost.shared.launcherWindow = existingWindow
+    } else if let windowScene = scene as? UIWindowScene {
+      // Nothing built a window, so build one here.
+      //
+      // The branch above is the Linux path, where iosbox substitutes an
+      // AppDelegate that creates the window itself. The AppDelegate committed
+      // next to this file does not: it is thin on purpose, on the stated
+      // assumption that the window "belongs to SceneDelegate" -- which was only
+      // ever half true, because this class adopted a window and never created
+      // one. A storyboard would normally instantiate the FlutterViewController,
+      // but Main.storyboard is wired to nothing here (no UIMainStoryboardFile,
+      // no UISceneStoryboardFile), so on an Xcode build nothing ever made one.
+      //
+      // No FlutterViewController means no engine, which means Dart never runs:
+      // the app launches, the scene connects, and the screen stays black with
+      // no crash and nothing in any log.
+      //
+      // Plugins are registered against this engine specifically. The
+      // AppDelegate registers against itself, feeding the implicit engine --
+      // a different registry, so this does not trip "Duplicate plugin key".
+      let engine = FlutterEngine(name: "main")
+      engine.run()
+      GeneratedPluginRegistrant.register(with: engine)
+
+      let window = UIWindow(windowScene: windowScene)
+      window.rootViewController = FlutterViewController(
+        engine: engine, nibName: nil, bundle: nil)
+      self.window = window
+      window.makeKeyAndVisible()
+      EmulatorHost.shared.launcherWindow = window
     }
 
     // Still call super: it registers the engine for scene life-cycle events,
