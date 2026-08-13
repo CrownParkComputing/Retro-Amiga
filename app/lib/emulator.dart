@@ -18,7 +18,7 @@ class Emulator {
     AppLog.info('launch', args.join(' '));
     // The launcher's music has no business playing over a game, and on
     // Android it would be a second process holding the audio device.
-    await MusicPlayer.stop();
+    await MusicPlayer.stop(byUser: false);
     Session.markStarted();
     try {
       await _channel.invokeMethod<bool>('launch', <String, Object?>{

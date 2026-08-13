@@ -54,6 +54,7 @@ class MusicPlayer {
   /// Starts [path]. Whatever was playing stops. Returns false if the host
   /// could not read the file or it is not a module.
   static Future<bool> play(String path) async {
+    _silencedByUser = false;
     final bool ok = await _invoke<bool>('musicPlay', <String, Object?>{
           'path': path,
         }) ??
@@ -62,7 +63,8 @@ class MusicPlayer {
     return ok;
   }
 
-  static Future<void> stop() async {
+  static Future<void> stop({bool byUser = true}) async {
+    _silencedByUser = byUser;
     await _invoke<void>('musicStop');
     _stopPolling();
     _emit(const MusicState());
@@ -105,6 +107,38 @@ class MusicPlayer {
   static void _stopPolling() {
     _poll?.cancel();
     _poll = null;
+  }
+
+  /// True once the user has stopped the music themselves, so the workbench
+  /// does not start another tune over their decision.
+  static bool _silencedByUser = false;
+  static bool get silencedByUser => _silencedByUser;
+
+  /// Plays one of [tunes] at random, unless something is already playing or
+  /// the user has stopped it.
+  ///
+  /// Random rather than the first: the workbench is where you spend the time
+  /// between games, and hearing the same tune every time you open it is what
+  /// makes people turn music off.
+  static Future<void> playRandom(List<String> tunes) async {
+    if (tunes.isEmpty || _silencedByUser) return;
+    if (_last.playing) return;
+    final int index = DateTime.now().microsecondsSinceEpoch % tunes.length;
+    await play(tunes[index]);
+  }
+
+  /// Silences without forgetting the tune, for leaving the app. Not stop():
+  /// coming back to silence and having to find the track again is worse than
+  /// coming back to where it was.
+  static Future<void> suspend() async {
+    if (_last.playing && !_last.paused) await setPaused(true);
+    _stopPolling();
+  }
+
+  static Future<void> resumeIfSuspended() async {
+    if (_silencedByUser) return;
+    final MusicState state = await refresh();
+    if (state.playing && state.paused) await setPaused(false);
   }
 
   /// A host that does not implement music must not take the app down with it -

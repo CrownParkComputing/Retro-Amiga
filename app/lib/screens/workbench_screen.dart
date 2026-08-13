@@ -6,6 +6,9 @@ import '../theme/amiga_theme.dart';
 import '../widgets/amiga_logo.dart';
 import '../widgets/boing_backdrop.dart';
 import '../widgets/workbench_sidebar.dart';
+import '../data/file_category.dart';
+import '../data/media_library.dart';
+import '../data/music_player.dart';
 import '../data/save_states.dart';
 import '../data/session.dart';
 import 'about_panel.dart';
@@ -54,7 +57,35 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     super.initState();
     _restartIdleTimer();
     _refreshSession();
-    WidgetsBinding.instance.addObserver(_LifecycleWatch(_refreshSession));
+    _startMusic();
+    WidgetsBinding.instance.addObserver(_watch);
+  }
+
+  late final _LifecycleWatch _watch = _LifecycleWatch(
+    onResumed: () {
+      _refreshSession();
+      MusicPlayer.resumeIfSuspended();
+    },
+    // Minimising should be silent: the launcher's music playing out of a
+    // pocket while the app is not on screen is nobody's idea of a feature.
+    onPaused: MusicPlayer.suspend,
+  );
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(_watch);
+    _idleTimer?.cancel();
+    super.dispose();
+  }
+
+  /// Puts a tune on while the workbench is up.
+  Future<void> _startMusic() async {
+    final MediaIndex index = await MediaLibrary.cached();
+    final List<String> tunes = index.files
+        .where((MediaFile f) => f.category == FileCategory.music)
+        .map((MediaFile f) => f.path)
+        .toList();
+    await MusicPlayer.playRandom(tunes);
   }
 
   Future<void> _refreshSession() async {
@@ -70,12 +101,6 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
         _section = WorkbenchSection.setups;
       }
     });
-  }
-
-  @override
-  void dispose() {
-    _idleTimer?.cancel();
-    super.dispose();
   }
 
   void _restartIdleTimer() {
@@ -256,12 +281,24 @@ class _DemoMasthead extends StatelessWidget {
 /// while another process was in charge - the session marker, written by the
 /// emulator - is re-read rather than assumed.
 class _LifecycleWatch extends WidgetsBindingObserver {
-  _LifecycleWatch(this.onResumed);
+  _LifecycleWatch({required this.onResumed, required this.onPaused});
 
   final void Function() onResumed;
+  final void Function() onPaused;
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) onResumed();
+    switch (state) {
+      case AppLifecycleState.resumed:
+        onResumed();
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+      case AppLifecycleState.hidden:
+        onPaused();
+      case AppLifecycleState.inactive:
+        // Transient - a notification shade, a permission dialog - and
+        // silencing on it makes the music stutter every time one appears.
+        break;
+    }
   }
 }

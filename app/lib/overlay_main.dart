@@ -49,6 +49,22 @@ class OverlayPad {
   );
 
   static Future<void> openMenu() => _channel.invokeMethod('openMenu');
+
+  /// The rest of what a session needs, drawn here rather than by the Activity
+  /// so the icons are the same Material set the launcher uses - which is what
+  /// the C64 front end does too. The Activity keeps the behaviour; this just
+  /// asks for it.
+  static Future<void> togglePause() => _channel.invokeMethod('togglePause');
+  static Future<void> toggleKeyboard() =>
+      _channel.invokeMethod('toggleKeyboard');
+  static Future<void> togglePad() => _channel.invokeMethod('togglePad');
+
+  /// [drive] 0 is DF0, 1 is DF1. Swapping mid-game is what a multi-disk game
+  /// needs and the reason this is on the strip rather than in a menu.
+  static Future<void> insertDisk(int drive) =>
+      _channel.invokeMethod('insertDisk', <String, Object?>{'drive': drive});
+
+  static Future<void> quit() => _channel.invokeMethod('quit');
 }
 
 class EmulatorOverlayApp extends StatelessWidget {
@@ -129,13 +145,42 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
             ),
           ),
 
-          // Menu, top right.
+          // The session strip, top right. Toggles only - nothing here opens a
+          // menu, and each icon says what it does.
           Positioned(
             right: 12 + safe.right,
             top: 12 + safe.top,
-            child: _OverlayIconButton(
-              icon: Icons.pause,
-              onPressed: OverlayPad.openMenu,
+            child: Column(
+              children: <Widget>[
+                _OverlayIconButton(
+                  icon: Icons.pause,
+                  onPressed: OverlayPad.togglePause,
+                ),
+                const SizedBox(height: 10),
+                _OverlayIconButton(
+                  icon: Icons.videogame_asset,
+                  onPressed: OverlayPad.togglePad,
+                ),
+                const SizedBox(height: 10),
+                _OverlayIconButton(
+                  icon: Icons.keyboard,
+                  onPressed: OverlayPad.toggleKeyboard,
+                ),
+                const SizedBox(height: 10),
+                // Insert a disk in DF0.
+                _OverlayIconButton(
+                  icon: Icons.save,
+                  onPressed: () => OverlayPad.insertDisk(0),
+                ),
+                const SizedBox(height: 10),
+                // The second drive, for a game that asks for disk two while it
+                // is running - which is the whole reason this is reachable
+                // without leaving the game.
+                _OverlayIconButton(
+                  icon: Icons.swap_horiz,
+                  onPressed: () => OverlayPad.insertDisk(1),
+                ),
+              ],
             ),
           ),
         ],

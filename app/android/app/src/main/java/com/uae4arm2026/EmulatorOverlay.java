@@ -55,14 +55,22 @@ final class EmulatorOverlay {
 		void onButton(int pad, int button, boolean pressed);
 		void onReleaseAll(int pad);
 		void onMenuRequested();
+
+		/** The session strip, drawn by Flutter so the icons match the launcher. */
+		void onTogglePause();
+		void onToggleKeyboard();
+		void onTogglePad();
+		void onInsertDisk(int drive);
+		void onQuit();
 	}
 
 	EmulatorOverlay(Activity activity) {
 		this.activity = activity;
 	}
 
-	/** Builds the engine and stacks a transparent FlutterView over the emulator. */
-	void attach(PadListener listener) {
+	/** Builds the engine and stacks a transparent FlutterView over the emulator.
+	 *  Returns false if it could not start, so the caller can fall back. */
+	boolean attach(PadListener listener) {
 		try {
 			engine = new FlutterEngine(activity);
 			engine.getDartExecutor().executeDartEntrypoint(
@@ -76,7 +84,7 @@ final class EmulatorOverlay {
 			if (!engine.getDartExecutor().isExecutingDart()) {
 				Log.e(TAG, "the overlay engine did not start; running without it");
 				detach();
-				return;
+				return false;
 			}
 
 			new MethodChannel(engine.getDartExecutor().getBinaryMessenger(), CHANNEL)
@@ -110,6 +118,26 @@ final class EmulatorOverlay {
 							listener.onMenuRequested();
 							result.success(true);
 							break;
+						case "togglePause":
+							listener.onTogglePause();
+							result.success(true);
+							break;
+						case "toggleKeyboard":
+							listener.onToggleKeyboard();
+							result.success(true);
+							break;
+						case "togglePad":
+							listener.onTogglePad();
+							result.success(true);
+							break;
+						case "insertDisk":
+							listener.onInsertDisk(arg(call.argument("drive"), 0));
+							result.success(true);
+							break;
+						case "quit":
+							listener.onQuit();
+							result.success(true);
+							break;
 						default:
 							result.notImplemented();
 					}
@@ -126,9 +154,11 @@ final class EmulatorOverlay {
 				ViewGroup.LayoutParams.MATCH_PARENT));
 
 			engine.getLifecycleChannel().appIsResumed();
+			return true;
 		} catch (Exception e) {
 			Log.e(TAG, "could not attach the Flutter overlay", e);
 			detach();
+			return false;
 		}
 	}
 

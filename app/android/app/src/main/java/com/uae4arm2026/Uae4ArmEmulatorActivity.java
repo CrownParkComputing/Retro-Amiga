@@ -90,14 +90,21 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 		//
 		// What is left is what a session needs: the pad, the keyboard, a disk
 		// swap when there is more than one disk, and a way out.
-		ensureControllerButtonOverlay();
-		if (shouldShowKeyboardButton()) {
-			ensureKeyboardButtonOverlay();
+		// No Java buttons: the Flutter overlay draws the strip, with the same
+		// Material icons the launcher uses. They are only built when the
+		// overlay could not start, so a session is never left with no way to
+		// pause or get out.
+		if (flutterOverlay == null) {
+			ensureControllerButtonOverlay();
+			if (shouldShowKeyboardButton()) {
+				ensureKeyboardButtonOverlay();
+			}
+			if (configHasFloppyDrive(0)) {
+				ensureFloppyButtonOverlay();
+			}
+			ensurePauseButtonOverlay();
+			ensureQuitButtonOverlay();
 		}
-		if (configHasFloppyDrive(0)) {
-			ensureFloppyButtonOverlay();
-		}
-		ensurePauseButtonOverlay();
 		// No quit icon: back leaves the game and returns to the shelf, which
 		// is one way of doing it rather than two. The four that remain are the
 		// ones that change something about the session in progress - pad,
@@ -951,8 +958,8 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 
 	/** Stacks the Flutter-drawn controls over SDL's surface. */
 	private void attachFlutterOverlay() {
-		flutterOverlay = new EmulatorOverlay(this);
-		flutterOverlay.attach(new EmulatorOverlay.PadListener() {
+		final EmulatorOverlay overlay = new EmulatorOverlay(this);
+		final boolean started = overlay.attach(new EmulatorOverlay.PadListener() {
 			@Override public void onAttach(int pad) { nativePadAttach(pad); }
 
 			@Override public void onDirection(int pad, boolean left, boolean right, boolean up, boolean down) {
@@ -965,8 +972,35 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 
 			@Override public void onReleaseAll(int pad) { nativePadReleaseAll(pad); }
 
+			// Each of these is the action the Java button used to run; the
+			// icons moved to Flutter, the behaviour did not.
+			@Override public void onTogglePause() {
+				runOnUiThread(Uae4ArmEmulatorActivity.this::togglePause);
+			}
+
+			@Override public void onToggleKeyboard() {
+				runOnUiThread(Uae4ArmEmulatorActivity.this::toggleVirtualKeyboardFromNative);
+			}
+
+			@Override public void onTogglePad() {
+				runOnUiThread(Uae4ArmEmulatorActivity.this::toggleOnScreenController);
+			}
+
+			@Override public void onInsertDisk(int drive) {
+				runOnUiThread(() -> showFloppyPicker(drive));
+			}
+
+			@Override public void onQuit() {
+				runOnUiThread(Uae4ArmEmulatorActivity.this::returnToLauncher);
+			}
+
 			@Override public void onMenuRequested() { runOnUiThread(() -> showPauseMenu()); }
 		});
+
+		// Only kept if it actually started. Leaving the field set after a
+		// failure would mean no strip at all: neither the Flutter one, which
+		// is not running, nor the Java fallback, which checks this field.
+		flutterOverlay = started ? overlay : null;
 	}
 
 	@Override

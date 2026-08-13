@@ -9,6 +9,7 @@ import 'amiga_model.dart';
 import 'app_log.dart';
 import 'file_category.dart';
 import 'host_paths.dart';
+import 'media_root.dart';
 
 /// One file the scan found.
 class MediaFile {
@@ -278,11 +279,13 @@ class MediaLibrary {
     int fileLimit = 5000,
   }) async {
     final List<String> scanRoots = roots ?? await defaultRoots();
+    // Archives are only worth indexing inside the media folder - see _walk.
+    final String mediaRoot = await MediaRoot.path();
 
     // Only sendable values cross the isolate boundary, so the walk returns
     // plain maps and they are turned back into MediaFiles here.
     final List<Map<String, Object>> raw = await Isolate.run(
-      () => _walk(scanRoots, maxDepth, fileLimit),
+      () => _walk(scanRoots, maxDepth, fileLimit, mediaRoot),
     );
 
     final List<MediaFile> found = <MediaFile>[];
@@ -354,6 +357,7 @@ class MediaLibrary {
     List<String> roots,
     int maxDepth,
     int fileLimit,
+    String mediaRoot,
   ) {
     final List<Map<String, Object>> found = <Map<String, Object>>[];
 
@@ -373,6 +377,18 @@ class MediaLibrary {
         } else if (entry is File) {
           final FileCategory? category = FileCategory.fromPath(entry.path);
           if (category == null) continue;
+
+          // A zip is not Amiga media until something opens it, and a handheld
+          // holds thousands of them for other machines: this device indexed
+          // 1800 zips of Spectrum and C64 games against 115 Amiga files.
+          // Inside the media folder they are worth keeping, because import
+          // unpacks those and the WHDLoad boot archive lives there. Anywhere
+          // else they are noise that slows every scan and every load of the
+          // index.
+          if (category == FileCategory.archives &&
+              !entry.path.startsWith('$mediaRoot/')) {
+            continue;
+          }
           int size = 0;
           try {
             size = entry.lengthSync();
