@@ -357,6 +357,26 @@ class WhdloadSupport {
         file.writeAsBytesSync(data.buffer.asUint8List(), flush: true);
       }
 
+      // The relocation tables, next to where the ROMs get placed. WHDLoad's
+      // kick-emulation needs the pair - kickNNNNN.XNNN plus its .RTB - and
+      // the tables are the half that may legally ship with the app.
+      final Directory kickstarts =
+          Directory('${dir.path}/save-data/Kickstarts');
+      if (!kickstarts.existsSync()) kickstarts.createSync(recursive: true);
+      for (final String name in <String>[
+        'kick33180.A500.RTB',
+        'kick33192.A500.RTB',
+        'kick34005.A500.RTB',
+        'kick40063.A600.RTB',
+        'kick40068.A1200.RTB',
+        'kick40068.A4000.RTB',
+      ]) {
+        final File table = File('${kickstarts.path}/$name');
+        if (table.existsSync() && table.lengthSync() > 0) continue;
+        final ByteData data = await rootBundle.load('assets/whdboot/$name');
+        table.writeAsBytesSync(data.buffer.asUint8List(), flush: true);
+      }
+
       final Directory gameData = Directory('${dir.path}/game-data');
       if (!gameData.existsSync()) gameData.createSync(recursive: true);
       final File database = File('${gameData.path}/whdload_db.xml');

@@ -35,5 +35,15 @@ flutter:
     - assets/whdboot/WHDLoad
     - assets/whdboot/JST
     - assets/whdboot/AmiQuit
+    # Relocation tables from skick (freely distributable, unlike the ROMs
+    # they patch). WHDLoad's kick-emulation needs kickNNNNN.XNNN.RTB next to
+    # the matching ROM in Devs/Kickstarts, and without one the game stops on
+    # a requester about a file most people have never heard of.
+    - assets/whdboot/kick33180.A500.RTB
+    - assets/whdboot/kick33192.A500.RTB
+    - assets/whdboot/kick34005.A500.RTB
+    - assets/whdboot/kick40063.A600.RTB
+    - assets/whdboot/kick40068.A1200.RTB
+    - assets/whdboot/kick40068.A4000.RTB
     - assets/images/retro_recomp_logo.png
     - assets/machines/
