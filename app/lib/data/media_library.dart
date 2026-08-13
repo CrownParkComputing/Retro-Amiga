@@ -208,9 +208,16 @@ class MediaLibrary {
     // it turns their libraries into this one's.
     final String root = await MediaRoot.path();
     final String documents = await HostPaths.documents();
+    final String home = Platform.environment['HOME'] ?? '';
     return <String>[
       root,
-      if (documents != root && Directory(documents).existsSync()) documents,
+      // Documents, but never home itself. A home directory is every project
+      // and every other emulator on the machine, and walking it is how qemu's
+      // boot floppies and a PS2 disc ended up in an Amiga library.
+      if (documents != root &&
+          documents != home &&
+          Directory(documents).existsSync())
+        documents,
     ];
   }
 
@@ -265,9 +272,40 @@ class MediaLibrary {
     'whatsapp',
   ];
 
-  static bool _shouldSkip(String path, {required bool atRoot}) {
+  /// Directories that hold copies of things rather than things.
+  ///
+  /// A desktop scan walks source trees, and a build directory is the same
+  /// files again: this machine's home held five copies of one tune, in
+  /// assets/, build/flutter_assets/ and build/unit_test_assets/. Matched as a
+  /// whole path element so a game called "Target" is not skipped for being
+  /// spelt like a Rust build folder.
+  static const List<String> _skipDirectories = <String>[
+    'build',
+    'out',
+    'target',
+    'node_modules',
+    '.git',
+    '.dart_tool',
+    '.gradle',
+    '.cache',
+  ];
+
+  static bool _shouldSkip(
+    String path, {
+    required bool atRoot,
+    required String mediaRoot,
+  }) {
+    // Nothing inside the media folder is ever skipped. Everything there is
+    // there because the user or the import put it there, and the phone-media
+    // names below would otherwise eat the app's own Music directory - which
+    // is exactly what happened on the desktop, where the media folder is
+    // itself a scan root and its Music sits one level down.
+    if (mediaRoot.isNotEmpty && path.startsWith('$mediaRoot/')) return false;
     final String lower = path.toLowerCase();
     if (_skipAnywhere.any(lower.contains)) return true;
+    final int lastSlash = lower.lastIndexOf('/');
+    final String element = lastSlash < 0 ? lower : lower.substring(lastSlash + 1);
+    if (_skipDirectories.contains(element)) return true;
     if (!atRoot) return false;
     final int slash = lower.lastIndexOf('/');
     final String name = slash < 0 ? lower : lower.substring(slash + 1);
@@ -363,6 +401,87 @@ class MediaLibrary {
     }
   }
 
+  /// Extensions that belong to the Amiga and to half the other machines in
+  /// the room. Everything not listed here - adf, hdf, lha, rom - names an
+  /// Amiga file wherever it is found.
+  static const Set<String> _ambiguous = <String>{
+    'img', 'st', 'dsk', 'ima', 'bin', 'iso', 'chd', 'cue', 'ccd', 'mds',
+    'nrg', 'vhd', 'hdi',
+  };
+
+  static bool _isAmbiguousExtension(String path) {
+    final int dot = path.lastIndexOf('.');
+    if (dot < 0) return false;
+    return _ambiguous.contains(path.substring(dot + 1).toLowerCase());
+  }
+
+  /// Whether this file is only music because of the Amiga's "mod.name" way
+  /// round, rather than because of its extension.
+  static bool _isPrefixNamed(String path) {
+    final int slash = path.lastIndexOf('/');
+    final String name =
+        (slash < 0 ? path : path.substring(slash + 1)).toLowerCase();
+    return name.startsWith('mod.') || name.startsWith('med.');
+  }
+
+  /// Suffixes that mean "this mod. is somebody's source file".
+  static const Set<String> _codeSuffixes = <String>{
+    'rs', 'js', 'ts', 'py', 'c', 'h', 'cc', 'cpp', 'hpp', 'go', 'rb', 'php',
+    'java', 'kt', 'dart', 'swift', 'sh', 'md', 'txt', 'json', 'yaml', 'yml',
+    'toml', 'lock', 'info', 'html', 'css', 'xml', 'cmake', 'am', 'in',
+  };
+
+  /// Whether a file named the Amiga way round - mod.axel_f - is really a tune.
+  ///
+  /// The magic at offset 1080 settles it when it is there, but it is not
+  /// always: the fifteen-sample modules that came before M.K. have no tag at
+  /// all, and Modland is full of them. So a file is also taken as a tune when
+  /// it is big enough to be one and its suffix is not a programming language -
+  /// which is what mod.rs, mod.js and mod.ts are, and they were being indexed
+  /// as music.
+  static bool isNamedModule(String path, int size) {
+    final int dot = path.lastIndexOf('.');
+    final String suffix =
+        dot < 0 ? '' : path.substring(dot + 1).toLowerCase();
+    if (_codeSuffixes.contains(suffix)) return false;
+    if (size < 1084) return false;
+    return true;
+  }
+
+  /// Whether a file is a tracker module.
+  ///
+  /// A ProTracker module names its format at offset 1080 - M.K. for the
+  /// four-channel original, and a handful of others for the variants that
+  /// followed. Anything shorter than that is not a module whatever it is
+  /// called.
+  static bool looksLikeModule(File file) {
+    const List<String> tags = <String>[
+      'M.K.', 'M!K!', 'M&K!', 'FLT4', 'FLT8', '4CHN', '6CHN', '8CHN',
+      'CD81', 'OKTA', '16CN', '32CN',
+    ];
+    try {
+      final RandomAccessFile handle = file.openSync();
+      try {
+        if (handle.lengthSync() < 1084) return false;
+        handle.setPositionSync(1080);
+        final List<int> tag = handle.readSync(4);
+        if (tag.length < 4) return false;
+        final String text = String.fromCharCodes(tag);
+        if (tags.contains(text)) return true;
+        // OctaMED and the 15-sample originals say so at the very start
+        // instead.
+        handle.setPositionSync(0);
+        final List<int> head = handle.readSync(4);
+        return head.length == 4 && String.fromCharCodes(head) == 'MMD0' ||
+            String.fromCharCodes(head) == 'MMD1';
+      } finally {
+        handle.closeSync();
+      }
+    } on FileSystemException {
+      return false;
+    }
+  }
+
   /// Runs inside the scan isolate. Top-level work only: no plugins, no UI.
   static List<Map<String, Object>> _walk(
     List<String> roots,
@@ -371,6 +490,10 @@ class MediaLibrary {
     String mediaRoot,
   ) {
     final List<Map<String, Object>> found = <Map<String, Object>>[];
+    // One entry per file. Roots can contain one another - the media folder
+    // lives inside home on a desktop - and without this every file under the
+    // inner one was indexed twice, which is why the counts read high.
+    final Set<String> seen = <String>{};
 
     void walkDir(Directory dir, int depth) {
       if (depth > maxDepth || found.length >= fileLimit) return;
@@ -382,7 +505,9 @@ class MediaLibrary {
       }
       for (final FileSystemEntity entry in entries) {
         if (found.length >= fileLimit) return;
-        if (_shouldSkip(entry.path, atRoot: depth == 0)) continue;
+        if (_shouldSkip(entry.path, atRoot: depth == 0, mediaRoot: mediaRoot)) {
+          continue;
+        }
         if (entry is Directory) {
           walkDir(entry, depth + 1);
         } else if (entry is File) {
@@ -400,17 +525,36 @@ class MediaLibrary {
               !entry.path.startsWith('$mediaRoot/')) {
             continue;
           }
+
+          // Extensions the Amiga shares with everything else. A desktop is
+          // full of them - qemu's .img and .st boot floppies, PS2 .chd discs,
+          // a DOSBox .lha - and outside the media folder none of them is an
+          // Amiga disk. Inside it they are, because that is where import puts
+          // what the user said was Amiga media.
+          if (_isAmbiguousExtension(entry.path) &&
+              !entry.path.startsWith('$mediaRoot/')) {
+            continue;
+          }
           int size = 0;
           try {
             size = entry.lengthSync();
           } on FileSystemException {
             continue;
           }
-          // Only ROMs are checked by content: the extension is ambiguous for
-          // those and good enough for the rest.
+          // Checked by content, because the name lies for both of these.
           if (category == FileCategory.roms && !looksLikeKickstart(entry)) {
             continue;
           }
+          // "mod.name" is the Amiga's way round, and it is also how Rust
+          // names a module: this scan indexed fifty mod.rs files, eleven
+          // mod.js and nine mod.ts as tunes. A module says what it is at
+          // offset 1080, so ask it.
+          if (category == FileCategory.music &&
+              _isPrefixNamed(entry.path) &&
+              !isNamedModule(entry.path, size)) {
+            continue;
+          }
+          if (!seen.add(entry.path)) continue;
           found.add(<String, Object>{
             'path': entry.path,
             'category': category.name,
@@ -420,7 +564,11 @@ class MediaLibrary {
       }
     }
 
-    for (final String root in roots) {
+    // Shortest first, so an outer root is walked before anything nested in
+    // it and the nested one then finds nothing left to add.
+    final List<String> ordered = roots.toList()
+      ..sort((String a, String b) => a.length.compareTo(b.length));
+    for (final String root in ordered) {
       final Directory dir = Directory(root);
       if (dir.existsSync()) walkDir(dir, 0);
     }
