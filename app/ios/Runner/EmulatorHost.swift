@@ -63,14 +63,19 @@ final class EmulatorHost {
     if running {
       throw HostError.message("Emulation is already running.")
     }
-    // A second game is a restart, not a second run. The core can only be run
-    // once in a process - it tears SDL down on the way out, and running it
-    // again blocks in SDL's startup, which on iOS freezes the app because the
-    // core has the main thread. So the core is never ended: it is handed the
-    // new machine and its own restart loop picks it up.
+    // One game per launch of the app, for now.
+    //
+    // The core cannot be run twice in a process: the second run stops partway
+    // through its own path setup, before it reserves memory, and never comes
+    // back. Restarting it in place instead - uae_restart, which the core uses
+    // for Reboot - works, but only while the core still holds the main thread,
+    // and holding it means the launcher cannot draw. The two cannot both be
+    // true on a host that runs the core on the main thread, so this refuses
+    // rather than freezing.
     if hasRun {
-      try restart(args: args)
-      return
+      throw HostError.message(
+        "The emulator can only be started once per session. "
+        + "Close and reopen the app to play another game.")
     }
     guard let handle = load() else {
       throw HostError.message("The emulator core could not be loaded.")
@@ -143,14 +148,17 @@ final class EmulatorHost {
 
   /// Leaves the game and gives the screen back to the launcher.
   ///
-  /// Deliberately does NOT end the core. Emulation pauses and the emulator's
-  /// window is hidden, so the core stays in its own loop with the main thread
-  /// pumping - which is what lets the next game be a restart rather than a
-  /// second run the process cannot survive.
+  /// Ends the core, which is the only way the launcher gets the main thread
+  /// back. Pausing and hiding the window was tried and left the app frozen:
+  /// the core owns the main thread while it loops, paused or not, so Flutter
+  /// never runs again. The log from that attempt says it plainly - the game
+  /// rendered, the core never returned, and nothing responded until the app
+  /// was killed.
+  ///
+  /// The cost is that another game needs the app reopened; see [launch].
   func quit() {
-    setPaused(true)
-    setEmulationVisible(false)
-    controls.hide()
+    guard let fn = symbol("uae4arm_host_quit") else { return }
+    unsafeBitCast(fn, to: VoidFn.self)()
   }
 
   /// Hands the running core a different machine.
