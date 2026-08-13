@@ -1696,17 +1696,21 @@ void check_error_sdl(const bool check, const char* message)
 static int real_main2 (int argc, TCHAR **argv)
 {
 	set_config_changed();
+	write_log(_T("startup: prefs reset\n"));
 	if (restart_config[0]) {
 		default_prefs (&currprefs, true, 0);
 		fixup_prefs (&currprefs, true);
 	}
+	write_log(_T("startup: graphics setup\n"));
 
 	if (!graphics_setup()) {
 		abort();
 	}
 
+	write_log(_T("startup: events\n"));
 	event_init();
 
+	write_log(_T("startup: command line\n"));
 	if (restart_config[0]) {
 		parse_cmdline_and_init_file(argc, argv);
 	} else {
@@ -1840,6 +1844,7 @@ void real_main (int argc, TCHAR **argv)
 	default_config = 1;
 
 	while (restart_program) {
+		write_log(_T("startup: pass begins (restart_program=%d)\n"), restart_program);
 		copy_prefs(&currprefs, &changed_prefs);
 		const auto ret = real_main2 (argc, argv);
 		if (ret == 0 && quit_to_gui)
