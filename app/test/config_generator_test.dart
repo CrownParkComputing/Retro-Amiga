@@ -328,5 +328,42 @@ void _hardfileTests() {
       expect(line, isNot(contains('uaehf.device')));
       expect(line, contains(',512,0,,uae0'));
     });
+
+    test('a big set goes on the UAE controller, not IDE', () {
+      // A real A600/A1200/A4000 IDE has two units and the core models that,
+      // so an AGS set of ten drives on ide0..ide9 gives a machine that starts
+      // and never boots.
+      final EmulatorSettings settings =
+          EmulatorSettings.fromModel(AmigaModel.a1200).copyWith(
+        hardDrives: <String>[
+          '/ags/Workbench.hdf',
+          '/ags/Games.hdf',
+          '/ags/Music.hdf',
+          '/ags/Work.hdf',
+        ],
+      );
+      final List<String> lines = ConfigGenerator.generate(settings)
+          .split('\n')
+          .where((String l) => l.startsWith('hardfile2='))
+          .toList();
+
+      expect(lines, hasLength(4));
+      expect(lines.every((String l) => l.contains(',uae')), isTrue,
+          reason: 'every drive should be on the UAE controller');
+      expect(lines.any((String l) => l.contains(',ide')), isFalse);
+    });
+
+    test('two drives still use IDE on a machine that has one', () {
+      final EmulatorSettings settings =
+          EmulatorSettings.fromModel(AmigaModel.a1200).copyWith(
+        hardDrives: <String>['/hd/one.hdf', '/hd/two.hdf'],
+      );
+      final List<String> lines = ConfigGenerator.generate(settings)
+          .split('\n')
+          .where((String l) => l.startsWith('hardfile2='))
+          .toList();
+      expect(lines, hasLength(2));
+      expect(lines.every((String l) => l.contains(',ide')), isTrue);
+    });
   });
 }

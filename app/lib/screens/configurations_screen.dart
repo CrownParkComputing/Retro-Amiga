@@ -53,6 +53,7 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
       _machine = present.first;
     }
   }
+
   bool _loading = true;
   String? _error;
 
@@ -92,38 +93,50 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
       // this a scrolling list on a handheld's short landscape screen, and a
       // one-line label answers "what are you setting up" on its own.
       builder: (BuildContext context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 0, 20, 6),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'What are you setting up?',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                ),
-              ),
-            ),
-            ...WizardMode.values
-                .where((WizardMode m) => m != WizardMode.edit)
-                .map(
-                  (WizardMode m) => ListTile(
-                    dense: true,
-                    visualDensity: VisualDensity.compact,
-                    title: Text(m.title),
-                    trailing: Text(
-                      m.blurb,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: AmigaColors.textDim,
-                      ),
-                    ),
-                    onTap: () => Navigator.of(context).pop(m),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              const Padding(
+                padding: EdgeInsets.fromLTRB(20, 0, 20, 6),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'What are you setting up?',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                   ),
                 ),
-            const SizedBox(height: 8),
-          ],
+              ),
+              ...WizardMode.values
+                  .where((WizardMode m) => m != WizardMode.edit)
+                  .map(
+                    (WizardMode m) => ListTile(
+                      dense: true,
+                      visualDensity: VisualDensity.compact,
+                      title: Text(m.title),
+                      // The blurb is constrained rather than free: a ListTile's
+                      // trailing slot takes its child's natural width, and
+                      // "ADF, ADZ, IPF and the rest" is wider than what is left
+                      // on a handheld - which is the overflow.
+                      trailing: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 220),
+                        child: Text(
+                          m.blurb,
+                          textAlign: TextAlign.right,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: AmigaColors.textDim,
+                          ),
+                        ),
+                      ),
+                      onTap: () => Navigator.of(context).pop(m),
+                    ),
+                  ),
+              const SizedBox(height: 8),
+            ],
+          ),
         ),
       ),
     );
@@ -186,42 +199,46 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : _configs.isEmpty
-                      ? const _EmptyShelf()
-                      : RefreshIndicator(
-                          onRefresh: _reload,
-                          child: LayoutBuilder(
-                            builder: (
-                              BuildContext context,
-                              BoxConstraints constraints,
-                            ) {
+                  ? const _EmptyShelf()
+                  : RefreshIndicator(
+                      onRefresh: _reload,
+                      child: LayoutBuilder(
+                        builder:
+                            (BuildContext context, BoxConstraints constraints) {
                               // Cards sized so the machine photo is worth
                               // showing; three across a handheld, more on a
                               // tablet.
                               // Small enough that a shelf of setups reads as
                               // a shelf rather than two posters.
-                              final int columns =
-                                  (constraints.maxWidth / 130).floor().clamp(2, 10);
+                              final int columns = (constraints.maxWidth / 130)
+                                  .floor()
+                                  .clamp(2, 10);
                               return GridView.builder(
-                                padding: const EdgeInsets.fromLTRB(14, 6, 14, 96),
+                                padding: const EdgeInsets.fromLTRB(
+                                  14,
+                                  6,
+                                  14,
+                                  96,
+                                ),
                                 gridDelegate:
                                     SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: columns,
-                                  childAspectRatio: 1.0,
-                                  crossAxisSpacing: 10,
-                                  mainAxisSpacing: 10,
-                                ),
+                                      crossAxisCount: columns,
+                                      childAspectRatio: 1.0,
+                                      crossAxisSpacing: 10,
+                                      mainAxisSpacing: 10,
+                                    ),
                                 itemCount: _visible.length,
                                 itemBuilder: (BuildContext context, int i) =>
                                     _SetupCard(
-                                  config: _visible[i],
-                                  onPlay: () => _play(_visible[i]),
-                                  onDelete: () => _delete(_visible[i]),
-                                  onEdit: () => _edit(_visible[i]),
-                                ),
+                                      config: _visible[i],
+                                      onPlay: () => _play(_visible[i]),
+                                      onDelete: () => _delete(_visible[i]),
+                                      onEdit: () => _edit(_visible[i]),
+                                    ),
                               );
                             },
-                          ),
-                        ),
+                      ),
+                    ),
             ),
           ],
         ),
@@ -253,9 +270,7 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
           for (final AmigaModel model in _machinesPresent)
             _MachinePill(
               label: model.displayName,
-              count: _configs
-                  .where((SavedConfig c) => c.model == model)
-                  .length,
+              count: _configs.where((SavedConfig c) => c.model == model).length,
               selected: _machine == model,
               onTap: () => setState(() => _machine = model),
             ),
@@ -306,11 +321,11 @@ class _SetupCard extends StatelessWidget {
                           : Image.asset(
                               config.model!.artworkPath,
                               fit: BoxFit.contain,
-                              errorBuilder: (
-                                BuildContext c,
-                                Object e,
-                                StackTrace? s,
-                              ) => const Center(child: AmigaLogo(height: 34)),
+                              errorBuilder:
+                                  (BuildContext c, Object e, StackTrace? s) =>
+                                      const Center(
+                                        child: AmigaLogo(height: 34),
+                                      ),
                             ),
                     ),
                     Positioned(
