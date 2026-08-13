@@ -374,7 +374,8 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 		if (isBackTrapped()) {
 			showPauseMenu();
 		} else {
-			finish();
+			// Back out of a game the same way the X does: to the launcher.
+			returnToLauncher();
 		}
 	}
 
@@ -500,6 +501,23 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 			nativeSetPause(false);
 			pauseMenuPausedEmulation = false;
 		}
+	}
+
+	/**
+	 * Ends the session and puts the launcher back on screen.
+	 *
+	 * finish() alone is not enough. The emulator runs in its own :sdl process
+	 * and SDL exits that process on the way out; if the launcher's process is
+	 * not brought forward first, the task goes with it and the user lands on
+	 * the home screen. Closing a game should return to where the game was
+	 * started from, not close the app.
+	 */
+	private void returnToLauncher() {
+		HostSupport.writeCleanExitMarker(this);
+		Intent intent = new Intent(this, MainActivity.class);
+		intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+		startActivity(intent);
+		finish();
 	}
 
 	private void openDetailedSettings() {
@@ -809,10 +827,7 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 	private void ensureQuitButtonOverlay() {
 		if (quitButton != null) return;
 		quitButton = addOverlayIconButton(android.R.drawable.ic_menu_close_clear_cancel,
-			overlayContainer.getChildCount() == 0, v -> {
-				HostSupport.writeCleanExitMarker(Uae4ArmEmulatorActivity.this);
-				finish();
-			});
+			overlayContainer.getChildCount() == 0, v -> returnToLauncher());
 	}
 
 	public void toggleVirtualKeyboardFromNative() {
