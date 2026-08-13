@@ -1,5 +1,7 @@
 import 'package:flutter/services.dart';
 
+import 'data/whdload_support.dart';
+
 import 'data/app_log.dart';
 import 'data/music_player.dart';
 import 'data/session.dart';
@@ -76,7 +78,21 @@ class Emulator {
   /// only the key set the machine boots to Workbench and the game never runs,
   /// and nothing in the log mentions WHDLoad at all.
   static Future<void> launchConfig(String configPath,
-      {String whdloadArchive = ''}) {
+      {String whdloadArchive = ''}) async {
+    // A WHDLoad game needs Amiberry's booter, and the booter needs its boot
+    // archive mounted as DH3. Without it the machine boots to Workbench and
+    // stops on "No disk present in device DH3" - a dead end that says nothing
+    // about WHDLoad and, on iOS, could not even be left. Better to say so
+    // before starting a machine that cannot run the game.
+    if (whdloadArchive.isNotEmpty) {
+      final WhdloadStatus status = await WhdloadSupport.status();
+      if (!status.ready) {
+        throw Exception(
+          'This game needs the WHDLoad boot files, which are not installed. '
+          'Settings > WHDLoad installs them from a boot archive.',
+        );
+      }
+    }
     return launch(<String>[
       '--rescan-roms',
       '--config',

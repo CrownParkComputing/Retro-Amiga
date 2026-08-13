@@ -77,6 +77,13 @@ final class EmulatorHost {
       unsafeBitCast(readySymbol, to: SetMainReadyFn.self)()
     }
 
+    // The controls go up before the core takes the main thread: once it has
+    // it, nothing else on this thread runs until emulation ends, so there
+    // would be no later moment to add them.
+    controls.onQuit = { [weak self] in self?.quit() }
+    controls.onPause = { [weak self] paused in self?.setPaused(paused) }
+    controls.show()
+
     let run = unsafeBitCast(runSymbol, to: RunFn.self)
     // argv[0] is the program name, as the core's option parser expects.
     let argv: [String] = ["Amiga-Retro"] + args
@@ -96,6 +103,7 @@ final class EmulatorHost {
       for pointer in cStrings where pointer != nil {
         free(pointer)
       }
+      self?.controls.hide()
       self?.running = false
     }
   }
@@ -113,6 +121,22 @@ final class EmulatorHost {
   private typealias FloatFn = @convention(c) () -> Float
   private typealias SetFloatFn = @convention(c) (Float) -> Void
   private typealias StringFn = @convention(c) () -> UnsafePointer<CChar>?
+
+  /// The in-game controls, which iOS has to draw itself - see
+  /// EmulatorControls for why Flutter cannot.
+  private let controls = EmulatorControls()
+
+  /// Ends emulation. The core unwinds on its next frame, uae4arm_host_run
+  /// returns, and the launcher's own window is on top again.
+  func quit() {
+    guard let fn = symbol("uae4arm_host_quit") else { return }
+    unsafeBitCast(fn, to: VoidFn.self)()
+  }
+
+  func setPaused(_ paused: Bool) {
+    guard let fn = symbol("uae4arm_host_set_pause") else { return }
+    unsafeBitCast(fn, to: SetBoolFn.self)(paused)
+  }
 
   private func symbol(_ name: String) -> UnsafeMutableRawPointer? {
     guard let handle = load() else { return nil }

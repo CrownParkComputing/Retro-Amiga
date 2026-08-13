@@ -17,6 +17,7 @@
 #include "amiberry_input.h"
 #include "protracker.h"
 #include "savestate.h"
+#include "uae.h"
 
 extern void uae_restart(struct uae_prefs* p, int opengui, const TCHAR* cfgfile);
 extern int amiberry_main(int argc, char* argv[]);
@@ -128,6 +129,14 @@ void uae4arm_host_apply_controller_mapping(const int* sdl_to_target, int count)
 	if (!sdl_to_target || count <= 0)
 		return;
 	apply_android_controller_remap(sdl_to_target, count);
+}
+
+void uae4arm_host_quit(void)
+{
+	/* The same call the emulator's own quit menu makes. The main loop picks
+	   it up on the next frame and unwinds, which is what lets the host know
+	   emulation is over rather than having to guess. */
+	uae_quit();
 }
 
 /* ---- mouse ------------------------------------------------------------- */

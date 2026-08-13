@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../data/ags_setup.dart';
@@ -146,6 +147,28 @@ class _SettingsPanelState extends State<SettingsPanel> {
     await _load();
   }
 
+  /// Installs the WHDLoad boot files from an archive the user points at.
+  ///
+  /// The picker rather than a scan, because iOS cannot search storage at all
+  /// and on Android the archive is often somewhere the scan does not look -
+  /// a download, or another emulator's folder.
+  Future<String> _chooseBootArchive() async {
+    final FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.any,
+    );
+    final String? path = result?.files.single.path;
+    if (path == null) return 'Nothing chosen.';
+    final bool installed = await WhdloadSupport.installBootArchive(path);
+    if (!installed) return 'That file could not be installed.';
+    final int roms = await WhdloadSupport.installKickstarts(_index);
+    final WhdloadStatus status = await WhdloadSupport.status();
+    if (mounted) setState(() => _whdload = status);
+    return status.ready
+        ? 'WHDLoad is ready.'
+        : 'Boot files installed'
+            '${roms == 0 ? ', but no Kickstart could be placed.' : '.'}';
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListView(
@@ -207,9 +230,11 @@ class _SettingsPanelState extends State<SettingsPanel> {
           ),
         ),
 
-        // Android only, for the same reason setup is: iOS gives the app
-        // nothing to search for a boot archive.
-        if (Platform.isAndroid) ...<Widget>[
+        // On both now. Android can search storage for a boot archive; iOS
+        // cannot, but it can be handed one through the Files app, and a
+        // WHDLoad game without the boot files is a machine that starts and
+        // stops on a requester about DH3.
+        ...<Widget>[
           const _Header('WHDLoad'),
           Card(
             color: AmigaColors.card,
@@ -227,23 +252,35 @@ class _SettingsPanelState extends State<SettingsPanel> {
                         ? 'Ready to run .lha games'
                         : 'Not ready - ${_whdload.missing.length} missing',
                   ),
-                  subtitle: const Text(
-                    'Installs from a boot archive already on this device.',
+                  subtitle: Text(
+                    Platform.isAndroid
+                        ? 'Installs from a boot archive already on this device.'
+                        : 'Choose a WHDLoad boot archive to install from.',
                   ),
-                  trailing: TextButton(
-                    onPressed: _busy
-                        ? null
-                        : () => _run(() async {
-                              final WhdloadStatus status =
-                                  await WhdloadSupport.install(_index);
-                              return status.ready
-                                  ? 'WHDLoad is ready.'
-                                  : status.bootArchiveInstalled
-                                      ? 'Boot files installed, but no '
-                                          'Kickstart could be placed.'
-                                      : 'No boot archive found.';
-                            }),
-                    child: Text(_whdload.ready ? 'Reinstall' : 'Install'),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      if (Platform.isAndroid)
+                        TextButton(
+                          onPressed: _busy
+                              ? null
+                              : () => _run(() async {
+                                    final WhdloadStatus status =
+                                        await WhdloadSupport.install(_index);
+                                    return status.ready
+                                        ? 'WHDLoad is ready.'
+                                        : status.bootArchiveInstalled
+                                            ? 'Boot files installed, but no '
+                                                'Kickstart could be placed.'
+                                            : 'No boot archive found.';
+                                  }),
+                          child: Text(_whdload.ready ? 'Reinstall' : 'Install'),
+                        ),
+                      TextButton(
+                        onPressed: _busy ? null : () => _run(_chooseBootArchive),
+                        child: const Text('Choose'),
+                      ),
+                    ],
                   ),
                 ),
                 // Each piece listed rather than one verdict: "not installed"

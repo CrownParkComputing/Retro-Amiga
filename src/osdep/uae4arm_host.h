@@ -78,6 +78,12 @@ void uae4arm_host_mouse_button(int button, bool pressed);
 void uae4arm_host_set_pause(bool paused);
 void uae4arm_host_restart(void);
 
+/* Ends emulation, so uae4arm_host_run returns and the host gets its screen
+   back. Needed where the launcher and the emulator are one process - iOS runs
+   the core on the main thread, so without this there is no way out of a game
+   short of killing the app. */
+void uae4arm_host_quit(void);
+
 void uae4arm_host_insert_floppy(int drive, const char* path);
 void uae4arm_host_eject_floppy(int drive);
 int  uae4arm_host_get_floppy_count(void);
