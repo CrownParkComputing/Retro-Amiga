@@ -16,12 +16,19 @@ final class EmulatorControls {
   private var window: PassthroughWindow?
   private var paused = false
   private var pauseButton: UIButton?
+  private var keyboard: AmigaKeyboardView?
 
   /// Called when the player asks to leave the game.
   var onQuit: (() -> Void)?
 
   /// Called with the new state when the player pauses or resumes.
   var onPause: ((Bool) -> Void)?
+
+  /// Called with (amigaKeyCode, pressed) from the on-screen keyboard.
+  var onKey: ((Int32, Bool) -> Void)?
+
+  /// Called when the player toggles the on-screen pad.
+  var onPadToggle: (() -> Void)?
 
   /// The window the launcher was using, so it can be given back when
   /// emulation ends. SDL makes its own window key while a game runs, and
@@ -53,10 +60,12 @@ final class EmulatorControls {
     window.rootViewController = controller
 
     let pause = makeButton(systemName: "pause.fill", action: #selector(Target.pause))
+    let keys = makeButton(systemName: "keyboard", action: #selector(Target.keyboard))
+    let pad = makeButton(systemName: "gamecontroller", action: #selector(Target.pad))
     let quit = makeButton(systemName: "xmark", action: #selector(Target.quit))
     pauseButton = pause
 
-    let stack = UIStackView(arrangedSubviews: [pause, quit])
+    let stack = UIStackView(arrangedSubviews: [pause, keys, pad, quit])
     stack.axis = .vertical
     stack.spacing = 12
     stack.translatesAutoresizingMaskIntoConstraints = false
@@ -76,6 +85,7 @@ final class EmulatorControls {
     window?.isHidden = true
     window = nil
     pauseButton = nil
+    keyboard = nil
     paused = false
     // Hand the screen back to the launcher.
     previousKeyWindow?.makeKeyAndVisible()
@@ -89,6 +99,30 @@ final class EmulatorControls {
     onPause?(paused)
   }
 
+  /// Shows or hides the on-screen Amiga keyboard, full width along the
+  /// bottom, like the C64 one.
+  fileprivate func toggleKeyboard() {
+    guard let controller = window?.rootViewController else { return }
+    if let keyboard = keyboard {
+      keyboard.removeFromSuperview()
+      self.keyboard = nil
+      return
+    }
+    let view = AmigaKeyboardView(frame: .zero)
+    view.onKey = { [weak self] code, pressed in self?.onKey?(code, pressed) }
+    view.translatesAutoresizingMaskIntoConstraints = false
+    controller.view.addSubview(view)
+    let guide = controller.view.safeAreaLayoutGuide
+    NSLayoutConstraint.activate([
+      view.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 4),
+      view.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -4),
+      view.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -4),
+      view.heightAnchor.constraint(
+        equalTo: controller.view.heightAnchor, multiplier: 0.42),
+    ])
+    keyboard = view
+  }
+
   /// The button targets.
   ///
   /// Target-action rather than UIAction: this app deploys to iOS 13 and
@@ -98,6 +132,8 @@ final class EmulatorControls {
     weak var controls: EmulatorControls?
 
     @objc func pause() { controls?.togglePause() }
+    @objc func keyboard() { controls?.toggleKeyboard() }
+    @objc func pad() { controls?.onPadToggle?() }
     @objc func quit() { controls?.onQuit?() }
   }
 

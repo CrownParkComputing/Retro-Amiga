@@ -98,6 +98,10 @@ final class EmulatorHost {
 
     controls.onQuit = { [weak self] in self?.quit() }
     controls.onPause = { [weak self] paused in self?.setPaused(paused) }
+    controls.onKey = { [weak self] code, pressed in
+      self?.sendKey(code, pressed: pressed)
+    }
+    controls.onPadToggle = { [weak self] in self?.togglePad() }
 
     hasRun = true
     let run = unsafeBitCast(runSymbol, to: RunFn.self)
@@ -260,6 +264,28 @@ final class EmulatorHost {
   func setPaused(_ paused: Bool) {
     guard let fn = symbol("uae4arm_host_set_pause") else { return }
     unsafeBitCast(fn, to: SetBoolFn.self)(paused)
+  }
+
+  // MARK: - In-game controls
+
+  private typealias KeyFn = @convention(c) (Int32, Bool) -> Void
+  private typealias IntFn = @convention(c) (Int32) -> Void
+
+  /// The on-screen pad the toggle last asked for: 0 none, 1 joystick,
+  /// 2 CD32. The config decides what a game starts with; this only tracks
+  /// what the button has requested since, cycling through all three so both
+  /// styles are reachable whatever the starting point.
+  private var padMode: Int32 = 0
+
+  private func sendKey(_ code: Int32, pressed: Bool) {
+    guard let fn = symbol("uae4arm_host_send_key") else { return }
+    unsafeBitCast(fn, to: KeyFn.self)(code, pressed)
+  }
+
+  private func togglePad() {
+    guard let fn = symbol("uae4arm_host_set_onscreen_controller") else { return }
+    padMode = (padMode + 1) % 3
+    unsafeBitCast(fn, to: IntFn.self)(padMode)
   }
 
   private func symbol(_ name: String) -> UnsafeMutableRawPointer? {
