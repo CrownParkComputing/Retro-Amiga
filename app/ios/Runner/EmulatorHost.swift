@@ -63,19 +63,11 @@ final class EmulatorHost {
     if running {
       throw HostError.message("Emulation is already running.")
     }
-    // One game per launch of the app, for now.
-    //
-    // The core cannot be run twice in a process: the second run stops partway
-    // through its own path setup, before it reserves memory, and never comes
-    // back. Restarting it in place instead - uae_restart, which the core uses
-    // for Reboot - works, but only while the core still holds the main thread,
-    // and holding it means the launcher cannot draw. The two cannot both be
-    // true on a host that runs the core on the main thread, so this refuses
-    // rather than freezing.
+    // A second game is a restart of the core that is already running, not a
+    // second run: the core cannot be run twice in one process.
     if hasRun {
-      throw HostError.message(
-        "The emulator can only be started once per session. "
-        + "Close and reopen the app to play another game.")
+      try restart(args: args)
+      return
     }
     guard let handle = load() else {
       throw HostError.message("The emulator core could not be loaded.")
@@ -142,23 +134,36 @@ final class EmulatorHost {
   /// Whether the core has been run in this process. See [launch].
   private var hasRun = false
 
+  /// The launcher's own window, handed over by the scene delegate.
+  weak var launcherWindow: UIWindow?
+
   /// The in-game controls, which iOS has to draw itself - see
   /// EmulatorControls for why Flutter cannot.
   private let controls = EmulatorControls()
 
   /// Leaves the game and gives the screen back to the launcher.
   ///
-  /// Ends the core, which is the only way the launcher gets the main thread
-  /// back. Pausing and hiding the window was tried and left the app frozen:
-  /// the core owns the main thread while it loops, paused or not, so Flutter
-  /// never runs again. The log from that attempt says it plainly - the game
-  /// rendered, the core never returned, and nothing responded until the app
-  /// was killed.
+  /// The core is paused rather than ended, because ending it means it can
+  /// never run again in this process. Its paused loop still pumps events - it
+  /// polls SDL and sleeps 10ms - so the run loop keeps turning and Flutter
+  /// keeps drawing.
   ///
-  /// The cost is that another game needs the app reopened; see [launch].
+  /// What did NOT work first time was the window handling: the launcher drew
+  /// but took no touches, because SDL's window was still the key window and
+  /// the one being restored was "whatever was key when the game started",
+  /// which by then was SDL's own. The launcher's window is held explicitly
+  /// now, and SDL's is put out of the way rather than merely hidden.
   func quit() {
-    guard let fn = symbol("uae4arm_host_quit") else { return }
-    unsafeBitCast(fn, to: VoidFn.self)()
+    setPaused(true)
+    setEmulationVisible(false)
+
+    controls.hide()
+    // SDL's window is hidden but still in the scene, and a hidden window that
+    // is still key keeps taking the touches. Everything that is not the
+    // launcher is put out of the way, then the launcher is made key again.
+    setEmulatorWindowsInteractive(false)
+    launcherWindow?.isHidden = false
+    launcherWindow?.makeKeyAndVisible()
   }
 
   /// Hands the running core a different machine.
@@ -176,6 +181,7 @@ final class EmulatorHost {
     if !started {
       throw HostError.message("That setup could not be loaded.")
     }
+    setEmulatorWindowsInteractive(true)
     setEmulationVisible(true)
     setPaused(false)
     controls.show()
@@ -188,6 +194,17 @@ final class EmulatorHost {
       return nil
     }
     return args[index + 1]
+  }
+
+  /// Turns touch handling on or off for every window that is not the
+  /// launcher's - which in this app means SDL's, and the controls' while they
+  /// are up.
+  private func setEmulatorWindowsInteractive(_ enabled: Bool) {
+    for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
+      for window in scene.windows where window !== launcherWindow {
+        window.isUserInteractionEnabled = enabled
+      }
+    }
   }
 
   func setEmulationVisible(_ visible: Bool) {

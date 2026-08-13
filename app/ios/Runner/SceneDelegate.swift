@@ -49,6 +49,10 @@ class SceneDelegate: FlutterSceneDelegate {
       appDelegate.window = nil
 
       existingWindow.makeKeyAndVisible()
+      // The host keeps this, so that leaving a game can hand the screen back
+      // to a window it KNOWS is the launcher's, rather than to whatever
+      // happened to be key when the game started - which by then is SDL's.
+      EmulatorHost.shared.launcherWindow = existingWindow
     }
 
     // Still call super: it registers the engine for scene life-cycle events,
