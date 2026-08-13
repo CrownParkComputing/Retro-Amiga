@@ -15,6 +15,7 @@ String gen(EmulatorSettings settings) => ConfigGenerator.generate(
     );
 
 void main() {
+  _hardfileTests();
   group('header and always-present keys', () {
     test('starts with the header the core expects', () {
       expect(gen(const EmulatorSettings()),
@@ -305,6 +306,27 @@ void main() {
           contains('nr_floppies=4'));
       expect(gen(const EmulatorSettings(floppy0Type: -1)),
           contains('nr_floppies=0'));
+    });
+  });
+}
+
+void _hardfileTests() {
+  group('hard drives', () {
+    test('the filesys slot is empty, not a device name', () {
+      const EmulatorSettings settings = EmulatorSettings(
+        hardDrives: <String>['/sdcard/UAE4Arm/harddrives/game.hdf'],
+      );
+      final String config = ConfigGenerator.generate(settings);
+      final String line = config
+          .split('\n')
+          .firstWhere((String l) => l.startsWith('hardfile2='));
+
+      // rw,DEV:path,sectors,surfaces,reserved,blocksize,bootpri,filesys,controller
+      // The field after bootpri is a filesystem handler the core loads from
+      // disk. Naming a device there sends it looking for a file that does not
+      // exist, and the drive never mounts.
+      expect(line, isNot(contains('uaehf.device')));
+      expect(line, contains(',512,0,,uae0'));
     });
   });
 }

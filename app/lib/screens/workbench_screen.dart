@@ -6,6 +6,7 @@ import '../theme/amiga_theme.dart';
 import '../widgets/amiga_logo.dart';
 import '../widgets/boing_backdrop.dart';
 import '../widgets/workbench_sidebar.dart';
+import '../data/session.dart';
 import 'about_panel.dart';
 import 'configurations_screen.dart';
 import 'history_screen.dart';
@@ -36,10 +37,34 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   bool _idle = false;
   Timer? _idleTimer;
 
+  /// Resume is only offered when a game was left running - see Session. It is
+  /// re-checked whenever the workbench comes back to the front, which is what
+  /// happens after quitting a game.
+  bool _hasSession = false;
+
+  List<WorkbenchSection> get _sections => WorkbenchSection.values
+      .where((WorkbenchSection s) =>
+          s != WorkbenchSection.resume || _hasSession)
+      .toList();
+
   @override
   void initState() {
     super.initState();
     _restartIdleTimer();
+    _refreshSession();
+    WidgetsBinding.instance.addObserver(_LifecycleWatch(_refreshSession));
+  }
+
+  Future<void> _refreshSession() async {
+    final bool has = await Session.exists();
+    if (!mounted || has == _hasSession) return;
+    setState(() {
+      _hasSession = has;
+      // The rail entry has just gone; do not leave it selected.
+      if (!has && _section == WorkbenchSection.resume) {
+        _section = WorkbenchSection.setups;
+      }
+    });
   }
 
   @override
@@ -112,6 +137,7 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
                               WorkbenchSidebar(
                                 selected: _section,
                                 available: width,
+                                sections: _sections,
                                 onSelected: (WorkbenchSection s) {
                                   _wake();
                                   setState(() => _section = s);
@@ -176,24 +202,41 @@ class _DemoMasthead extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
+    // Sized off the screen rather than fixed: this is the title card of a
+    // demo, so it should fill the width the way one did, and a handheld and an
+    // iPad want very different numbers for that.
+    final double width = MediaQuery.sizeOf(context).width;
+    final double logo = (width * 0.20).clamp(90.0, 260.0);
+    final double tick = logo * 0.52;
+    final double wordmark = logo * 0.40;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         Image.asset(
           'assets/images/retro_recomp_logo.png',
-          height: 40,
+          height: logo,
           filterQuality: FilterQuality.medium,
         ),
-        const SizedBox(width: 14),
-        const AmigaLogo(height: 26),
-        const SizedBox(width: 8),
-        const Text(
-          'Amiga-Retro',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w700,
-            color: AmigaColors.text,
-          ),
+        SizedBox(height: logo * 0.10),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            AmigaLogo(height: tick),
+            SizedBox(width: tick * 0.28),
+            Text(
+              'Amiga-Retro',
+              style: TextStyle(
+                fontSize: wordmark,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.5,
+                color: AmigaColors.text,
+                shadows: const <Shadow>[
+                  Shadow(color: Color(0xCC000000), blurRadius: 12),
+                ],
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -230,5 +273,20 @@ class _Placeholder extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+
+/// Calls back when the app comes back to the front, so state that changed
+/// while another process was in charge - the session marker, written by the
+/// emulator - is re-read rather than assumed.
+class _LifecycleWatch extends WidgetsBindingObserver {
+  _LifecycleWatch(this.onResumed);
+
+  final void Function() onResumed;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) onResumed();
   }
 }

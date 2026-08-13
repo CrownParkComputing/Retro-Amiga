@@ -38,10 +38,15 @@ class WorkbenchSidebar extends StatelessWidget {
     required this.selected,
     required this.onSelected,
     required this.available,
+    required this.sections,
   });
 
   final WorkbenchSection selected;
   final ValueChanged<WorkbenchSection> onSelected;
+
+  /// Which entries to show. Not every section is always worth offering -
+  /// Resume means nothing when no game has been left running.
+  final List<WorkbenchSection> sections;
 
   /// Width the rail is allowed to take, before clamping.
   final double available;
@@ -88,7 +93,7 @@ class WorkbenchSidebar extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          for (final WorkbenchSection section in WorkbenchSection.values)
+          for (final WorkbenchSection section in sections)
             _RailButton(
               section: section,
               selected: section == selected,

@@ -119,6 +119,22 @@ public final class HostSupport {
 		}
 	}
 
+	/**
+	 * Records that a game is running, so the launcher can offer to go back to
+	 * it. Cleared when emulation ends; left behind if the process is killed,
+	 * which is exactly the case worth offering a way back from.
+	 */
+	public static void writeSessionMarker(Context context, String configPath) {
+		try {
+			final File marker = new File(context.getFilesDir(), "session_active");
+			try (java.io.FileWriter writer = new java.io.FileWriter(marker, false)) {
+				writer.write(configPath == null ? "" : configPath);
+			}
+		} catch (Exception e) {
+			Log.w(TAG, "writeSessionMarker failed", e);
+		}
+	}
+
 	/** Clears the marker showing a session is in progress. */
 	public static void clearSessionMarker(Context context) {
 		try {

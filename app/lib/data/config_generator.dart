@@ -256,8 +256,13 @@ class ConfigGenerator {
         // an explicit CHS to synthesise a bootable partition, otherwise the
         // mount fails with "no supported partition tables detected".
         final String geometry = rdbPresent ? '0,0,0' : '32,1,2';
+        // The field after bootpri is the filesystem handler - a file the core
+        // loads - not a device name. "uaehf.device" there sends it looking for
+        // a handler that does not exist; the slot is meant to be empty for an
+        // ordinary hardfile. Field order is
+        // rw,DEV:path,sectors,surfaces,reserved,blocksize,bootpri,filesys,controller.
         out.writeln(
-          'hardfile2=rw,DH$i:"$path",$geometry,512,$bootPri,uaehf.device,$controller',
+          'hardfile2=rw,DH$i:"$path",$geometry,512,$bootPri,,$controller',
         );
       }
       physicalUnit++;

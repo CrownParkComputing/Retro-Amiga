@@ -1,6 +1,8 @@
 import 'package:flutter/services.dart';
 
 import 'data/app_log.dart';
+import 'data/music_player.dart';
+import 'data/session.dart';
 
 /// The one road from the Flutter UI into the emulator core.
 ///
@@ -14,6 +16,10 @@ class Emulator {
   /// Starts emulation. [args] is passed through verbatim to the core.
   static Future<void> launch(List<String> args) async {
     AppLog.info('launch', args.join(' '));
+    // The launcher's music has no business playing over a game, and on
+    // Android it would be a second process holding the audio device.
+    await MusicPlayer.stop();
+    Session.markStarted();
     try {
       await _channel.invokeMethod<bool>('launch', <String, Object?>{
         'args': args,

@@ -69,6 +69,7 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 		cleanCache();
 		super.onCreate(savedInstanceState);
 		currentConfigPath = extractConfigPath(getIntent());
+		HostSupport.writeSessionMarker(this, currentConfigPath);
 		// The overlay can be switched off from adb - `--ez noOverlay true` -
 		// so a display problem can be bisected on the device without two
 		// builds. It is a second Flutter engine and a second SurfaceView over
@@ -97,7 +98,10 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 			ensureFloppyButtonOverlay();
 		}
 		ensurePauseButtonOverlay();
-		ensureQuitButtonOverlay();
+		// No quit icon: back leaves the game and returns to the shelf, which
+		// is one way of doing it rather than two. The four that remain are the
+		// ones that change something about the session in progress - pad,
+		// keyboard, disk, pause - and nothing here opens a menu.
 		enterImmersiveMode();
 		registerBackHandler();
 		applyControllerMappingsFromPrefs();
@@ -514,6 +518,10 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 	 */
 	private void returnToLauncher() {
 		HostSupport.writeCleanExitMarker(this);
+		// The session is over, so the launcher should stop offering to resume
+		// it. Leaving the marker is what a kill looks like, and that is worth
+		// telling apart from quitting.
+		HostSupport.clearSessionMarker(this);
 		Intent intent = new Intent(this, MainActivity.class);
 		intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
 		startActivity(intent);
