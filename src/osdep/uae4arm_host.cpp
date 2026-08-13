@@ -26,8 +26,15 @@ extern void apply_android_controller_remap(const int* sdl_to_target, int count);
 
 static uae4arm_host_callbacks host_callbacks;
 
+extern void reset_parse_cmdline();
+
 int uae4arm_host_run(int argc, char** argv)
 {
+	/* Every run brings its own game. The parser refuses to run twice, so
+	   without this the second game inherits nothing from its command line -
+	   no config, no WHDLoad archive - and boots default hardware with no
+	   Kickstart, which shows as a black screen. */
+	reset_parse_cmdline();
 	return amiberry_main(argc, argv);
 }
 

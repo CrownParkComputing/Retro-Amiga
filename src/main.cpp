@@ -1261,12 +1261,15 @@ extern void set_last_active_config_from_media(const char* filename);
 
 static bool cmdline_started;
 
-#ifdef LIBRETRO
+/* Lets the command line be parsed again by a host that runs the core more than
+   once in a process. Amiberry's own binary runs it once and exits, so the guard
+   below was never a problem there; a phone launcher starts a second game in the
+   same process, and without this that game's --config and --autoload are both
+   silently dropped. */
 void reset_parse_cmdline()
 {
 	cmdline_started = false;
 }
-#endif
 
 static void parse_cmdline (int argc, TCHAR **argv)
 {
