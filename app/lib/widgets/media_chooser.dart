@@ -212,12 +212,17 @@ class _MediaChooserState extends State<MediaChooser> {
                   builder: (BuildContext context, BoxConstraints constraints) {
                     final int columns =
                         (constraints.maxWidth / 380).floor().clamp(1, 3);
+                    // Kickstart names carry their identity in the tail -
+                    // "(1993-12)(Commodore)(A1200)" - which is exactly what
+                    // one ellipsized line cuts off. ROMs are a short list, so
+                    // the taller two-line row costs nothing to scroll.
+                    final bool tall = widget.category == FileCategory.roms;
                     return GridView.builder(
                       padding: EdgeInsets.zero,
                       gridDelegate:
                           SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: columns,
-                        mainAxisExtent: 46,
+                        mainAxisExtent: tall ? 62 : 46,
                         crossAxisSpacing: 8,
                         mainAxisSpacing: 4,
                       ),
@@ -229,6 +234,7 @@ class _MediaChooserState extends State<MediaChooser> {
                           file: file,
                           size: _size(file.size),
                           selected: isSelected,
+                          lines: tall ? 2 : 1,
                           onTap: () => widget.onSelected(file.path),
                         );
                       },
@@ -250,12 +256,17 @@ class _FileRow extends StatelessWidget {
     required this.size,
     required this.selected,
     required this.onTap,
+    this.lines = 1,
   });
 
   final MediaFile file;
   final String size;
   final bool selected;
   final VoidCallback onTap;
+
+  /// How many lines the name may take. ROM rows get two, because a Kickstart
+  /// name ends in the part that distinguishes it.
+  final int lines;
 
   @override
   Widget build(BuildContext context) {
@@ -284,7 +295,7 @@ class _FileRow extends StatelessWidget {
                 Expanded(
                   child: Text(
                     file.name,
-                    maxLines: 1,
+                    maxLines: lines,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 13),
                   ),

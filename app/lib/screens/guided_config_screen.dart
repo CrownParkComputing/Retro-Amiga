@@ -119,6 +119,10 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
   /// so we never overwrite their words.
   bool _nameIsAutomatic = true;
 
+  /// Whether the second-drive question has been answered with yes. Reset per
+  /// wizard, not persisted: it is an answer about this setup, not a setting.
+  bool _wantsSecondDrive = false;
+
   /// `<media> (<machine>)`, from whatever media the setup has.
   String get _suggestedName {
     String basename(String path) {
@@ -449,9 +453,20 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
         }
 
       case WizardStep.mediaOptional:
+        // The question comes before the list. A full file chooser for a drive
+        // most setups do not want reads as a demand for a second disk; a
+        // yes/no first makes skipping the default rather than the escape.
+        if (!_wantsSecondDrive && _settings.floppy1.isEmpty) {
+          return _AskStep(
+            question: 'Add another floppy drive?',
+            blurb: 'Many games ask for disk 2. One-disk games need only DF0.',
+            onYes: () => setState(() => _wantsSecondDrive = true),
+            onNo: () => _go(1),
+          );
+        }
         return _ChooseStep(
-          title: 'Second floppy (optional)',
-          blurb: 'Many games ask for disk 2. Skip if there is only one.',
+          title: 'Floppy in DF1',
+          blurb: 'ADF, ADZ, IPF, DMS and the rest.',
           category: FileCategory.floppies,
           selected: _settings.floppy1,
           onSelected: (String p) => setState(
@@ -599,6 +614,44 @@ class _MachineStep extends StatelessWidget {
 }
 
 /// A step that offers what the scan found, with the title above it.
+/// A yes/no question standing where a list would otherwise be.
+class _AskStep extends StatelessWidget {
+  const _AskStep({
+    required this.question,
+    required this.blurb,
+    required this.onYes,
+    required this.onNo,
+  });
+
+  final String question;
+  final String blurb;
+  final VoidCallback onYes;
+  final VoidCallback onNo;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Text(question, style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 8),
+          Text(blurb, style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 20),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              FilledButton(onPressed: onYes, child: const Text('Add a drive')),
+              const SizedBox(width: 16),
+              OutlinedButton(onPressed: onNo, child: const Text('Just DF0')),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ChooseStep extends StatelessWidget {
   const _ChooseStep({
     required this.title,
