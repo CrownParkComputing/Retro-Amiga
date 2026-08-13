@@ -703,6 +703,7 @@ int check_prefs_changed_gfx()
 	// On-screen joystick
 	if (currprefs.onscreen_joystick != changed_prefs.onscreen_joystick)
 	{
+		write_log("gfx: on-screen joystick -> %d\n", changed_prefs.onscreen_joystick);
 		currprefs.onscreen_joystick = changed_prefs.onscreen_joystick;
 		// Real controllers are already enumerated once at startup (amiberry.cpp calls
 		// import_joysticks() during input init) - ensure_onscreen_joystick_registered() below

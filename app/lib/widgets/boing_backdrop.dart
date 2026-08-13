@@ -39,9 +39,20 @@ class _BoingBackdropState extends State<BoingBackdrop>
   late final Ticker _ticker;
   Duration _elapsed = Duration.zero;
 
+  /// The message, fixed for the life of this screensaver session.
+  ///
+  /// The scroll position is elapsed time modulo the text's total width, so a
+  /// text that changes mid-scroll teleports the whole message - every track
+  /// change rewrote NOW PLAYING and the scroller appeared to keep resetting.
+  /// The text is meant to be read fresh when the screensaver comes up, not
+  /// live: this state is created each time the workbench goes idle, so
+  /// capturing here is exactly once per session.
+  String? _text;
+
   @override
   void initState() {
     super.initState();
+    _text = widget.scrollText;
     _ticker = createTicker((Duration elapsed) {
       setState(() => _elapsed = elapsed);
     })..start();
@@ -61,7 +72,7 @@ class _BoingBackdropState extends State<BoingBackdrop>
       child: CustomPaint(
         painter: _BoingPainter(
           seconds: _elapsed.inMicroseconds / 1e6,
-          text: widget.scrollText ?? _BoingPainter.defaultText,
+          text: _text ?? _BoingPainter.defaultText,
         ),
         size: Size.infinite,
       ),

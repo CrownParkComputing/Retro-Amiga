@@ -1877,15 +1877,35 @@ void OpenGLRenderer::render_vkbd(int monid)
 	// UAE4ARM 2026: Native engine virtual keyboard suppressed.
 }
 
+/* These were stubbed out ("we use our own Android touch overlays") - which is
+   right on Android, where the launcher stacks a Flutter pad over the SDL
+   surface, and wrong everywhere else: iOS cannot put Flutter above SDL, so
+   the core-drawn pad is the only pad it has. The finger handling in the event
+   loop was never suppressed, so before this an iOS pad could be switched on,
+   registered and even played - invisibly. */
 void OpenGLRenderer::render_onscreen_joystick(int monid)
 {
-	// UAE4ARM 2026: Native engine joystick rendering suppressed.
-	// We use our own Android touch overlays.
+	AmigaMonitor* mon = &AMonitors[monid];
+	if (!mon->amiga_window)
+		return;
+	int dw = 0, dh = 0;
+	get_drawable_size(mon->amiga_window, &dw, &dh);
+	if (dw <= 0 || dh <= 0)
+		return;
+	const SDL_Rect safe_rect = { 0, 0, dw, dh };
+	on_screen_joystick_redraw_gl(dw, dh, safe_rect, render_quad);
 }
 
 void OpenGLRenderer::render_onscreen_cd32pad(int monid)
 {
-	// UAE4ARM 2026: Native engine joystick rendering suppressed.
+	AmigaMonitor* mon = &AMonitors[monid];
+	if (!mon->amiga_window)
+		return;
+	int dw = 0, dh = 0;
+	get_drawable_size(mon->amiga_window, &dw, &dh);
+	if (dw <= 0 || dh <= 0)
+		return;
+	on_screen_cd32pad_redraw_gl(dw, dh, render_quad);
 }
 
 // --- OpenGL-specific accessors ---

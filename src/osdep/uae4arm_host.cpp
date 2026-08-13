@@ -109,6 +109,7 @@ int uae4arm_host_get_floppy_count(void)
 
 void uae4arm_host_set_onscreen_controller(int mode)
 {
+	write_log("host: on-screen controller mode %d requested\n", mode);
 	changed_prefs.onscreen_joystick = (mode == 1);
 	changed_prefs.onscreen_cd32pad = (mode == 2);
 	set_config_changed();
