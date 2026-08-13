@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -81,6 +83,20 @@ class OverlayPad {
   static Future<bool> hasGamepad() async =>
       await _channel.invokeMethod<bool>('hasGamepad') ?? false;
 
+  /// Relative mouse motion, in Amiga pixels.
+  static Future<void> mouseMove(int dx, int dy) =>
+      _channel.invokeMethod('mouseMove', <String, Object?>{
+        'dx': dx,
+        'dy': dy,
+      });
+
+  /// 0 is the left button, 1 the right.
+  static Future<void> mouseButton(int button, bool pressed) =>
+      _channel.invokeMethod('mouseButton', <String, Object?>{
+        'button': button,
+        'pressed': pressed,
+      });
+
   /// An Amiga raw key code, for the buttons the player adds themselves.
   static Future<void> sendKey(int code, bool pressed) =>
       _channel.invokeMethod('sendKey', <String, Object?>{
@@ -156,6 +172,18 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
   /// player may still want a button the pad has and the handheld does not.
   bool _padVisible = true;
 
+  /// The mouse, for Workbench and the games that want one - and for AGS,
+  /// where the menu is a pointer and a click. A mode rather than a second
+  /// control: the whole screen becomes the trackpad, which is the only way a
+  /// pointer is usable on a phone.
+  bool _mouseMode = false;
+
+  /// The strip fades out when it has been left alone, so the game is not
+  /// playing behind a column of icons all session. Any touch brings it back.
+  bool _stripVisible = true;
+  Timer? _stripTimer;
+  static const Duration _stripLinger = Duration(seconds: 3);
+
   /// The on-screen keyboard covers the bottom of the screen, which is where
   /// the controls are. Drawing a joystick over the letters it is standing on
   /// makes both unusable, so the pad steps aside while the keyboard is up.
@@ -178,6 +206,7 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
     super.initState();
     _loadLayout();
     _checkGamepad();
+    _touched();
   }
 
   Future<void> _checkGamepad() async {
@@ -208,8 +237,18 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
         : OverlayPad.modeJoystick);
   }
 
+  /// Shows the strip and starts its countdown again.
+  void _touched() {
+    _stripTimer?.cancel();
+    _stripTimer = Timer(_stripLinger, () {
+      if (mounted) setState(() => _stripVisible = false);
+    });
+    if (!_stripVisible && mounted) setState(() => _stripVisible = true);
+  }
+
   @override
   void dispose() {
+    _stripTimer?.cancel();
     OverlayPad.releaseAll(_pad);
     super.dispose();
   }
@@ -340,8 +379,18 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      body: Stack(
+      body: Listener(
+        // Watch only - this must not consume anything, or the pad below it
+        // would stop working.
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => _touched(),
+        child: Stack(
         children: <Widget>[
+          // The trackpad, when the mouse is on. Underneath the controls, so
+          // the stick and the strip take their own touches first and this
+          // gets the rest of the screen.
+          if (_mouseMode && !_editing)
+            const Positioned.fill(child: _TouchMouse()),
           // The controls, wherever the player has put them. LayoutBuilder
           // because the saved positions are fractions and can only become
           // pixels once the play area has a size.
@@ -446,8 +495,13 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
           Positioned(
             right: 12 + safe.right,
             top: 12 + safe.top,
-            child: Column(
-              children: <Widget>[
+            child: AnimatedOpacity(
+              opacity: _stripVisible || _editing ? 1 : 0,
+              duration: const Duration(milliseconds: 250),
+              child: IgnorePointer(
+                ignoring: !(_stripVisible || _editing),
+                child: Column(
+                  children: <Widget>[
                 // Pause goes back to the workbench, saving where you were.
                 _OverlayIconButton(
                   icon: Icons.pause,
@@ -465,6 +519,23 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
                       _stickMoved(false, false, false, false);
                       _heldButtons.clear();
                       OverlayPad.releaseAll(_pad);
+                    }
+                  },
+                ),
+                const SizedBox(height: 10),
+                // The mouse. Beside the keyboard because it is the other
+                // half of the same thing: what Workbench, and AGS, are driven
+                // with.
+                _OverlayIconButton(
+                  icon: Icons.mouse,
+                  active: _mouseMode,
+                  onPressed: () {
+                    setState(() => _mouseMode = !_mouseMode);
+                    // Leaving the mode with a button held would leave the
+                    // Amiga holding it.
+                    if (!_mouseMode) {
+                      OverlayPad.mouseButton(0, false);
+                      OverlayPad.mouseButton(1, false);
                     }
                   },
                 ),
@@ -502,7 +573,9 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
                     if (!_editing) _commit();
                   },
                 ),
-              ],
+                  ],
+                ),
+              ),
             ),
           ),
 
@@ -524,12 +597,87 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
               ),
             ),
         ],
+        ),
       ),
     );
   }
 }
 
 /// A control the player can drag while the layout is being arranged.
+/// The screen as a trackpad.
+///
+/// Relative, not absolute: the Amiga has no idea where a finger is on a host
+/// screen, and jumping the pointer to wherever you touched would fight
+/// whatever position the guest believes in. So a drag pushes the pointer the
+/// way the finger went, a tap is a left click, and two fingers are a right
+/// click - the arrangement every trackpad has taught everybody already.
+class _TouchMouse extends StatefulWidget {
+  const _TouchMouse();
+
+  @override
+  State<_TouchMouse> createState() => _TouchMouseState();
+}
+
+class _TouchMouseState extends State<_TouchMouse> {
+  /// Fingers down, so a second one can mean the right button.
+  int _pointers = 0;
+
+  /// Whether this gesture has moved far enough to be a drag rather than a tap.
+  bool _moved = false;
+
+  /// Pointer travel per screen point. Above 1 so crossing a Workbench screen
+  /// does not need three swipes.
+  static const double _speed = 1.6;
+
+  /// Leftovers below a whole pixel, kept rather than thrown away: a slow drag
+  /// is a long run of sub-pixel deltas, and rounding each one to zero would
+  /// make the pointer refuse to move at all.
+  double _restX = 0;
+  double _restY = 0;
+
+  void _move(Offset delta) {
+    _restX += delta.dx * _speed;
+    _restY += delta.dy * _speed;
+    final int dx = _restX.truncate();
+    final int dy = _restY.truncate();
+    if (dx == 0 && dy == 0) return;
+    _restX -= dx;
+    _restY -= dy;
+    OverlayPad.mouseMove(dx, dy);
+  }
+
+  Future<void> _click(int button) async {
+    await OverlayPad.mouseButton(button, true);
+    // Long enough for the guest to see a press and a release as a click; the
+    // Amiga polls its mouse, so a press and release in the same frame can be
+    // missed entirely.
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    await OverlayPad.mouseButton(button, false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (PointerDownEvent event) {
+        _pointers++;
+        if (_pointers == 1) _moved = false;
+      },
+      onPointerMove: (PointerMoveEvent event) {
+        if (event.delta.distance > 0.5) _moved = true;
+        _move(event.delta);
+      },
+      onPointerUp: (PointerUpEvent event) {
+        final int fingers = _pointers;
+        _pointers = (_pointers - 1).clamp(0, 10);
+        if (_moved) return;
+        _click(fingers >= 2 ? 1 : 0);
+      },
+      onPointerCancel: (_) => _pointers = (_pointers - 1).clamp(0, 10),
+    );
+  }
+}
+
 class _MovableControl extends StatelessWidget {
   const _MovableControl({
     required this.area,

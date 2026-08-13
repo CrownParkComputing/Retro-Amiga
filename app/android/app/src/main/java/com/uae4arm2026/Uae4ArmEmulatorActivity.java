@@ -478,6 +478,12 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 		}
 		nativeApplyControllerMapping(sdlToTarget);
 
+		// The machine decides the port, not the mapping. A CD32 config gets a
+		// seven-button pad so an external controller's X and Y reach green and
+		// yellow; anything else gets a joystick, where the same pad's A and B
+		// are fire one and two.
+		nativeSetExternalControllerMode(configIsCd32() ? 7 : 3);
+
 		int oscMode = prefs.getInt("onscreen_mode", 0);
 		nativeSetOnScreenController(oscMode);
 
@@ -979,6 +985,10 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 
 	public static native void nativeSendAmigaKey(int keycode, int pressed);
 	public static native void nativeSetPause(boolean paused);
+	/** Relative mouse motion, in Amiga pixels. */
+	public static native void nativeMouseMove(int dx, int dy);
+	/** 0 left, 1 right, 2 middle. */
+	public static native void nativeMouseButton(int button, boolean pressed);
 	public static native void nativeSaveState(String path);
 	public static native void nativeRestart();
 	public static native void nativeInsertFloppy(int drive, String path);
@@ -1048,6 +1058,14 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 
 			@Override public void onInsertDisk(int drive) {
 				runOnUiThread(() -> showFloppyPicker(drive));
+			}
+
+			@Override public void onMouseMove(int dx, int dy) {
+				nativeMouseMove(dx, dy);
+			}
+
+			@Override public void onMouseButton(int button, boolean pressed) {
+				nativeMouseButton(button, pressed);
 			}
 
 			@Override public void onKey(int code, boolean pressed) {

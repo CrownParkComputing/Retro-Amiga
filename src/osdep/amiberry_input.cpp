@@ -94,9 +94,14 @@ void apply_android_controller_remap(const int* sdl_to_target, int count)
 	}
 	button_remap_active = any;
 
-	// Ensure CD32 mode is active
-	changed_prefs.jports[1].mode = JSEM_MODE_JOYSTICK_CD32;
-	set_config_changed();
+	// Deliberately does NOT switch port 1 into CD32 mode.
+	//
+	// It used to, which meant loading a saved button mapping put every game
+	// on a CD32 pad - including the A500 disks that want a plain two-button
+	// joystick - and then fought whatever mode the host had just asked for,
+	// with the winner decided by call order. The mode belongs to the machine
+	// being run, so the host sets it (uae4arm_host_set_external_controller_mode)
+	// and this only says which physical button is which.
 }
 constexpr auto analog_lower_bound = -analog_upper_bound;
 

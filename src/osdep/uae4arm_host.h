@@ -66,6 +66,15 @@ void uae4arm_host_hide_virtual_keyboard(void);
 /* Amiga raw key code, not an SDL scancode. */
 void uae4arm_host_send_key(int amiga_keycode, bool pressed);
 
+/* The Amiga mouse, for hosts that draw their own touch controls.
+ *
+ * Relative, because that is what the hardware is: the Amiga has no notion of
+ * where the pointer is on a host screen, and a touch that jumped it to an
+ * absolute position would fight whatever the guest thinks the position is.
+ * Buttons are 0 left, 1 right, 2 middle. */
+void uae4arm_host_mouse_move(int dx, int dy);
+void uae4arm_host_mouse_button(int button, bool pressed);
+
 void uae4arm_host_set_pause(bool paused);
 void uae4arm_host_restart(void);
 

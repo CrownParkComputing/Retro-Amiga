@@ -78,6 +78,18 @@ Java_com_uae4arm2026_Uae4ArmEmulatorActivity_nativeSendAmigaKey(JNIEnv*, jclass,
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_com_uae4arm2026_Uae4ArmEmulatorActivity_nativeMouseMove(JNIEnv*, jclass, jint dx, jint dy)
+{
+	uae4arm_host_mouse_move(static_cast<int>(dx), static_cast<int>(dy));
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_uae4arm2026_Uae4ArmEmulatorActivity_nativeMouseButton(JNIEnv*, jclass, jint button, jboolean pressed)
+{
+	uae4arm_host_mouse_button(static_cast<int>(button), pressed != 0);
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_uae4arm2026_Uae4ArmEmulatorActivity_nativeSetPause(JNIEnv*, jclass, jboolean paused)
 {
 	uae4arm_host_set_pause(paused != 0);

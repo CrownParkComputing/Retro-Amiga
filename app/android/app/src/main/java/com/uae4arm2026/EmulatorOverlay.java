@@ -68,6 +68,10 @@ final class EmulatorOverlay {
 		/** Raw Amiga key code, for the buttons the player added themselves. */
 		void onKey(int code, boolean pressed);
 
+		/** The Amiga mouse: relative motion, and buttons 0 left / 1 right. */
+		void onMouseMove(int dx, int dy);
+		void onMouseButton(int button, boolean pressed);
+
 		/** How many floppy drives the running machine has. */
 		int floppyCount();
 
@@ -153,6 +157,18 @@ final class EmulatorOverlay {
 							break;
 						case "insertDisk":
 							listener.onInsertDisk(arg(call.argument("drive"), 0));
+							result.success(true);
+							break;
+						case "mouseMove":
+							listener.onMouseMove(
+								arg(call.argument("dx"), 0),
+								arg(call.argument("dy"), 0));
+							result.success(true);
+							break;
+						case "mouseButton":
+							listener.onMouseButton(
+								arg(call.argument("button"), 0),
+								Boolean.TRUE.equals(call.argument("pressed")));
 							result.success(true);
 							break;
 						case "sendKey":

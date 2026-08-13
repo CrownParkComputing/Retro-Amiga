@@ -130,6 +130,25 @@ void uae4arm_host_apply_controller_mapping(const int* sdl_to_target, int count)
 	apply_android_controller_remap(sdl_to_target, count);
 }
 
+/* ---- mouse ------------------------------------------------------------- */
+
+void uae4arm_host_mouse_move(int dx, int dy)
+{
+	if (dx == 0 && dy == 0)
+		return;
+	/* Port 0, axes 0 and 1, relative: the fourth argument is what makes it
+	   relative rather than an absolute position. */
+	setmousestate(0, 0, dx, 0);
+	setmousestate(0, 1, dy, 0);
+}
+
+void uae4arm_host_mouse_button(int button, bool pressed)
+{
+	if (button < 0 || button > 2)
+		return;
+	setmousebuttonstate(0, button, pressed ? 1 : 0);
+}
+
 /* ---- save states ------------------------------------------------------- */
 
 void uae4arm_host_save_state(const char* path)
