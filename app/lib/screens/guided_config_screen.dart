@@ -283,17 +283,26 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
     final int index = route.indexOf(_step);
     final bool last = _step == WizardStep.save;
 
+    // No app bar and no step headings. A title saying "New floppy disk" over
+    // a list of floppy disks, and "Which Amiga?" over a list of Amigas, is a
+    // line of chrome telling you what you can already see - and on a landscape
+    // handheld each one costs a row of the things you actually came to pick.
     return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          widget.mode == WizardMode.edit
-              ? 'Edit setup'
-              : 'New ${widget.mode.title.toLowerCase()}',
-        ),
-      ),
-      body: Column(
+      body: SafeArea(
+        bottom: false,
+        child: Column(
         children: <Widget>[
-          _StepDots(count: route.length, index: index),
+          Row(
+            children: <Widget>[
+              IconButton(
+                onPressed: () => _go(-1),
+                icon: const Icon(Icons.arrow_back),
+                visualDensity: VisualDensity.compact,
+              ),
+              Expanded(child: _StepDots(count: route.length, index: index)),
+              const SizedBox(width: 48),
+            ],
+          ),
           if (_error != null)
             Container(
               width: double.infinity,
@@ -337,6 +346,7 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
             ),
           ),
         ],
+        ),
       ),
     );
   }
@@ -462,7 +472,7 @@ class _StepDots extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 16),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: List<Widget>.generate(count, (int i) {
@@ -497,39 +507,81 @@ class _MachineStep extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      children: <Widget>[
-        Text('Which Amiga?', style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: 8),
-        const Text('The machine decides the chipset, CPU and memory.'),
-        const SizedBox(height: 16),
-        ...models.map((AmigaModel model) {
-          final bool isSelected = model == selected;
-          return Card(
-            elevation: isSelected ? 3 : 0,
-            color: isSelected
-                ? Theme.of(context).colorScheme.primaryContainer
-                : null,
-            child: ListTile(
-              leading: SizedBox(
-                width: 88,
-                height: 56,
-                child: Image.asset(
-                  model.artworkPath,
-                  fit: BoxFit.contain,
-                  errorBuilder: (BuildContext c, Object e, StackTrace? s) =>
-                      const AmigaLogo(height: 28),
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        // Two columns on a landscape screen puts every machine in view at
+        // once, which is the difference between choosing and scrolling.
+        final int columns = (constraints.maxWidth / 420).floor().clamp(1, 3);
+        return GridView.builder(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisExtent: 72,
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 8,
+          ),
+          itemCount: models.length,
+          itemBuilder: (BuildContext context, int i) {
+            final AmigaModel model = models[i];
+            final bool isSelected = model == selected;
+            return Material(
+              color: isSelected
+                  ? Theme.of(context).colorScheme.primaryContainer
+                  : Theme.of(context)
+                      .colorScheme
+                      .surfaceContainerHighest
+                      .withValues(alpha: 0.35),
+              borderRadius: BorderRadius.circular(10),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: () => onSelected(model),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  child: Row(
+                    children: <Widget>[
+                      SizedBox(
+                        width: 64,
+                        height: 44,
+                        child: Image.asset(
+                          model.artworkPath,
+                          fit: BoxFit.contain,
+                          errorBuilder:
+                              (BuildContext c, Object e, StackTrace? s) =>
+                                  const AmigaLogo(height: 24),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            Text(
+                              model.displayName,
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            Text(
+                              model.description,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (isSelected)
+                        const Icon(Icons.check_circle, size: 20),
+                    ],
+                  ),
                 ),
               ),
-              title: Text(model.displayName),
-              subtitle: Text(model.description),
-              trailing: isSelected ? const Icon(Icons.check_circle) : null,
-              onTap: () => onSelected(model),
-            ),
-          );
-        }),
-      ],
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -553,22 +605,14 @@ class _ChooseStep extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Text(title, style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 4),
-          Text(blurb, style: Theme.of(context).textTheme.bodySmall),
-          const SizedBox(height: 8),
-          Expanded(
-            child: MediaChooser(
-              category: category,
-              selected: selected,
-              onSelected: onSelected,
-            ),
-          ),
-        ],
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: MediaChooser(
+        category: category,
+        selected: selected,
+        onSelected: onSelected,
+        // Only shown when there is nothing to list, which is the one moment
+        // when saying what was wanted actually helps.
+        emptyHint: 'No $title found. $blurb',
       ),
     );
   }
@@ -588,14 +632,15 @@ class _TailorStep extends StatelessWidget {
     final bool canJit = settings.cpuModel >= 68020 && settings.baseModel.canJit;
     final bool canRtg = settings.baseModel.canRtg;
     return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       children: <Widget>[
-        Text('Tailor it', style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: 8),
+        // The machine, because this is the one step where what is on offer
+        // depends on it. Not a heading: a line of fact.
         Text(
           '${settings.baseModel.displayName} · ${settings.baseModel.description}',
+          style: Theme.of(context).textTheme.bodySmall,
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         if (canJit)
           SwitchListTile(
             title: const Text('JIT acceleration'),
@@ -655,12 +700,10 @@ class _SaveStep extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       children: <Widget>[
-        Text('Name it', style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: 8),
-        const Text('It goes on the shelf under this name.'),
-        const SizedBox(height: 16),
+        // The field's own label says what this is; a heading over it would
+        // say it twice.
         TextField(
           controller: controller,
           autofocus: true,
@@ -751,16 +794,16 @@ class _CdRomStep extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       children: <Widget>[
-        Text('ROMs', style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: 8),
+        // Kept, because this one is not obvious: a console needs a SECOND
+        // ROM, and without it the machine starts and shows nothing.
         Text(
-          'A ${settings.baseModel.displayName} needs two: its Kickstart, and '
-          'an extended ROM holding the CD firmware. Without the second one it '
-          'starts and shows nothing.',
+          'A ${settings.baseModel.displayName} needs its Kickstart and an '
+          'extended ROM holding the CD firmware.',
+          style: Theme.of(context).textTheme.bodySmall,
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         _RomRow(
           label: 'Kickstart',
           value: _name(settings.romFile),

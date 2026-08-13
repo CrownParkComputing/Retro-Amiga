@@ -1,6 +1,8 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import 'alphabet_filter.dart';
+
 import '../data/file_category.dart';
 import '../data/media_library.dart';
 
@@ -31,6 +33,7 @@ class MediaChooser extends StatefulWidget {
 
 class _MediaChooserState extends State<MediaChooser> {
   MediaIndex _index = const MediaIndex.empty();
+  String? _initial;
   bool _scanning = false;
   bool _loaded = false;
   String? _notice;
@@ -124,34 +127,52 @@ class _MediaChooserState extends State<MediaChooser> {
 
   @override
   Widget build(BuildContext context) {
-    final List<MediaFile> files = _index.of(widget.category);
+    final List<MediaFile> all = _index.of(widget.category);
+    final List<String> initials =
+        AlphabetFilter.from(all.map((MediaFile f) => f.name));
+    // A filter that survives its own letter disappearing - a rescan can leave
+    // a chosen letter with nothing behind it, and an empty list with no way
+    // back reads as a broken screen.
+    final String? initial = initials.contains(_initial) ? _initial : null;
+    final List<MediaFile> files = initial == null
+        ? all
+        : all
+            .where((MediaFile f) => AlphabetFilter.initialOf(f.name) == initial)
+            .toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        Row(
-          children: <Widget>[
-            Expanded(
-              child: Text(
-                _scanning
-                    ? 'Scanning…'
-                    : files.isEmpty
-                    ? 'Nothing found'
-                    : '${files.length} found',
-                style: Theme.of(context).textTheme.bodySmall,
+        // One line, not a toolbar: every row this takes is a disk you cannot
+        // see, and picking a disk is the entire job of this screen.
+        SizedBox(
+          height: 32,
+          child: Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  _scanning
+                      ? 'Scanning…'
+                      : files.isEmpty
+                      ? 'Nothing found'
+                      : '${files.length} found',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
               ),
-            ),
-            TextButton.icon(
-              onPressed: _scanning ? null : _rescan,
-              icon: const Icon(Icons.refresh, size: 18),
-              label: const Text('Rescan'),
-            ),
-            TextButton.icon(
-              onPressed: _browse,
-              icon: const Icon(Icons.folder_open, size: 18),
-              label: const Text('Browse'),
-            ),
-          ],
+              IconButton(
+                tooltip: 'Rescan',
+                visualDensity: VisualDensity.compact,
+                onPressed: _scanning ? null : _rescan,
+                icon: const Icon(Icons.refresh, size: 20),
+              ),
+              IconButton(
+                tooltip: 'Browse',
+                visualDensity: VisualDensity.compact,
+                onPressed: _browse,
+                icon: const Icon(Icons.folder_open, size: 20),
+              ),
+            ],
+          ),
         ),
         if (_notice != null)
           Padding(
@@ -162,6 +183,12 @@ class _MediaChooserState extends State<MediaChooser> {
             ),
           ),
         if (_scanning) const LinearProgressIndicator(),
+        AlphabetFilter(
+          initials: initials,
+          selected: initial,
+          onSelected: (String? value) => setState(() => _initial = value),
+        ),
+        const SizedBox(height: 4),
         Expanded(
           child: !_loaded
               ? const Center(child: CircularProgressIndicator())
@@ -178,26 +205,100 @@ class _MediaChooserState extends State<MediaChooser> {
                     ),
                   ),
                 )
-              : ListView.builder(
-                  itemCount: files.length,
-                  itemBuilder: (BuildContext context, int i) {
-                    final MediaFile file = files[i];
-                    final bool isSelected = file.path == widget.selected;
-                    return ListTile(
-                      selected: isSelected,
-                      leading: Icon(
-                        isSelected
-                            ? Icons.radio_button_checked
-                            : Icons.radio_button_unchecked,
+              // Columns on a wide screen. A landscape handheld is mostly
+              // width, and a single column of tall rows shows five disks out
+              // of a hundred - so the screen gets used across, not just down.
+              : LayoutBuilder(
+                  builder: (BuildContext context, BoxConstraints constraints) {
+                    final int columns =
+                        (constraints.maxWidth / 380).floor().clamp(1, 3);
+                    return GridView.builder(
+                      padding: EdgeInsets.zero,
+                      gridDelegate:
+                          SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: columns,
+                        mainAxisExtent: 46,
+                        crossAxisSpacing: 8,
+                        mainAxisSpacing: 4,
                       ),
-                      title: Text(file.name),
-                      subtitle: Text('${file.folder} · ${_size(file.size)}'),
-                      onTap: () => widget.onSelected(file.path),
+                      itemCount: files.length,
+                      itemBuilder: (BuildContext context, int i) {
+                        final MediaFile file = files[i];
+                        final bool isSelected = file.path == widget.selected;
+                        return _FileRow(
+                          file: file,
+                          size: _size(file.size),
+                          selected: isSelected,
+                          onTap: () => widget.onSelected(file.path),
+                        );
+                      },
                     );
                   },
                 ),
         ),
       ],
+    );
+  }
+}
+
+/// One file, one line: the name that identifies it, and the size to tell two
+/// copies apart. The folder is the tooltip rather than a second line, because
+/// a second line halves how many disks fit on the screen.
+class _FileRow extends StatelessWidget {
+  const _FileRow({
+    required this.file,
+    required this.size,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final MediaFile file;
+  final String size;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Material(
+      color: selected
+          ? theme.colorScheme.primaryContainer
+          : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Tooltip(
+          message: file.folder,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Row(
+              children: <Widget>[
+                Icon(
+                  selected
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  size: 18,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    file.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  size,
+                  style: theme.textTheme.bodySmall?.copyWith(fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -200,7 +200,30 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
     }
   }
 
+  /// Asks first. A config is minutes of choosing a machine, a ROM and a disk,
+  /// and the menu it is deleted from is two taps from the one that plays it.
   Future<void> _delete(SavedConfig config) async {
+    final bool confirmed = await showDialog<bool>(
+          context: context,
+          builder: (BuildContext context) => AlertDialog(
+            title: Text('Delete ${config.name}?'),
+            content: const Text(
+              'The config goes; the disks and hard drives it points at stay.',
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Keep'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed) return;
     await ConfigStore.delete(config.path);
     await _reload();
   }
@@ -233,6 +256,17 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
                 ),
               ),
             if (!_loading && _machinesPresent.length > 1) _machineTabs(),
+            // What the gestures do. Long press is not discoverable by itself,
+            // and a shelf where the only visible action is "play" hides the
+            // half of the screen's job that is keeping the shelf tidy.
+            if (!_loading && _configs.isNotEmpty)
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 4, 16, 2),
+                child: Text(
+                  'Tap to play · Long press to edit · ⋮ for delete',
+                  style: TextStyle(fontSize: 11, color: AmigaColors.textDim),
+                ),
+              ),
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
@@ -366,9 +400,14 @@ class _SetupCard extends StatelessWidget {
                                       ),
                             ),
                     ),
+                    // Inside the card, not hanging off its corner: a widget
+                    // drawn outside its parent's bounds still paints but is
+                    // never hit-tested, so this menu could be seen and not
+                    // opened - which is why there appeared to be no way to
+                    // delete a config.
                     Positioned(
-                      top: -8,
-                      right: -8,
+                      top: 0,
+                      right: 0,
                       child: PopupMenuButton<String>(
                         iconSize: 18,
                         onSelected: (String action) {

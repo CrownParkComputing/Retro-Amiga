@@ -5,6 +5,7 @@ import '../data/config_store.dart';
 import '../data/emulator_settings.dart';
 import '../data/file_category.dart';
 import '../data/media_library.dart';
+import '../widgets/alphabet_filter.dart';
 import '../emulator.dart';
 import '../theme/amiga_theme.dart';
 import 'guided_config_screen.dart';
@@ -46,6 +47,9 @@ class _LibraryPanelState extends State<LibraryPanel> {
   /// null means "All".
   FileCategory? _selected;
   String _search = '';
+
+  /// The chosen initial from the letter strip, or null for everything.
+  String? _initial;
 
   bool _loading = true;
   String? _error;
@@ -99,7 +103,23 @@ class _LibraryPanelState extends State<LibraryPanel> {
   int _countOf(FileCategory category) =>
       _files.where((MediaFile f) => f.category == category).length;
 
+  /// The initials present in what the tabs and the search have left, so the
+  /// strip only ever offers letters that lead somewhere.
+  List<String> get _initials =>
+      AlphabetFilter.from(_matching.map((MediaFile f) => f.title));
+
   List<MediaFile> get _visible {
+    final String? initial =
+        _initials.contains(_initial) ? _initial : null;
+    final List<MediaFile> matching = _matching;
+    if (initial == null) return matching;
+    return matching
+        .where((MediaFile f) => AlphabetFilter.initialOf(f.title) == initial)
+        .toList();
+  }
+
+  /// Everything the tabs and the search box allow, before the letter strip.
+  List<MediaFile> get _matching {
     final String needle = _search.trim().toLowerCase();
     return _files.where((MediaFile file) {
       // Music has its own panel, so it never appears here.
@@ -130,6 +150,14 @@ class _LibraryPanelState extends State<LibraryPanel> {
       children: <Widget>[
         _tabRow(),
         _searchRow(),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+          child: AlphabetFilter(
+            initials: _initials,
+            selected: _initial,
+            onSelected: (String? value) => setState(() => _initial = value),
+          ),
+        ),
         const Divider(height: 1, color: AmigaColors.panelBorder),
         Expanded(child: _body()),
       ],
