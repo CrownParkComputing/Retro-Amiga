@@ -36,6 +36,7 @@ class WhdloadRequirement {
 class WhdloadStatus {
   const WhdloadStatus({
     required this.bootArchiveInstalled,
+    this.loaderInstalled = false,
     required this.kickstartCount,
     this.source,
     this.requirements = const <WhdloadRequirement>[],
@@ -52,6 +53,10 @@ class WhdloadStatus {
   /// Whether `<home>/WHDBoot/boot-data.zip` is in place.
   final bool bootArchiveInstalled;
 
+  /// Whether WHDLoad itself is there. Separate from the archive because the
+  /// archive does not contain it - see [WhdloadSupport.status].
+  final bool loaderInstalled;
+
   /// Kickstarts copied into the booter's own kickstart folder.
   final int kickstartCount;
 
@@ -60,7 +65,12 @@ class WhdloadStatus {
 
   /// A .lha will not boot without both halves: the WHDLoad system files and a
   /// Kickstart for the machine the game wants.
-  bool get ready => bootArchiveInstalled && kickstartCount > 0;
+  /// Ready means a game will actually run: the boot drive, the loader that
+  /// goes on it, and a Kickstart for the slave to patch. Leaving the loader
+  /// out of this is what let the app report "ready" and then drop the player
+  /// on "whdload: unknown command".
+  bool get ready =>
+      bootArchiveInstalled && loaderInstalled && kickstartCount > 0;
 }
 
 /// Installs the files the core's WHDLoad booter needs.
@@ -139,6 +149,14 @@ class WhdloadSupport {
     final File archive = File('${dir.path}/boot-data.zip');
     final bool hasArchive = archive.existsSync() && archive.lengthSync() > 0;
 
+    // The loader itself, which the archive does NOT contain: boot-data.zip is
+    // the boot drive's shell - C/List, C/Copy, S/Startup-Sequence - and the
+    // booter copies WHDLoad in beside them when it builds the drive. With the
+    // archive alone a game boots and AmigaDOS answers "whdload: unknown
+    // command", which sounds like a broken game and is a missing file.
+    final File loader = File('${dir.path}/WHDLoad');
+    final bool hasLoader = loader.existsSync() && loader.lengthSync() > 0;
+
     final File database = File('${dir.path}/game-data/whdload_db.xml');
 
     // The ROMs, not the relocation tables. save-data/Kickstarts ships with a
@@ -157,13 +175,21 @@ class WhdloadSupport {
 
     return WhdloadStatus(
       bootArchiveInstalled: hasArchive,
+      loaderInstalled: hasLoader,
       kickstartCount: count,
       requirements: <WhdloadRequirement>[
         WhdloadRequirement(
-          name: 'Boot files',
-          detail: 'WHDLoad itself, mounted as DH3 while a game runs.',
+          name: 'Boot drive',
+          detail: 'The shell of the drive mounted as DH3 while a game runs.',
           path: '${dir.path}/boot-data.zip',
           present: hasArchive,
+        ),
+        WhdloadRequirement(
+          name: 'WHDLoad',
+          detail: 'The loader itself, copied into C: on the boot drive. '
+              'Without it a game starts and AmigaDOS says "unknown command".',
+          path: loader.path,
+          present: hasLoader,
         ),
         WhdloadRequirement(
           name: 'Kickstart ROMs',
@@ -316,11 +342,19 @@ class WhdloadSupport {
     final Directory? dir = await _whdBootDirectory();
     if (dir == null) return false;
     try {
-      final File archive = File('${dir.path}/boot-data.zip');
-      if (!archive.existsSync()) {
-        final ByteData data =
-            await rootBundle.load('assets/whdboot/boot-data.zip');
-        archive.writeAsBytesSync(data.buffer.asUint8List(), flush: true);
+      // The archive is the boot drive's shell - C/List, C/Copy, S/Startup -
+      // and the loaders sit beside it, which is where the booter looks for
+      // them before copying one into C:.
+      for (final String name in <String>[
+        'boot-data.zip',
+        'WHDLoad',
+        'JST',
+        'AmiQuit',
+      ]) {
+        final File file = File('${dir.path}/$name');
+        if (file.existsSync() && file.lengthSync() > 0) continue;
+        final ByteData data = await rootBundle.load('assets/whdboot/$name');
+        file.writeAsBytesSync(data.buffer.asUint8List(), flush: true);
       }
 
       final Directory gameData = Directory('${dir.path}/game-data');
@@ -339,6 +373,15 @@ class WhdloadSupport {
 
   /// Places Kickstarts and re-reads the status, for hosts that have just had
   /// the bundled boot files written and cannot search storage for more.
+  /// Whether the loader is in place. See [status] for why the archive alone
+  /// is not enough.
+  static Future<bool> hasLoader() async {
+    final Directory? dir = await _whdBootDirectory();
+    if (dir == null) return false;
+    final File loader = File('${dir.path}/WHDLoad');
+    return loader.existsSync() && loader.lengthSync() > 0;
+  }
+
   static Future<WhdloadStatus> installAfterBundle(MediaIndex index) async {
     await installKickstarts(index);
     return status();

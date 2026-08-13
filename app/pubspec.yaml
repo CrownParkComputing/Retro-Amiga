@@ -28,5 +28,12 @@ flutter:
     # on iOS there is nowhere to go and find them.
     - assets/whdboot/boot-data.zip
     - assets/whdboot/whdload_db.xml
+    # The loaders themselves. boot-data.zip is only the shell around them: it
+    # holds C/List, C/Copy and the rest, and the booter copies WHDLoad in
+    # beside them at boot. Without this file the game boots and AmigaDOS says
+    # "whdload: unknown command".
+    - assets/whdboot/WHDLoad
+    - assets/whdboot/JST
+    - assets/whdboot/AmiQuit
     - assets/images/retro_recomp_logo.png
     - assets/machines/
