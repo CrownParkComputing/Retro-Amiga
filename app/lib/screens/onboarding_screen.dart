@@ -175,6 +175,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         await MediaRoot.setPath(root);
       }
 
+      // Any Kickstarts the scan found belong in the booter's own folder. Doing
+      // it here means the setup screen's idea of "ready" matches what a game
+      // will find when it starts.
+      await WhdloadSupport.installKickstarts(index);
+
       if (mounted) {
         setState(() {
           _index = index;

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'data/config_store.dart';
+import 'data/media_library.dart';
 import 'data/whdload_support.dart';
 
 import 'data/app_log.dart';
@@ -134,6 +135,12 @@ class Emulator {
         // Settings. Only what is genuinely missing after that is worth
         // stopping for - a Kickstart, which is theirs to supply.
         await WhdloadSupport.installFromBundle();
+        // The ROMs are the player's own, so they arrive by being scanned
+        // rather than shipped - and until now nothing put them where the
+        // booter looks unless Settings was visited by hand. A library full of
+        // Kickstarts and a game refusing to start for want of one is a poor
+        // way to find that out.
+        await WhdloadSupport.installKickstarts(await MediaLibrary.cached());
         status = await WhdloadSupport.status();
       }
       if (!status.ready) {
