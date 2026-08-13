@@ -6,6 +6,7 @@ import 'dart:isolate';
 import 'package:flutter/services.dart';
 
 import 'amiga_model.dart';
+import 'app_log.dart';
 import 'file_category.dart';
 import 'host_paths.dart';
 
@@ -229,23 +230,36 @@ class MediaLibrary {
     }
   }
 
-  /// Folders never worth walking: caches, other apps' data, and the noisy
-  /// media trees. Skipping them turns a minute-long scan into a few seconds.
-  static const List<String> _skip = <String>[
-    '/Android/data',
-    '/Android/obb',
-    '/DCIM',
-    '/Pictures',
-    '/Movies',
-    '/Music',
-    '/WhatsApp',
+  /// Folders never worth walking wherever they appear: caches and other
+  /// apps' data. Skipping them turns a minute-long scan into a few seconds.
+  static const List<String> _skipAnywhere = <String>[
+    '/android/data',
+    '/android/obb',
     '/.thumbnails',
     '/.trash',
   ];
 
-  static bool _shouldSkip(String path) {
+  /// The phone's own media folders, skipped only at the top of a scan root.
+  ///
+  /// Matched by name at depth 1, not anywhere in the path: matching anywhere
+  /// meant the media folder's own Music directory - /sdcard/UAE4Arm/Music -
+  /// was skipped along with /sdcard/Music, so a collection of modules filed
+  /// exactly where the app puts them was invisible to the app.
+  static const List<String> _skipAtRoot = <String>[
+    'dcim',
+    'pictures',
+    'movies',
+    'music',
+    'whatsapp',
+  ];
+
+  static bool _shouldSkip(String path, {required bool atRoot}) {
     final String lower = path.toLowerCase();
-    return _skip.any((String s) => lower.contains(s.toLowerCase()));
+    if (_skipAnywhere.any(lower.contains)) return true;
+    if (!atRoot) return false;
+    final int slash = lower.lastIndexOf('/');
+    final String name = slash < 0 ? lower : lower.substring(slash + 1);
+    return _skipAtRoot.contains(name);
   }
 
   /// Walks [roots] and returns everything recognisable.
@@ -283,6 +297,8 @@ class MediaLibrary {
     );
 
     final MediaIndex index = MediaIndex(roots: scanRoots, files: found);
+    AppLog.info('scan',
+        '${found.length} files under ${scanRoots.join(", ")}');
     await _persist(index);
     return index;
   }
@@ -351,7 +367,7 @@ class MediaLibrary {
       }
       for (final FileSystemEntity entry in entries) {
         if (found.length >= fileLimit) return;
-        if (_shouldSkip(entry.path)) continue;
+        if (_shouldSkip(entry.path, atRoot: depth == 0)) continue;
         if (entry is Directory) {
           walkDir(entry, depth + 1);
         } else if (entry is File) {

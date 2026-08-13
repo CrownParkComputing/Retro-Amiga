@@ -18,6 +18,7 @@ enum WorkbenchSection {
   history('History', Icons.history_edu_outlined),
   files('Files', Icons.folder_open_outlined),
   settings('Settings', Icons.settings_outlined),
+  logs('Logs', Icons.article_outlined),
   about('About', Icons.info_outline);
 
   const WorkbenchSection(this.title, this.icon);

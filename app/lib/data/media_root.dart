@@ -4,6 +4,7 @@ import 'package:archive/archive.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'app_log.dart';
 import 'file_category.dart';
 import 'host_paths.dart';
 import 'media_library.dart';
@@ -171,7 +172,12 @@ class MediaImporter {
       }
     }
 
+    AppLog.info('import', 'into $root: $moved moved, $inPlace already there'
+        '${failed > 0 ? ', $failed failed' : ''}');
     final int extracted = await _extractArchives(index, root);
+    if (extracted > 0) {
+      AppLog.info('import', '$extracted disk images unpacked from zips');
+    }
 
     return ImportResult(
       moved: moved,

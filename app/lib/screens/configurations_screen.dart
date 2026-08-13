@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../data/amiga_model.dart';
 import '../data/config_store.dart';
 import '../emulator.dart';
+import '../theme/amiga_theme.dart';
 import '../widgets/amiga_logo.dart';
 import 'guided_config_screen.dart';
 
@@ -20,6 +22,23 @@ class ConfigurationsScreen extends StatefulWidget {
 
 class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
   List<SavedConfig> _configs = <SavedConfig>[];
+
+  /// null means every machine. Only machines that actually have setups get a
+  /// tab, so the row is short and never offers an empty filter.
+  AmigaModel? _machine;
+
+  List<AmigaModel> get _machinesPresent {
+    final Set<AmigaModel> present = <AmigaModel>{
+      for (final SavedConfig c in _configs)
+        if (c.model != null) c.model!,
+    };
+    // In hardware order rather than the order setups happened to be made.
+    return AmigaModel.values.where(present.contains).toList();
+  }
+
+  List<SavedConfig> get _visible => _machine == null
+      ? _configs
+      : _configs.where((SavedConfig c) => c.model == _machine).toList();
   bool _loading = true;
   String? _error;
 
@@ -144,63 +163,206 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
                   ),
                 ),
               ),
+            if (!_loading && _machinesPresent.length > 1) _machineTabs(),
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : _configs.isEmpty
-                  ? const _EmptyShelf()
-                  : RefreshIndicator(
-                      onRefresh: _reload,
-                      child: ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
-                        itemCount: _configs.length,
-                        itemBuilder: (BuildContext context, int i) {
-                          final SavedConfig config = _configs[i];
-                          return Card(
-                            child: ListTile(
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 8,
-                              ),
-                              leading: SizedBox(
-                                width: 88,
-                                height: 56,
-                                child: config.model == null
-                                    ? const AmigaLogo(height: 28)
-                                    : Image.asset(
-                                        config.model!.artworkPath,
-                                        fit: BoxFit.contain,
-                                        errorBuilder:
-                                            (
-                                              BuildContext c,
-                                              Object e,
-                                              StackTrace? s,
-                                            ) => const AmigaLogo(height: 28),
-                                      ),
-                              ),
-                              title: Text(config.name),
-                              subtitle: Text(
-                                '${config.model?.displayName ?? 'Unknown machine'} · ${config.summary}',
-                              ),
-                              trailing: PopupMenuButton<String>(
-                                onSelected: (String action) {
-                                  if (action == 'delete') _delete(config);
-                                },
-                                itemBuilder: (_) => <PopupMenuEntry<String>>[
-                                  const PopupMenuItem<String>(
-                                    value: 'delete',
-                                    child: Text('Delete'),
-                                  ),
-                                ],
-                              ),
-                              onTap: () => _play(config),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
+                      ? const _EmptyShelf()
+                      : RefreshIndicator(
+                          onRefresh: _reload,
+                          child: LayoutBuilder(
+                            builder: (
+                              BuildContext context,
+                              BoxConstraints constraints,
+                            ) {
+                              // Cards sized so the machine photo is worth
+                              // showing; three across a handheld, more on a
+                              // tablet.
+                              // Small enough that a shelf of setups reads as
+                              // a shelf rather than two posters.
+                              final int columns =
+                                  (constraints.maxWidth / 130).floor().clamp(2, 10);
+                              return GridView.builder(
+                                padding: const EdgeInsets.fromLTRB(14, 6, 14, 96),
+                                gridDelegate:
+                                    SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: columns,
+                                  childAspectRatio: 1.0,
+                                  crossAxisSpacing: 10,
+                                  mainAxisSpacing: 10,
+                                ),
+                                itemCount: _visible.length,
+                                itemBuilder: (BuildContext context, int i) =>
+                                    _SetupCard(
+                                  config: _visible[i],
+                                  onPlay: () => _play(_visible[i]),
+                                  onDelete: () => _delete(_visible[i]),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _machineTabs() {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 2),
+      child: Row(
+        children: <Widget>[
+          _MachinePill(
+            label: 'All',
+            count: _configs.length,
+            selected: _machine == null,
+            onTap: () => setState(() => _machine = null),
+          ),
+          for (final AmigaModel model in _machinesPresent)
+            _MachinePill(
+              label: model.displayName,
+              count: _configs
+                  .where((SavedConfig c) => c.model == model)
+                  .length,
+              selected: _machine == model,
+              onTap: () => setState(() => _machine = model),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One setup, with the machine it runs on.
+///
+/// A card rather than a row because a setup has a face: the machine photo says
+/// at a glance whether this is the A500 disk version or the CD32 one, which is
+/// the distinction that actually matters when two setups share a game's name.
+class _SetupCard extends StatelessWidget {
+  const _SetupCard({
+    required this.config,
+    required this.onPlay,
+    required this.onDelete,
+  });
+
+  final SavedConfig config;
+  final VoidCallback onPlay;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AmigaColors.card,
+      borderRadius: BorderRadius.circular(10),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onPlay,
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Expanded(
+                child: Stack(
+                  children: <Widget>[
+                    Positioned.fill(
+                      child: config.model == null
+                          ? const Center(child: AmigaLogo(height: 34))
+                          : Image.asset(
+                              config.model!.artworkPath,
+                              fit: BoxFit.contain,
+                              errorBuilder: (
+                                BuildContext c,
+                                Object e,
+                                StackTrace? s,
+                              ) => const Center(child: AmigaLogo(height: 34)),
+                            ),
+                    ),
+                    Positioned(
+                      top: -8,
+                      right: -8,
+                      child: PopupMenuButton<String>(
+                        iconSize: 18,
+                        onSelected: (String action) {
+                          if (action == 'delete') onDelete();
+                        },
+                        itemBuilder: (_) => <PopupMenuEntry<String>>[
+                          const PopupMenuItem<String>(
+                            value: 'delete',
+                            child: Text('Delete'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                config.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: AmigaColors.text,
+                ),
+              ),
+              Text(
+                config.summary,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AmigaColors.textDim,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MachinePill extends StatelessWidget {
+  const _MachinePill({
+    required this.label,
+    required this.count,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final int count;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: Material(
+        color: selected ? AmigaColors.workbenchBlue : AmigaColors.card,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            child: Text(
+              '$label  $count',
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: selected ? Colors.white : AmigaColors.text,
+              ),
+            ),
+          ),
         ),
       ),
     );

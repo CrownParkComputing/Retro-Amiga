@@ -1,5 +1,7 @@
 import 'package:flutter/services.dart';
 
+import 'data/app_log.dart';
+
 /// The one road from the Flutter UI into the emulator core.
 ///
 /// Every platform binds the same channel: on Android it starts the SDL
@@ -11,9 +13,15 @@ class Emulator {
 
   /// Starts emulation. [args] is passed through verbatim to the core.
   static Future<void> launch(List<String> args) async {
-    await _channel.invokeMethod<bool>('launch', <String, Object?>{
-      'args': args,
-    });
+    AppLog.info('launch', args.join(' '));
+    try {
+      await _channel.invokeMethod<bool>('launch', <String, Object?>{
+        'args': args,
+      });
+    } on PlatformException catch (e) {
+      AppLog.error('launch', '${e.code}: ${e.message}');
+      rethrow;
+    }
   }
 
   /// Which host implementation answered, for showing platform-specific UI.

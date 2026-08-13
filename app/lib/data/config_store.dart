@@ -64,10 +64,16 @@ class ConfigStore {
     return dir;
   }
 
+  /// A filename for [name], keeping as much of it as a filesystem allows.
+  ///
+  /// Brackets are kept: setups are named "Lotus Turbo Challenge (Amiga 500)"
+  /// by default, and replacing the parentheses with underscores turned every
+  /// name on the shelf into "Lotus Turbo Challenge _Amiga 500_". Only the
+  /// characters that actually break a path are replaced.
   static String _sanitise(String name) {
-    final String trimmed = name.trim();
-    final String cleaned = trimmed
-        .replaceAll(RegExp(r'[^A-Za-z0-9 ._-]'), '_')
+    final String cleaned = name
+        .trim()
+        .replaceAll(RegExp(r'[/\\:*?"<>|]'), '_')
         .trim();
     return cleaned.isEmpty ? 'Untitled' : cleaned;
   }

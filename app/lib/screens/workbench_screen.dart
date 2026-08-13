@@ -10,6 +10,7 @@ import 'about_panel.dart';
 import 'configurations_screen.dart';
 import 'history_screen.dart';
 import 'library_panel.dart';
+import 'logs_panel.dart';
 import 'music_panel.dart';
 import 'settings_panel.dart';
 
@@ -73,6 +74,27 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
         child: Stack(
           children: <Widget>[
             Positioned.fill(child: BoingBackdrop(opacity: _idle ? 1 : 0.32)),
+            // The logos belong to the demo, not to every screen: a masthead
+            // repeated above every panel is a band of chrome doing nothing,
+            // and the space is worth more to the panel underneath. They fade
+            // in with the backdrop when the workbench goes idle.
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: IgnorePointer(
+                child: AnimatedOpacity(
+                  opacity: _idle ? 1 : 0,
+                  duration: const Duration(milliseconds: 400),
+                  child: const SafeArea(
+                    child: Padding(
+                      padding: EdgeInsets.only(top: 24),
+                      child: _DemoMasthead(),
+                    ),
+                  ),
+                ),
+              ),
+            ),
             AnimatedOpacity(
               opacity: _idle ? 0 : 1,
               duration: const Duration(milliseconds: 400),
@@ -83,8 +105,6 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
                     padding: const EdgeInsets.all(AmigaMetrics.gutter),
                     child: Column(
                       children: <Widget>[
-                        const _WorkbenchHeader(),
-                        const SizedBox(height: AmigaMetrics.gutter),
                         Expanded(
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -142,15 +162,17 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
         return const MusicPanel();
       case WorkbenchSection.settings:
         return const SettingsPanel();
+      case WorkbenchSection.logs:
+        return const LogsPanel();
       case WorkbenchSection.resume:
         return _Placeholder(section: _section);
     }
   }
 }
 
-/// Logo, wordmark and tick, sitting above both panels.
-class _WorkbenchHeader extends StatelessWidget {
-  const _WorkbenchHeader();
+/// Logo, wordmark and tick, shown over the demo while the workbench is idle.
+class _DemoMasthead extends StatelessWidget {
+  const _DemoMasthead();
 
   @override
   Widget build(BuildContext context) {

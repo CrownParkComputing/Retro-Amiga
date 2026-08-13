@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
+import 'app_log.dart';
 import 'file_category.dart';
 import 'media_library.dart';
 import 'media_root.dart';
@@ -271,8 +272,15 @@ class WhdloadSupport {
       }
     }
 
-    await installKickstarts(index);
-    return status();
+    final int roms = await installKickstarts(index);
+    final WhdloadStatus result = await status();
+    if (result.ready) {
+      AppLog.info('whdload', 'ready ($roms Kickstarts installed)');
+    } else {
+      AppLog.warn('whdload',
+          'not ready: ${result.missing.map((WhdloadRequirement r) => r.name).join(", ")} missing');
+    }
+    return result;
   }
 
   /// Copies a directory, skipping anything already there: an existing file is
