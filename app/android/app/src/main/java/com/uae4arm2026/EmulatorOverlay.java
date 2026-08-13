@@ -57,11 +57,23 @@ final class EmulatorOverlay {
 		void onMenuRequested();
 
 		/** The session strip, drawn by Flutter so the icons match the launcher. */
-		void onTogglePause();
 		void onToggleKeyboard();
-		void onTogglePad();
 		void onInsertDisk(int drive);
-		void onQuit();
+
+		/** Pause means "stop playing": save where we are and go back. */
+		void onPauseToWorkbench();
+
+		/** Raw Amiga key code, for the buttons the player added themselves. */
+		void onKey(int code, boolean pressed);
+
+		/** How many floppy drives the running machine has. */
+		int floppyCount();
+
+		/** Where the on-screen controls sit, as JSON. Kept by the Activity
+		 *  because the overlay engine is built by hand and so has no plugins -
+		 *  shared_preferences does not exist on the Dart side of it. */
+		String loadLayout();
+		void saveLayout(String json);
 	}
 
 	EmulatorOverlay(Activity activity) {
@@ -118,24 +130,31 @@ final class EmulatorOverlay {
 							listener.onMenuRequested();
 							result.success(true);
 							break;
-						case "togglePause":
-							listener.onTogglePause();
+						case "pauseToWorkbench":
+							listener.onPauseToWorkbench();
 							result.success(true);
 							break;
 						case "toggleKeyboard":
 							listener.onToggleKeyboard();
 							result.success(true);
 							break;
-						case "togglePad":
-							listener.onTogglePad();
-							result.success(true);
-							break;
 						case "insertDisk":
 							listener.onInsertDisk(arg(call.argument("drive"), 0));
 							result.success(true);
 							break;
-						case "quit":
-							listener.onQuit();
+						case "sendKey":
+							listener.onKey(arg(call.argument("code"), 0),
+								Boolean.TRUE.equals(call.argument("pressed")));
+							result.success(true);
+							break;
+						case "floppyCount":
+							result.success(listener.floppyCount());
+							break;
+						case "layoutLoad":
+							result.success(listener.loadLayout());
+							break;
+						case "layoutSave":
+							listener.saveLayout(call.argument("layout"));
 							result.success(true);
 							break;
 						default:

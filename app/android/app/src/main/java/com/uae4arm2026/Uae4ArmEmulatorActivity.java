@@ -61,6 +61,11 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 	private static final String HINT_TRAP_BACK = "SDL_ANDROID_TRAP_BACK_BUTTON";
 	public static final String EXTRA_CONFIG_PATH = "com.uae4arm2026.CONFIG_PATH";
 
+	/** Where the on-screen controls sit, and any buttons the player added.
+	 *  Kept here rather than in the overlay engine, which has no plugins. */
+	private static final String PAD_LAYOUT_PREFS = "pad_layout";
+	private static final String PAD_LAYOUT_KEY = "layout";
+
 	private String currentConfigPath;
 
 	@Override
@@ -974,24 +979,45 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 
 			// Each of these is the action the Java button used to run; the
 			// icons moved to Flutter, the behaviour did not.
-			@Override public void onTogglePause() {
-				runOnUiThread(Uae4ArmEmulatorActivity.this::togglePause);
+			// Pause means "stop playing", so it goes back to the workbench.
+			// returnToLauncher writes a save state on the way out, which is
+			// what makes Resume put the game back exactly here - a pause in
+			// the only sense anyone wants one.
+			@Override public void onPauseToWorkbench() {
+				runOnUiThread(Uae4ArmEmulatorActivity.this::returnToLauncher);
 			}
 
 			@Override public void onToggleKeyboard() {
 				runOnUiThread(Uae4ArmEmulatorActivity.this::toggleVirtualKeyboardFromNative);
 			}
 
-			@Override public void onTogglePad() {
-				runOnUiThread(Uae4ArmEmulatorActivity.this::toggleOnScreenController);
-			}
-
 			@Override public void onInsertDisk(int drive) {
 				runOnUiThread(() -> showFloppyPicker(drive));
 			}
 
-			@Override public void onQuit() {
-				runOnUiThread(Uae4ArmEmulatorActivity.this::returnToLauncher);
+			@Override public void onKey(int code, boolean pressed) {
+				nativeSendAmigaKey(code, pressed ? 1 : 0);
+			}
+
+			@Override public int floppyCount() {
+				// The live count is right once the core has booted; before
+				// that, and for a machine whose config the core has not read
+				// yet, fall back to what the config says. One is the floor:
+				// a swap button that reports no drives could never be used.
+				int drives = nativeGetFloppyCount();
+				if (drives <= 0) drives = configHasFloppyDrive(1) ? 2 : 1;
+				return drives;
+			}
+
+			@Override public String loadLayout() {
+				return getSharedPreferences(PAD_LAYOUT_PREFS, MODE_PRIVATE)
+					.getString(PAD_LAYOUT_KEY, null);
+			}
+
+			@Override public void saveLayout(String json) {
+				if (json == null) return;
+				getSharedPreferences(PAD_LAYOUT_PREFS, MODE_PRIVATE)
+					.edit().putString(PAD_LAYOUT_KEY, json).apply();
 			}
 
 			@Override public void onMenuRequested() { runOnUiThread(() -> showPauseMenu()); }
