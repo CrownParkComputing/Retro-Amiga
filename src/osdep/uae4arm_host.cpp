@@ -121,6 +121,18 @@ void uae4arm_host_set_external_controller_mode(int jsem_mode)
 	set_config_changed();
 }
 
+void uae4arm_host_set_port0_joystick(bool joystick)
+{
+	/* Port 0 is the mouse port, and stays that way by default. Two-player
+	   games want a second joystick there instead - JSEM_JOYS is the first
+	   physical stick, +1 the second, since port 1 will have taken the
+	   first. Turning it off puts the mouse back. */
+	changed_prefs.jports[0].id = joystick ? JSEM_JOYS + 1 : JSEM_MICE;
+	changed_prefs.jports[0].mode = joystick ? JSEM_MODE_JOYSTICK : JSEM_MODE_MOUSE;
+	set_config_changed();
+	write_log("host: port 0 -> %s\n", joystick ? "second joystick" : "mouse");
+}
+
 void uae4arm_host_set_correct_aspect(bool enabled)
 {
 	/* Same mechanism as the AKS_AUTO_CROP_IMAGE hotkey: applied live. */

@@ -101,7 +101,28 @@ final class EmulatorHost {
     controls.onKey = { [weak self] code, pressed in
       self?.sendKey(code, pressed: pressed)
     }
-    controls.onPadToggle = { [weak self] in self?.togglePad() }
+    controls.onPadAttach = { [weak self] pad in self?.padCall("uae4arm_host_pad_attach", pad) }
+    controls.onPadDetach = { [weak self] pad in self?.padCall("uae4arm_host_pad_release_all", pad) }
+    controls.onPadButton = { [weak self] pad, button, pressed in
+      guard let self = self, let fn = self.symbol("uae4arm_host_pad_button") else { return }
+      unsafeBitCast(fn, to: PadButtonFn.self)(pad, button, pressed)
+    }
+    controls.onPadDirection = { [weak self] pad, l, r, u, d in
+      guard let self = self, let fn = self.symbol("uae4arm_host_pad_direction") else { return }
+      unsafeBitCast(fn, to: PadDirectionFn.self)(pad, l, r, u, d)
+    }
+    controls.onMouseMove = { [weak self] dx, dy in
+      guard let self = self, let fn = self.symbol("uae4arm_host_mouse_move") else { return }
+      unsafeBitCast(fn, to: MouseMoveFn.self)(dx, dy)
+    }
+    controls.onMouseButton = { [weak self] button, pressed in
+      guard let self = self, let fn = self.symbol("uae4arm_host_mouse_button") else { return }
+      unsafeBitCast(fn, to: PadButtonlessFn.self)(button, pressed)
+    }
+    controls.onTwoPlayers = { [weak self] on in
+      guard let self = self, let fn = self.symbol("uae4arm_host_set_port0_joystick") else { return }
+      unsafeBitCast(fn, to: BoolSetFn.self)(on)
+    }
 
     hasRun = true
     let run = unsafeBitCast(runSymbol, to: RunFn.self)
@@ -267,25 +288,28 @@ final class EmulatorHost {
   }
 
   // MARK: - In-game controls
+  //
+  // The pad is OUR designed one, drawn by PadOverlayView from the layout the
+  // Settings designer saves, feeding the core's virtual-pad entry points -
+  // the same route Android's Flutter pad takes. The core's own Amiberry-drawn
+  // overlay is not used.
 
   private typealias KeyFn = @convention(c) (Int32, Bool) -> Void
   private typealias IntFn = @convention(c) (Int32) -> Void
-
-  /// The on-screen pad the toggle last asked for: 0 none, 1 joystick,
-  /// 2 CD32. The config decides what a game starts with; this only tracks
-  /// what the button has requested since, cycling through all three so both
-  /// styles are reachable whatever the starting point.
-  private var padMode: Int32 = 0
+  private typealias PadButtonFn = @convention(c) (Int32, Int32, Bool) -> Void
+  private typealias PadDirectionFn = @convention(c) (Int32, Bool, Bool, Bool, Bool) -> Void
+  private typealias MouseMoveFn = @convention(c) (Int32, Int32) -> Void
+  private typealias PadButtonlessFn = @convention(c) (Int32, Bool) -> Void
+  private typealias BoolSetFn = @convention(c) (Bool) -> Void
 
   private func sendKey(_ code: Int32, pressed: Bool) {
     guard let fn = symbol("uae4arm_host_send_key") else { return }
     unsafeBitCast(fn, to: KeyFn.self)(code, pressed)
   }
 
-  private func togglePad() {
-    guard let fn = symbol("uae4arm_host_set_onscreen_controller") else { return }
-    padMode = (padMode + 1) % 3
-    unsafeBitCast(fn, to: IntFn.self)(padMode)
+  private func padCall(_ name: String, _ pad: Int32) {
+    guard let fn = symbol(name) else { return }
+    unsafeBitCast(fn, to: IntFn.self)(pad)
   }
 
   private func symbol(_ name: String) -> UnsafeMutableRawPointer? {

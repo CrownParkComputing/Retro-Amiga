@@ -17,6 +17,20 @@ final class EmulatorControls {
   private var paused = false
   private var pauseButton: UIButton?
   private var keyboard: AmigaKeyboardView?
+  private var padOverlay: PadOverlayView?
+  private var touchMouse: TouchMouseView?
+  private var mouseButton: UIButton?
+  private var playersButton: UIButton?
+  private var twoPlayers = false
+
+  /// Called with true when port 0 should take the second joystick, false to
+  /// give it back to the mouse.
+  var onTwoPlayers: ((Bool) -> Void)?
+
+  /// (dx, dy) relative pointer movement from the touch mouse.
+  var onMouseMove: ((Int32, Int32) -> Void)?
+  /// (button, pressed): 0 left, 1 right.
+  var onMouseButton: ((Int32, Bool) -> Void)?
 
   /// Called when the player asks to leave the game.
   var onQuit: (() -> Void)?
@@ -27,8 +41,11 @@ final class EmulatorControls {
   /// Called with (amigaKeyCode, pressed) from the on-screen keyboard.
   var onKey: ((Int32, Bool) -> Void)?
 
-  /// Called when the player toggles the on-screen pad.
-  var onPadToggle: (() -> Void)?
+  /// Pad plumbing, forwarded from the designed pad overlay.
+  var onPadAttach: ((Int32) -> Void)?
+  var onPadDetach: ((Int32) -> Void)?
+  var onPadButton: ((Int32, Int32, Bool) -> Void)?
+  var onPadDirection: ((Int32, Bool, Bool, Bool, Bool) -> Void)?
 
   /// The window the launcher was using, so it can be given back when
   /// emulation ends. SDL makes its own window key while a game runs, and
@@ -62,10 +79,14 @@ final class EmulatorControls {
     let pause = makeButton(systemName: "pause.fill", action: #selector(Target.pause))
     let keys = makeButton(systemName: "keyboard", action: #selector(Target.keyboard))
     let pad = makeButton(systemName: "gamecontroller", action: #selector(Target.pad))
+    let mouse = makeButton(systemName: "cursorarrow", action: #selector(Target.mouse))
+    let players = makeButton(systemName: "person.2", action: #selector(Target.twoPlayers))
     let quit = makeButton(systemName: "xmark", action: #selector(Target.quit))
     pauseButton = pause
+    mouseButton = mouse
+    playersButton = players
 
-    let stack = UIStackView(arrangedSubviews: [pause, keys, pad, quit])
+    let stack = UIStackView(arrangedSubviews: [pause, keys, pad, mouse, players, quit])
     stack.axis = .vertical
     stack.spacing = 12
     stack.translatesAutoresizingMaskIntoConstraints = false
@@ -86,6 +107,9 @@ final class EmulatorControls {
     window = nil
     pauseButton = nil
     keyboard = nil
+    padOverlay = nil
+    touchMouse = nil
+    mouseButton = nil
     paused = false
     // Hand the screen back to the launcher.
     previousKeyWindow?.makeKeyAndVisible()
@@ -97,6 +121,74 @@ final class EmulatorControls {
     pauseButton?.setImage(
       UIImage(systemName: paused ? "play.fill" : "pause.fill"), for: .normal)
     onPause?(paused)
+  }
+
+  /// Two-player mode: the second plugged-in joystick takes port 0, which is
+  /// otherwise the mouse's. Tinted while on, like mouse mode.
+  fileprivate func toggleTwoPlayers() {
+    twoPlayers.toggle()
+    playersButton?.tintColor = twoPlayers ? UIColor.systemYellow : .white
+    onTwoPlayers?(twoPlayers)
+  }
+
+  /// Turns the screen into a trackpad, or gives it back to the game. The
+  /// button tints while mouse mode is on, because a mode with no indicator
+  /// is a mystery the first time a game stops responding to taps.
+  fileprivate func toggleMouse() {
+    guard let controller = window?.rootViewController else { return }
+    if let mouse = touchMouse {
+      mouse.removeFromSuperview()
+      touchMouse = nil
+      mouseButton?.tintColor = .white
+      return
+    }
+    let mouse = TouchMouseView(frame: .zero)
+    mouse.onMove = { [weak self] dx, dy in self?.onMouseMove?(dx, dy) }
+    mouse.onButton = { [weak self] button, pressed in
+      self?.onMouseButton?(button, pressed)
+    }
+    mouse.translatesAutoresizingMaskIntoConstraints = false
+    controller.view.insertSubview(mouse, at: 0)
+    NSLayoutConstraint.activate([
+      mouse.leadingAnchor.constraint(equalTo: controller.view.leadingAnchor),
+      mouse.trailingAnchor.constraint(equalTo: controller.view.trailingAnchor),
+      mouse.topAnchor.constraint(equalTo: controller.view.topAnchor),
+      mouse.bottomAnchor.constraint(equalTo: controller.view.bottomAnchor),
+    ])
+    touchMouse = mouse
+    mouseButton?.tintColor = UIColor.systemYellow
+  }
+
+  /// Shows or hides OUR pad - the layout designed in Settings, read from the
+  /// same pad_layout.json the designer writes. Not the core's Amiberry-drawn
+  /// overlay, which this app does not use.
+  fileprivate func togglePad() {
+    guard let controller = window?.rootViewController else { return }
+    if let pad = padOverlay {
+      onPadDetach?(pad.pad)
+      pad.removeFromSuperview()
+      padOverlay = nil
+      return
+    }
+    let pad = PadOverlayView(frame: .zero)
+    pad.loadLayout()
+    pad.onButton = { [weak self] pad, button, pressed in
+      self?.onPadButton?(pad, button, pressed)
+    }
+    pad.onDirection = { [weak self] pad, l, r, u, d in
+      self?.onPadDirection?(pad, l, r, u, d)
+    }
+    pad.onKey = { [weak self] code, pressed in self?.onKey?(code, pressed) }
+    pad.translatesAutoresizingMaskIntoConstraints = false
+    // Behind the corner strip, above the game.
+    controller.view.insertSubview(pad, at: 0)
+    NSLayoutConstraint.activate([
+      pad.leadingAnchor.constraint(equalTo: controller.view.leadingAnchor),
+      pad.trailingAnchor.constraint(equalTo: controller.view.trailingAnchor),
+      pad.topAnchor.constraint(equalTo: controller.view.topAnchor),
+      pad.bottomAnchor.constraint(equalTo: controller.view.bottomAnchor),
+    ])
+    onPadAttach?(pad.pad)
   }
 
   /// Shows or hides the on-screen Amiga keyboard, full width along the
@@ -133,7 +225,9 @@ final class EmulatorControls {
 
     @objc func pause() { controls?.togglePause() }
     @objc func keyboard() { controls?.toggleKeyboard() }
-    @objc func pad() { controls?.onPadToggle?() }
+    @objc func pad() { controls?.togglePad() }
+    @objc func mouse() { controls?.toggleMouse() }
+    @objc func twoPlayers() { controls?.toggleTwoPlayers() }
     @objc func quit() { controls?.onQuit?() }
   }
 

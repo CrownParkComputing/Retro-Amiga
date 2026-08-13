@@ -111,6 +111,11 @@ void uae4arm_host_set_onscreen_controller(int mode);
 /* JSEM_MODE constant for port 1 (3 = joystick, 7 = CD32 pad) */
 void uae4arm_host_set_external_controller_mode(int jsem_mode);
 
+/* Puts the second physical joystick in port 0 (true) or gives the port back
+ * to the mouse (false), for two-player games with two controllers plugged
+ * in. Port 1 keeps the first joystick either way. */
+void uae4arm_host_set_port0_joystick(bool joystick);
+
 void uae4arm_host_set_correct_aspect(bool enabled);
 bool uae4arm_host_get_correct_aspect(void);
 
