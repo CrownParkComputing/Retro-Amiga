@@ -49,6 +49,17 @@ final class PadOverlayView: UIView {
     }
   }
 
+  /// Reads the designed layout, with the style forced by the toggle rather
+  /// than taken from the file: the in-game button cycles off, joystick, CD32,
+  /// and the file's positions and added buttons apply to whichever is up.
+  /// forcedStyle: 1 joystick, 2 CD32.
+  func loadLayout(forcedStyle: Int32) {
+    loadLayout()
+    layout.cd32 = forcedStyle == 2
+    pad = forcedStyle
+    rebuild()
+  }
+
   /// Reads the designed layout. The file lives in Application Support, where
   /// the launcher's pad designer saves it; both run in this same container.
   func loadLayout() {

@@ -159,19 +159,23 @@ final class EmulatorControls {
     mouseButton?.tintColor = UIColor.systemYellow
   }
 
-  /// Shows or hides OUR pad - the layout designed in Settings, read from the
-  /// same pad_layout.json the designer writes. Not the core's Amiberry-drawn
-  /// overlay, which this app does not use.
+  /// The pad the toggle last asked for: 0 none, 1 joystick, 2 CD32.
+  private var padMode: Int32 = 0
+
+  /// Cycles OUR pad - none, the two-button joystick, the full CD32 pad with
+  /// its transport keys off to the side - drawn from the layout designed in
+  /// Settings. Not the core's Amiberry-drawn overlay, which no longer exists.
   fileprivate func togglePad() {
     guard let controller = window?.rootViewController else { return }
     if let pad = padOverlay {
       onPadDetach?(pad.pad)
       pad.removeFromSuperview()
       padOverlay = nil
-      return
     }
+    padMode = (padMode + 1) % 3
+    if padMode == 0 { return }
     let pad = PadOverlayView(frame: .zero)
-    pad.loadLayout()
+    pad.loadLayout(forcedStyle: padMode)
     pad.onButton = { [weak self] pad, button, pressed in
       self?.onPadButton?(pad, button, pressed)
     }

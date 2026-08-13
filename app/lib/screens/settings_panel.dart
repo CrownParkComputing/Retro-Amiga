@@ -1,3 +1,5 @@
+import 'dart:io';
+
 
 import 'package:flutter/material.dart';
 
@@ -217,17 +219,22 @@ class _SettingsPanelState extends State<SettingsPanel> {
                   ),
                 ),
               ),
-              ListTile(
-                leading: const Icon(Icons.videogame_asset_outlined),
-                title: const Text('Controller buttons'),
-                subtitle: const Text(
-                  'Which button on a real controller is red, blue, green and '
-                  'yellow. A CD32 config uses all four; anything else uses the '
-                  'first two as fire.',
+              // The mapping screen is the Android Activity's - it has to see
+              // raw controller events, which is native work that iOS has no
+              // counterpart for yet. A settings row that silently does
+              // nothing is worse than no row.
+              if (Platform.isAndroid)
+                ListTile(
+                  leading: const Icon(Icons.videogame_asset_outlined),
+                  title: const Text('Controller buttons'),
+                  subtitle: const Text(
+                    'Which button on a real controller is red, blue, green and '
+                    'yellow. A CD32 config uses all four; anything else uses the '
+                    'first two as fire.',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: Emulator.openControllerMapping,
                 ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: Emulator.openControllerMapping,
-              ),
             ],
           ),
         ),
