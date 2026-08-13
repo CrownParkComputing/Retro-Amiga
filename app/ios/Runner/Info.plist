@@ -107,6 +107,14 @@
 	<string>Amiga-Retro only reads a file you select yourself when importing disk images, Kickstart ROMs or WHDLoad archives. Nothing is read from your library without you picking it.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Amiga-Retro does not use your location and never requests it. This entry is required because a bundled file-picker component links against the location framework.</string>
+	<!-- ITMS-90683 on the first upload named this key specifically. SDL, which
+	     the Amiberry core is built on, links CoreBluetooth to discover game
+	     controllers. As with the three above, a linked framework is enough:
+	     Apple's scanner does not care whether the API is ever called. iOS
+	     pairs controllers in Settings rather than in the app, so in practice
+	     the prompt should never appear; the string is required regardless. -->
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Amiga-Retro uses Bluetooth only to detect game controllers you have already paired with your iPad. It never scans for, connects to, or collects data from any other device.</string>
 	<!-- Declared so testers are not gated on answering the encryption
 	     question by hand on every build. The app uses no encryption beyond
 	     the platform's own HTTPS. -->
