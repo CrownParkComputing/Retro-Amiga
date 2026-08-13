@@ -200,7 +200,18 @@ class MediaLibrary {
     if (Platform.isAndroid) {
       return <String>['/sdcard'];
     }
-    return <String>[await HostPaths.documents()];
+    if (Platform.isIOS) {
+      return <String>[await HostPaths.documents()];
+    }
+    // The app's own folder and Documents, not the whole of home. A desktop
+    // home directory holds every other emulator on the machine, and walking
+    // it turns their libraries into this one's.
+    final String root = await MediaRoot.path();
+    final String documents = await HostPaths.documents();
+    return <String>[
+      root,
+      if (documents != root && Directory(documents).existsSync()) documents,
+    ];
   }
 
   /// Asked of the host rather than a plugin: this is two Android calls, and

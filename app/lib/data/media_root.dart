@@ -63,12 +63,33 @@ class MediaRoot {
 
   /// iOS can only use its own Documents directory; Android gets shared
   /// storage, so an existing collection is not copied for no reason.
+  ///
+  /// A desktop gets a folder of its own, named for the app. Home and Documents
+  /// are shared with everything else on the machine - the first run on this
+  /// Linux box adopted another emulator's data directory as its library - and
+  /// a launcher that files disks into somebody else's folders is worse than
+  /// one that asks.
   static Future<String> defaultPath() async {
     if (Platform.isAndroid) return '/sdcard/Amiga';
-    return await HostPaths.documents();
+    if (Platform.isIOS) return await HostPaths.documents();
+    final Directory dir = Directory(
+      '${Platform.environment['HOME'] ?? await HostPaths.documents()}'
+      '/Amiga-Retro',
+    );
+    if (!dir.existsSync()) dir.createSync(recursive: true);
+    return dir.path;
   }
 
-  static bool get canChoose => Platform.isAndroid;
+  /// Anywhere but iOS, which can only ever use its own Documents folder.
+  static bool get canChoose => !Platform.isIOS;
+
+  /// Whether a collection found by the scan should be adopted as the root.
+  ///
+  /// Android only. It exists for the device that has been running the old
+  /// launcher and already has /sdcard/UAE4Arm full of disks. On a desktop the
+  /// busiest folder full of media is somebody else's emulator, which is
+  /// exactly what happened the first time this ran on Linux.
+  static bool get adoptsExistingCollection => Platform.isAndroid;
 
   /// The folder in [index] that already holds the most media, if any.
   ///

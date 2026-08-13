@@ -168,7 +168,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       // chosen one. A device that has been running the old launcher keeps its
       // library where it is, and the import then has nothing to move.
       String root = await MediaRoot.path();
-      final String? suggestion = MediaRoot.suggestFrom(index);
+      final String? suggestion =
+          MediaRoot.adoptsExistingCollection ? MediaRoot.suggestFrom(index) : null;
       if (suggestion != null && root == await MediaRoot.defaultPath()) {
         root = suggestion;
         await MediaRoot.setPath(root);

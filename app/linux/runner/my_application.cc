@@ -7,6 +7,67 @@
 
 #include "flutter/generated_plugin_registrant.h"
 
+#include <glib.h>
+#include <sys/stat.h>
+
+// The channel the launcher talks to. On Android and iOS the other end starts
+// the emulator and answers where things live; on the desktop there is no host
+// app around the launcher, so this answers for itself.
+static constexpr char kChannel[] = "uae4arm2026/emulator";
+
+// Everything the launcher writes lives under one directory, the way it does on
+// a phone: configs, save states, the media index and the pad layout.
+static gchar* app_support_directory() {
+  g_autofree gchar* path =
+      g_build_filename(g_get_user_data_dir(), "uae4arm2026", nullptr);
+  // Made on demand, because the launcher expects to be handed somewhere it can
+  // write rather than somewhere it has to create.
+  g_mkdir_with_parents(path, 0755);
+  return g_steal_pointer(&path);
+}
+
+static void handle_method_call(FlMethodChannel* channel, FlMethodCall* call,
+                               gpointer user_data) {
+  const gchar* method = fl_method_call_get_name(call);
+  g_autoptr(FlMethodResponse) response = nullptr;
+
+  if (g_strcmp0(method, "platformName") == 0) {
+    g_autoptr(FlValue) value = fl_value_new_string("linux");
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(value));
+  } else if (g_strcmp0(method, "appSupportDirectory") == 0 ||
+             g_strcmp0(method, "emulatorHomeDirectory") == 0) {
+    g_autofree gchar* path = app_support_directory();
+    g_autoptr(FlValue) value = fl_value_new_string(path);
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(value));
+  } else if (g_strcmp0(method, "documentsDirectory") == 0) {
+    // Where a person keeps their disks, not where the app keeps its state:
+    // on a desktop those are different places, and the scan starts here.
+    const gchar* documents = g_get_user_special_dir(G_USER_DIRECTORY_DOCUMENTS);
+    g_autoptr(FlValue) value =
+        fl_value_new_string(documents != nullptr ? documents : g_get_home_dir());
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(value));
+  } else if (g_strcmp0(method, "hasAllFilesAccess") == 0) {
+    // A desktop has no scoped storage to ask permission of; the launcher can
+    // read what the user can read.
+    g_autoptr(FlValue) value = fl_value_new_bool(TRUE);
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(value));
+  } else if (g_strcmp0(method, "requestAllFilesAccess") == 0) {
+    g_autoptr(FlValue) value = fl_value_new_bool(TRUE);
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(value));
+  } else {
+    // Launching a game and the module player are the emulator core's, and the
+    // core is not built for the desktop yet. Not implemented is the honest
+    // answer: the launcher already treats it as "this host cannot", and says
+    // so, rather than failing in a way that looks like a bug.
+    response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
+  }
+
+  g_autoptr(GError) error = nullptr;
+  if (!fl_method_call_respond(call, response, &error)) {
+    g_warning("failed to answer %s: %s", method, error->message);
+  }
+}
+
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
@@ -74,6 +135,13 @@ static void my_application_activate(GApplication* application) {
   gtk_widget_realize(GTK_WIDGET(view));
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
+
+  g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
+  FlMethodChannel* channel = fl_method_channel_new(
+      fl_engine_get_binary_messenger(fl_view_get_engine(view)), kChannel,
+      FL_METHOD_CODEC(codec));
+  fl_method_channel_set_method_call_handler(channel, handle_method_call,
+                                            g_object_ref(view), g_object_unref);
 
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }
