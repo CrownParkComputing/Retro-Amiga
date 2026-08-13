@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'data/config_store.dart';
 import 'data/whdload_support.dart';
 
 import 'data/app_log.dart';
@@ -20,6 +21,11 @@ class Emulator {
 
   /// Starts emulation. [args] is passed through verbatim to the core.
   static Future<void> launch(List<String> args) async {
+    // The core's own stored paths rot when iOS moves the container; see
+    // ConfigStore.repairEmulatorSettings. Done for every launch, because a
+    // game is the only thing that reads them.
+    await ConfigStore.repairEmulatorSettings();
+
     AppLog.info('launch', args.join(' '));
     // The launcher's music has no business playing over a game, and on
     // Android it would be a second process holding the audio device.

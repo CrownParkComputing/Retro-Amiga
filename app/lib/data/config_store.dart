@@ -219,6 +219,39 @@ class ConfigStore {
   ///
   /// Matching is by filename under the media folder, because that is what the
   /// import preserves: it moves a file between folders, never renames it.
+  /// Points the emulator's own settings at where its files are now.
+  ///
+  /// The core stores absolute paths - whdboot_path, config_path, rom_path and
+  /// a dozen more - and on iOS those rot on every install, because the app is
+  /// handed a new container and the old one is deleted. The stored paths win
+  /// over the home directory the core computes, so a WHDLoad game mounted DH0
+  /// and DH3 from a container that no longer existed and the machine sat on
+  /// "no disk present in DH0" with a perfectly good config beside it.
+  ///
+  /// Rewrites the container prefix and nothing else, so settings that are not
+  /// paths, and paths that still exist, are left exactly as they were. A
+  /// no-op anywhere but iOS, where nothing matches the pattern.
+  static Future<void> repairEmulatorSettings() async {
+    try {
+      final String documents = await HostPaths.documents();
+      final File file =
+          File('$documents/Amiberry/Settings/amiberry.conf');
+      if (!file.existsSync()) return;
+
+      // Both spellings appear: the core resolves through /private on iOS.
+      final RegExp container = RegExp(
+        r'(/private)?/var/mobile/Containers/Data/Application/'
+        r'[0-9A-Fa-f-]{36}/Documents',
+      );
+      final String text = file.readAsStringSync();
+      final String repaired = text.replaceAll(container, documents);
+      if (repaired != text) file.writeAsStringSync(repaired);
+    } on FileSystemException {
+      // Unwritable settings are the core's problem to report, not a reason to
+      // refuse to start a game.
+    }
+  }
+
   static Future<String> _relocateMissingMedia(String text) async {
     final String root = await MediaRoot.path();
     if (!Directory(root).existsSync()) return text;
