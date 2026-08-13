@@ -74,6 +74,12 @@ class _RootState extends State<_Root> {
     bool complete = false;
     try {
       complete = await AppPrefs.setupComplete();
+      // A newly deployed build goes through the walkthrough again, whatever
+      // was answered last time. It is the one screen that says what this
+      // install can actually see - the scan, where media lives, whether
+      // WHDLoad is ready - and after a deploy that is exactly what nobody
+      // knows.
+      if (complete && await AppPrefs.isNewBuild()) complete = false;
     } on Object {
       // A missing preference store means first run, not a failure.
     }
@@ -87,7 +93,12 @@ class _RootState extends State<_Root> {
     }
     if (_setupComplete!) return const WorkbenchScreen();
     return OnboardingScreen(
-      onFinished: () => setState(() => _setupComplete = true),
+      onFinished: () async {
+        // Remembered on the way out rather than on the way in: a walkthrough
+        // that was never finished should come back.
+        await AppPrefs.rememberBuild();
+        if (mounted) setState(() => _setupComplete = true);
+      },
     );
   }
 }

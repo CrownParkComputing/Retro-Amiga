@@ -46,6 +46,16 @@ static void handle_method_call(FlMethodChannel* channel, FlMethodCall* call,
     g_autoptr(FlValue) value =
         fl_value_new_string(documents != nullptr ? documents : g_get_home_dir());
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(value));
+  } else if (g_strcmp0(method, "appBuildStamp") == 0) {
+    // The executable's timestamp: a rebuild rewrites it, which is a deploy on
+    // a desktop.
+    g_autofree gchar* exe = g_file_read_link("/proc/self/exe", nullptr);
+    struct stat info;
+    const gchar* target = exe != nullptr ? exe : "/proc/self/exe";
+    const gint64 stamp = stat(target, &info) == 0 ? (gint64)info.st_mtime : 0;
+    g_autofree gchar* text = g_strdup_printf("%" G_GINT64_FORMAT, stamp);
+    g_autoptr(FlValue) value = fl_value_new_string(text);
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(value));
   } else if (g_strcmp0(method, "hasAllFilesAccess") == 0) {
     // A desktop has no scoped storage to ask permission of; the launcher can
     // read what the user can read.

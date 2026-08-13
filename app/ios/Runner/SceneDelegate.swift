@@ -79,6 +79,17 @@ class SceneDelegate: FlutterSceneDelegate {
       case "platformName":
         result("ios")
 
+      // Something that changes every time a build is installed, so the
+      // launcher can tell a new deploy from an ordinary start and show the
+      // setup walkthrough again. The bundle's modification date is that: it
+      // is stamped when the app is written to the device, and needs no
+      // version number anybody has to remember to bump.
+      case "appBuildStamp":
+        let url = Bundle.main.bundleURL
+        let values = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+        let stamp = values?.contentModificationDate ?? Date(timeIntervalSince1970: 0)
+        result(String(Int(stamp.timeIntervalSince1970)))
+
       // Asked of the host rather than path_provider. That package's iOS
       // implementation binds through package:objective_c FFI, whose native
       // symbols the iosbox build does not link, and the failure surfaces as

@@ -80,4 +80,19 @@ class HostPaths {
   static final RegExp _containerPath = RegExp(
     r'/Containers/Data/Application/[0-9A-Fa-f-]{36}/(.+)$',
   );
+
+  /// Something that changes every time a build is installed.
+  ///
+  /// Used to tell a new deploy from an ordinary start. Empty when the host
+  /// does not answer, which is read as "not new" - showing the walkthrough on
+  /// every launch would be worse than never showing it.
+  static Future<String> buildStamp() async {
+    try {
+      return await _channel.invokeMethod<String>('appBuildStamp') ?? '';
+    } on MissingPluginException {
+      return '';
+    } on PlatformException {
+      return '';
+    }
+  }
 }

@@ -85,6 +85,12 @@ class MainActivity : FlutterActivity() {
 						startActivity(android.content.Intent(this, ControllerMapActivity::class.java))
 						result.success(true)
 					}
+					"appBuildStamp" -> {
+						// Changes on every install, which is what tells the launcher a
+						// new build has been deployed - no version number to bump.
+						val info = packageManager.getPackageInfo(packageName, 0)
+						result.success(info.lastUpdateTime.toString())
+					}
 					"platformName" -> result.success("android")
 
 					// Served here rather than by path_provider, whose iOS
