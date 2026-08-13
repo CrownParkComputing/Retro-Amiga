@@ -717,6 +717,56 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 	 * nativeGetFloppyCount() yet (that's only safe once gameplay has actually started, e.g. from
 	 * the pause menu).
 	 */
+	/**
+	 * Whether the config we launched is a CD32.
+	 *
+	 * Same cheap line scan as configHasFloppyDrive, and for the same reason:
+	 * this is asked while the overlay is starting, which can be before the
+	 * core has parsed anything. The answer only picks which pad is DRAWN by
+	 * default, so reading the file the launcher wrote is enough.
+	 */
+	/**
+	 * Whether a real controller is attached.
+	 *
+	 * Both flags are required rather than either: a touchscreen reports
+	 * SOURCE_JOYSTICK on some devices, and an accelerometer reports axes, so
+	 * asking for a joystick alone finds hardware nobody can press a button on.
+	 * Virtual devices are skipped for the same reason - the emulator registers
+	 * its own on-screen pad with the input layer, and finding that would mean
+	 * the drawn pad hides itself because it exists.
+	 */
+	private boolean realControllerConnected() {
+		for (int id : android.view.InputDevice.getDeviceIds()) {
+			android.view.InputDevice device = android.view.InputDevice.getDevice(id);
+			if (device == null || device.isVirtual()) continue;
+			int sources = device.getSources();
+			boolean gamepad = (sources & android.view.InputDevice.SOURCE_GAMEPAD)
+				== android.view.InputDevice.SOURCE_GAMEPAD;
+			boolean joystick = (sources & android.view.InputDevice.SOURCE_JOYSTICK)
+				== android.view.InputDevice.SOURCE_JOYSTICK;
+			if (gamepad && joystick) return true;
+		}
+		return false;
+	}
+
+	private boolean configIsCd32() {
+		if (currentConfigPath == null) return false;
+		try {
+			File file = new File(currentConfigPath);
+			if (!file.exists()) return false;
+			try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader(file))) {
+				String line;
+				while ((line = reader.readLine()) != null) {
+					if (line.startsWith("cd32cd=")) {
+						return parseConfigBoolean(line.substring("cd32cd=".length()).trim(), false);
+					}
+				}
+			}
+		} catch (IOException ignored) {
+		}
+		return false;
+	}
+
 	private boolean configHasFloppyDrive(int drive) {
 		if (currentConfigPath == null) {
 			// No explicit config (e.g. quickstart floppy launch) - assume a floppy drive exists.
@@ -987,8 +1037,13 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 				runOnUiThread(Uae4ArmEmulatorActivity.this::returnToLauncher);
 			}
 
-			@Override public void onToggleKeyboard() {
-				runOnUiThread(Uae4ArmEmulatorActivity.this::toggleVirtualKeyboardFromNative);
+			@Override public boolean onToggleKeyboard() {
+				// Done inline rather than posted: the caller wants the state
+				// that results, and the channel already runs on the UI thread.
+				ensureVirtualKeyboardOverlay();
+				virtualKeyboard.toggle();
+				enterImmersiveMode();
+				return virtualKeyboard.isKeyboardVisible();
 			}
 
 			@Override public void onInsertDisk(int drive) {
@@ -1007,6 +1062,18 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 				int drives = nativeGetFloppyCount();
 				if (drives <= 0) drives = configHasFloppyDrive(1) ? 2 : 1;
 				return drives;
+			}
+
+			@Override public void onPortMode(int mode) {
+				nativeSetExternalControllerMode(mode);
+			}
+
+			@Override public boolean isCd32() {
+				return configIsCd32();
+			}
+
+			@Override public boolean hasGamepad() {
+				return realControllerConnected();
 			}
 
 			@Override public String loadLayout() {

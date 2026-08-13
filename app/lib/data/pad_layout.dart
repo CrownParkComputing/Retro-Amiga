@@ -66,6 +66,26 @@ class PadButton {
   }
 }
 
+/// Which controller is drawn.
+///
+/// The CD32 pad is a different device to the core, not a skin: it registers as
+/// a seven-button pad and port 1 has to be told it is one, which is why this
+/// is part of the layout rather than a colour scheme.
+enum PadStyle {
+  /// Stick and two fire buttons - the Amiga's own joystick.
+  joystick,
+
+  /// The CD32 joypad: red, blue, green, yellow, and the three transport keys.
+  cd32;
+
+  static PadStyle byName(String? name) {
+    for (final PadStyle style in PadStyle.values) {
+      if (style.name == name) return style;
+    }
+    return PadStyle.joystick;
+  }
+}
+
 /// Where the on-screen controls sit and what extra buttons there are.
 ///
 /// Positions are fractions of the play area, not pixels: the controls have to
@@ -76,7 +96,9 @@ class PadLayout {
   const PadLayout({
     this.stick = const Offset2(0.13, 0.74),
     this.buttons = const Offset2(0.89, 0.72),
+    this.transport = const Offset2(0.78, 0.12),
     this.customButtons = const <PadButton>[],
+    this.style = PadStyle.joystick,
   });
 
   /// Defaults chosen to match where the controls have always been drawn -
@@ -86,32 +108,50 @@ class PadLayout {
 
   final Offset2 stick;
   final Offset2 buttons;
+
+  /// The CD32 transport keys - play, rewind, forward. Placed on their own,
+  /// away from the four coloured buttons, because they are not part of
+  /// playing: hitting one by accident mid-game is a skipped track, so they
+  /// want to be somewhere your thumb is not.
+  final Offset2 transport;
   final List<PadButton> customButtons;
+  final PadStyle style;
 
   PadLayout copyWith({
     Offset2? stick,
     Offset2? buttons,
+    Offset2? transport,
     List<PadButton>? customButtons,
+    PadStyle? style,
   }) =>
       PadLayout(
         stick: stick ?? this.stick,
         buttons: buttons ?? this.buttons,
+        transport: transport ?? this.transport,
         customButtons: customButtons ?? this.customButtons,
+        style: style ?? this.style,
       );
 
   String encode() => jsonEncode(<String, Object?>{
         'stick': stick.toJson(),
         'buttons': buttons.toJson(),
+        'transport': transport.toJson(),
         'custom': customButtons.map((PadButton b) => b.toJson()).toList(),
+        'style': style.name,
       });
 
   /// Anything unreadable falls back to the defaults rather than throwing: a
   /// corrupt layout file must not be the reason a game has no controls.
-  static PadLayout decode(String? text) {
-    if (text == null || text.isEmpty) return defaults;
+  static PadLayout decode(String? text, {PadStyle fallbackStyle = PadStyle.joystick}) {
+    // No layout yet means a machine we have not been asked about, so the
+    // caller's guess stands: a CD32 game gets the CD32 pad without anyone
+    // having to go and choose it.
+    if (text == null || text.isEmpty) return defaults.copyWith(style: fallbackStyle);
     try {
       final Object? raw = jsonDecode(text);
-      if (raw is! Map<String, Object?>) return defaults;
+      if (raw is! Map<String, Object?>) {
+        return defaults.copyWith(style: fallbackStyle);
+      }
 
       final List<PadButton> custom = <PadButton>[];
       final Object? entries = raw['custom'];
@@ -126,10 +166,14 @@ class PadLayout {
       return PadLayout(
         stick: Offset2.fromJson(raw['stick']) ?? defaults.stick,
         buttons: Offset2.fromJson(raw['buttons']) ?? defaults.buttons,
+        transport: Offset2.fromJson(raw['transport']) ?? defaults.transport,
         customButtons: custom,
+        style: raw['style'] == null
+            ? fallbackStyle
+            : PadStyle.byName(raw['style'] as String?),
       );
     } on FormatException {
-      return defaults;
+      return defaults.copyWith(style: fallbackStyle);
     }
   }
 }

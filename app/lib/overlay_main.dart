@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import 'data/amiga_keys.dart';
 import 'data/pad_layout.dart';
+import 'widgets/cd32_pad.dart';
 import 'widgets/pad_key_button.dart';
 import 'widgets/wobble_joystick.dart';
 
@@ -21,35 +22,64 @@ void emulatorOverlayMain() {
 class OverlayPad {
   static const MethodChannel _channel = MethodChannel('uae4arm2026/overlay');
 
-  /// Matches UAE4ARM_HOST_PAD_JOYSTICK in uae4arm_host.h.
+  /// UAE4ARM_HOST_PAD_JOYSTICK / _CD32 in uae4arm_host.h.
   static const int joystick = 1;
+  static const int cd32 = 2;
 
   /// UAE4ARM_HOST_JOY_FIRE1 / FIRE2.
   static const int fire1 = 0;
   static const int fire2 = 1;
 
-  static Future<void> attach() =>
-      _channel.invokeMethod('padAttach', <String, Object?>{'pad': joystick});
+  /// JSEM_MODE for port 1: a plain joystick, or a CD32 pad. The core has to
+  /// be told which, or the seven-button pad reports into a port that only
+  /// understands two of them.
+  static const int modeJoystick = 3;
+  static const int modeCd32 = 7;
 
-  static Future<void> direction(bool up, bool down, bool left, bool right) =>
+  static int padFor(PadStyle style) =>
+      style == PadStyle.cd32 ? cd32 : joystick;
+
+  static Future<void> attach(int pad) =>
+      _channel.invokeMethod('padAttach', <String, Object?>{'pad': pad});
+
+  static Future<void> setPortMode(int mode) =>
+      _channel.invokeMethod('portMode', <String, Object?>{'mode': mode});
+
+  static Future<void> direction(
+    int pad,
+    bool up,
+    bool down,
+    bool left,
+    bool right,
+  ) =>
       _channel.invokeMethod('padDirection', <String, Object?>{
-        'pad': joystick,
+        'pad': pad,
         'left': left,
         'right': right,
         'up': up,
         'down': down,
       });
 
-  static Future<void> button(int button, bool pressed) => _channel.invokeMethod(
-    'padButton',
-    <String, Object?>{'pad': joystick, 'button': button, 'pressed': pressed},
-  );
+  static Future<void> button(int pad, int button, bool pressed) =>
+      _channel.invokeMethod(
+        'padButton',
+        <String, Object?>{'pad': pad, 'button': button, 'pressed': pressed},
+      );
 
   /// Called when the pad goes away mid-press, so a held direction cannot stick.
-  static Future<void> releaseAll() => _channel.invokeMethod(
+  static Future<void> releaseAll(int pad) => _channel.invokeMethod(
     'padReleaseAll',
-    <String, Object?>{'pad': joystick},
+    <String, Object?>{'pad': pad},
   );
+
+  /// Whether the running config is a CD32, which decides which pad is drawn
+  /// before anyone has chosen one.
+  static Future<bool> isCd32() async =>
+      await _channel.invokeMethod<bool>('isCd32') ?? false;
+
+  /// Whether a real controller is attached.
+  static Future<bool> hasGamepad() async =>
+      await _channel.invokeMethod<bool>('hasGamepad') ?? false;
 
   /// An Amiga raw key code, for the buttons the player adds themselves.
   static Future<void> sendKey(int code, bool pressed) =>
@@ -62,8 +92,9 @@ class OverlayPad {
   /// so the icons are the same Material set the launcher uses - which is what
   /// the C64 front end does too. The Activity keeps the behaviour; this just
   /// asks for it.
-  static Future<void> toggleKeyboard() =>
-      _channel.invokeMethod('toggleKeyboard');
+  /// Returns whether the keyboard is now up.
+  static Future<bool> toggleKeyboard() async =>
+      await _channel.invokeMethod<bool>('toggleKeyboard') ?? false;
 
   /// Pause leaves the game and goes back to the workbench.
   ///
@@ -118,7 +149,17 @@ class EmulatorOverlay extends StatefulWidget {
 class _EmulatorOverlayState extends State<EmulatorOverlay> {
   PadLayout _layout = PadLayout.defaults;
   bool _editing = false;
+  /// The drawn pad starts hidden when a real controller is attached: it would
+  /// be sitting over the game covering a screen nobody needs to touch. It is
+  /// a DEFAULT, not a rule - the pad icon still turns it on, which matters on
+  /// a handheld, where the built-in controller is always "attached" and a
+  /// player may still want a button the pad has and the handheld does not.
   bool _padVisible = true;
+
+  /// The on-screen keyboard covers the bottom of the screen, which is where
+  /// the controls are. Drawing a joystick over the letters it is standing on
+  /// makes both unusable, so the pad steps aside while the keyboard is up.
+  bool _keyboardUp = false;
 
   /// What the stick is saying, kept apart from what the added direction
   /// buttons are saying so the two can be combined. Driving the core from
@@ -130,26 +171,52 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
   bool _stickRight = false;
   final Set<PadDirection> _heldButtons = <PadDirection>{};
 
+  int get _pad => OverlayPad.padFor(_layout.style);
+
   @override
   void initState() {
     super.initState();
-    OverlayPad.attach();
     _loadLayout();
+    _checkGamepad();
+  }
+
+  Future<void> _checkGamepad() async {
+    final bool pad = await OverlayPad.hasGamepad();
+    if (mounted && pad) setState(() => _padVisible = false);
   }
 
   Future<void> _loadLayout() async {
-    final PadLayout layout = PadLayout.decode(await OverlayPad.loadLayout());
-    if (mounted) setState(() => _layout = layout);
+    // The saved layout wins; with none, a CD32 config gets the CD32 pad,
+    // because a CD32 game asking for the blue button on a two-button stick
+    // is unplayable and the machine already knows which it is.
+    final String? saved = await OverlayPad.loadLayout();
+    final bool cd32 = saved == null ? await OverlayPad.isCd32() : false;
+    final PadLayout layout = PadLayout.decode(
+      saved,
+      fallbackStyle: cd32 ? PadStyle.cd32 : PadStyle.joystick,
+    );
+    if (!mounted) return;
+    setState(() => _layout = layout);
+    _attach();
+  }
+
+  /// Registers the pad the layout asks for and tells port 1 what it is.
+  void _attach() {
+    OverlayPad.attach(_pad);
+    OverlayPad.setPortMode(_layout.style == PadStyle.cd32
+        ? OverlayPad.modeCd32
+        : OverlayPad.modeJoystick);
   }
 
   @override
   void dispose() {
-    OverlayPad.releaseAll();
+    OverlayPad.releaseAll(_pad);
     super.dispose();
   }
 
   void _sendDirections() {
     OverlayPad.direction(
+      _pad,
       _stickUp || _heldButtons.contains(PadDirection.up),
       _stickDown || _heldButtons.contains(PadDirection.down),
       _stickLeft || _heldButtons.contains(PadDirection.left),
@@ -174,15 +241,32 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
     _sendDirections();
   }
 
-  Future<void> _move(bool stick, Offset2 to) async {
+  Future<void> _move(_Control control, Offset2 to) async {
     setState(() {
-      _layout = stick
-          ? _layout.copyWith(stick: to)
-          : _layout.copyWith(buttons: to);
+      _layout = switch (control) {
+        _Control.stick => _layout.copyWith(stick: to),
+        _Control.buttons => _layout.copyWith(buttons: to),
+        _Control.transport => _layout.copyWith(transport: to),
+      };
     });
   }
 
   Future<void> _commit() => OverlayPad.saveLayout(_layout.encode());
+
+  /// Switches between the joystick and the CD32 pad.
+  ///
+  /// The old pad is released first: it is a different input device to the
+  /// core, and one left holding a direction would go on holding it with
+  /// nothing on screen to let go of.
+  Future<void> _setStyle(PadStyle style) async {
+    if (_layout.style == style) return;
+    _stickMoved(false, false, false, false);
+    _heldButtons.clear();
+    await OverlayPad.releaseAll(_pad);
+    setState(() => _layout = _layout.copyWith(style: style));
+    _attach();
+    await _commit();
+  }
 
   Future<void> _addButton() async {
     final PadButton? button = await showPadButtonPicker(context);
@@ -261,7 +345,7 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
           // The controls, wherever the player has put them. LayoutBuilder
           // because the saved positions are fractions and can only become
           // pixels once the play area has a size.
-          if (_padVisible)
+          if (_padVisible && !_keyboardUp)
             Positioned.fill(
               child: LayoutBuilder(
                 builder: (BuildContext context, BoxConstraints constraints) {
@@ -273,11 +357,16 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
                         fraction: _layout.stick,
                         editing: _editing,
                         label: 'Joystick',
-                        onMoved: (Offset2 to) => _move(true, to),
+                        onMoved: (Offset2 to) => _move(_Control.stick, to),
                         onMoveEnd: _commit,
-                        child: WobbleJoystick(
-                          size: 150,
-                          onDirections: _stickMoved,
+                        child: IgnorePointer(
+                          // While arranging, the drag has to move the stick
+                          // rather than steer with it.
+                          ignoring: _editing,
+                          child: WobbleJoystick(
+                            size: 150,
+                            onDirections: _stickMoved,
+                          ),
                         ),
                       ),
                       _MovableControl(
@@ -285,18 +374,19 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
                         fraction: _layout.buttons,
                         editing: _editing,
                         label: 'Buttons',
-                        onMoved: (Offset2 to) => _move(false, to),
+                        onMoved: (Offset2 to) => _move(_Control.buttons, to),
                         onMoveEnd: _commit,
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: <Widget>[
-                            // Added buttons sit above fire rather than
-                            // replacing it.
+                            // Added buttons sit above the pad rather than
+                            // replacing anything on it.
                             for (final PadButton button
                                 in _layout.customButtons) ...<Widget>[
                               PadKeyButton(
                                 button: button,
+                                enabled: !_editing,
                                 onKey: OverlayPad.sendKey,
                                 onDirection: _buttonDirection,
                                 onRemove:
@@ -304,22 +394,47 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
                               ),
                               const SizedBox(height: 8),
                             ],
-                            _FireButton(
-                              label: '2',
-                              colour: const Color(0xFF3050DC),
-                              onChanged: (bool pressed) =>
-                                  OverlayPad.button(OverlayPad.fire2, pressed),
-                            ),
-                            const SizedBox(height: 12),
-                            _FireButton(
-                              label: '1',
-                              colour: const Color(0xFFDC3232),
-                              onChanged: (bool pressed) =>
-                                  OverlayPad.button(OverlayPad.fire1, pressed),
-                            ),
+                            if (_layout.style == PadStyle.cd32)
+                              Cd32Pad(
+                                enabled: !_editing,
+                                onButton: (int button, bool pressed) =>
+                                    OverlayPad.button(_pad, button, pressed),
+                              )
+                            else ...<Widget>[
+                              _FireButton(
+                                label: '2',
+                                colour: const Color(0xFF3050DC),
+                                enabled: !_editing,
+                                onChanged: (bool pressed) => OverlayPad.button(
+                                    _pad, OverlayPad.fire2, pressed),
+                              ),
+                              const SizedBox(height: 12),
+                              _FireButton(
+                                label: '1',
+                                colour: const Color(0xFFDC3232),
+                                enabled: !_editing,
+                                onChanged: (bool pressed) => OverlayPad.button(
+                                    _pad, OverlayPad.fire1, pressed),
+                              ),
+                            ],
                           ],
                         ),
                       ),
+                      if (_layout.style == PadStyle.cd32)
+                        _MovableControl(
+                          area: area,
+                          fraction: _layout.transport,
+                          editing: _editing,
+                          label: 'CD keys',
+                          onMoved: (Offset2 to) =>
+                              _move(_Control.transport, to),
+                          onMoveEnd: _commit,
+                          child: Cd32Transport(
+                            enabled: !_editing,
+                            onButton: (int button, bool pressed) =>
+                                OverlayPad.button(_pad, button, pressed),
+                          ),
+                        ),
                     ],
                   );
                 },
@@ -349,14 +464,25 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
                     if (!_padVisible) {
                       _stickMoved(false, false, false, false);
                       _heldButtons.clear();
-                      OverlayPad.releaseAll();
+                      OverlayPad.releaseAll(_pad);
                     }
                   },
                 ),
                 const SizedBox(height: 10),
                 _OverlayIconButton(
                   icon: Icons.keyboard,
-                  onPressed: OverlayPad.toggleKeyboard,
+                  active: _keyboardUp,
+                  onPressed: () async {
+                    final bool up = await OverlayPad.toggleKeyboard();
+                    if (!mounted) return;
+                    setState(() => _keyboardUp = up);
+                    // Anything held when the pad disappears would stay held.
+                    if (up) {
+                      _stickMoved(false, false, false, false);
+                      _heldButtons.clear();
+                      OverlayPad.releaseAll(_pad);
+                    }
+                  },
                 ),
                 const SizedBox(height: 10),
                 // One swap for every drive: it asks which when there is more
@@ -388,7 +514,14 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
               left: 0,
               right: 0,
               top: 12 + safe.top,
-              child: Center(child: _EditBar(onAdd: _addButton, onReset: _reset)),
+              child: Center(
+                child: _EditBar(
+                  style: _layout.style,
+                  onStyle: _setStyle,
+                  onAdd: _addButton,
+                  onReset: _reset,
+                ),
+              ),
             ),
         ],
       ),
@@ -468,17 +601,34 @@ class _MovableControl extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 4),
-          // Absorbed so dragging the stick moves it rather than playing.
-          AbsorbPointer(child: inner),
+          // Deliberately NOT wrapped in AbsorbPointer. It was, and that is
+          // what made the red delete badge on an added button do nothing:
+          // absorbing swallows the badge's taps along with everything else.
+          // The controls themselves go inert instead, each one knowing it is
+          // being arranged, which leaves the badge live. Dragging still works
+          // because the pan gesture is on the parent and a child's tap only
+          // takes taps.
+          inner,
         ],
       ),
     );
   }
 }
 
-class _EditBar extends StatelessWidget {
-  const _EditBar({required this.onAdd, required this.onReset});
+/// The three things that can be dragged. The transport keys only exist on
+/// the CD32 pad, which is why they are not simply part of it.
+enum _Control { stick, buttons, transport }
 
+class _EditBar extends StatelessWidget {
+  const _EditBar({
+    required this.style,
+    required this.onStyle,
+    required this.onAdd,
+    required this.onReset,
+  });
+
+  final PadStyle style;
+  final ValueChanged<PadStyle> onStyle;
   final VoidCallback onAdd;
   final VoidCallback onReset;
 
@@ -503,6 +653,24 @@ class _EditBar extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 14),
+          // Which controller is drawn. Here rather than in settings because
+          // it is the same decision as where to put it, and a CD32 game that
+          // wants the blue button wants it now.
+          for (final PadStyle option in PadStyle.values) ...<Widget>[
+            GestureDetector(
+              onTap: () => onStyle(option),
+              child: Text(
+                option == PadStyle.cd32 ? 'CD32' : 'JOYSTICK',
+                style: TextStyle(
+                  color: option == style ? Colors.white : Colors.white38,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+          ],
+          const SizedBox(width: 4),
           // Adding a button belongs in the mode where you are already
           // arranging them: you add one and then want to put it somewhere.
           GestureDetector(
@@ -539,11 +707,15 @@ class _FireButton extends StatefulWidget {
     required this.label,
     required this.colour,
     required this.onChanged,
+    this.enabled = true,
   });
 
   final String label;
   final Color colour;
   final ValueChanged<bool> onChanged;
+
+  /// False while the layout is being arranged.
+  final bool enabled;
 
   @override
   State<_FireButton> createState() => _FireButtonState();
@@ -553,7 +725,7 @@ class _FireButtonState extends State<_FireButton> {
   bool _pressed = false;
 
   void _set(bool pressed) {
-    if (_pressed == pressed) return;
+    if (!widget.enabled || _pressed == pressed) return;
     setState(() => _pressed = pressed);
     widget.onChanged(pressed);
   }

@@ -8,6 +8,7 @@ void main() {
       const PadLayout layout = PadLayout(
         stick: Offset2(0.2, 0.8),
         buttons: Offset2(0.7, 0.3),
+        transport: Offset2(0.5, 0.1),
         customButtons: <PadButton>[
           PadButton.key(AmigaKeys.space),
           PadButton.direction(PadDirection.up),
@@ -19,6 +20,10 @@ void main() {
       expect(back.stick.dx, closeTo(0.2, 1e-9));
       expect(back.stick.dy, closeTo(0.8, 1e-9));
       expect(back.buttons.dx, closeTo(0.7, 1e-9));
+      // The CD32 transport keys are placed separately from the pad, so their
+      // position has to survive on its own.
+      expect(back.transport.dx, closeTo(0.5, 1e-9));
+      expect(back.transport.dy, closeTo(0.1, 1e-9));
       expect(back.customButtons.length, 2);
       // The key must come back as the same raw Amiga code, not as a label
       // that happens to read the same: the code is what the core is sent.
@@ -35,6 +40,31 @@ void main() {
           PadLayout.decode('{"stick":[0.4,0.4],"custom":[{"key":"nope"}]}');
       expect(partial.stick.dx, closeTo(0.4, 1e-9));
       expect(partial.customButtons, isEmpty);
+    });
+
+    test('remembers which pad was chosen', () {
+      const PadLayout cd32 = PadLayout(style: PadStyle.cd32);
+      expect(PadLayout.decode(cd32.encode()).style, PadStyle.cd32);
+      // A layout saved before the CD32 pad existed has no style at all, and
+      // must not lose the caller's guess by defaulting to the joystick.
+      expect(
+        PadLayout.decode('{"stick":[0.2,0.2]}', fallbackStyle: PadStyle.cd32)
+            .style,
+        PadStyle.cd32,
+      );
+      // Nothing saved: the machine decides.
+      expect(
+        PadLayout.decode(null, fallbackStyle: PadStyle.cd32).style,
+        PadStyle.cd32,
+      );
+      // A saved choice outranks the machine, so choosing the joystick for a
+      // CD32 game sticks.
+      expect(
+        PadLayout.decode(const PadLayout().encode(),
+                fallbackStyle: PadStyle.cd32)
+            .style,
+        PadStyle.joystick,
+      );
     });
 
     test('a control cannot be dragged off the screen', () {

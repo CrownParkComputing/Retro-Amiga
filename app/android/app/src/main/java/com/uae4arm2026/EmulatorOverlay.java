@@ -56,8 +56,10 @@ final class EmulatorOverlay {
 		void onReleaseAll(int pad);
 		void onMenuRequested();
 
-		/** The session strip, drawn by Flutter so the icons match the launcher. */
-		void onToggleKeyboard();
+		/** The session strip, drawn by Flutter so the icons match the launcher.
+		 *  Returns whether the keyboard is now up, so the pad can stand aside
+		 *  rather than sitting on top of it. */
+		boolean onToggleKeyboard();
 		void onInsertDisk(int drive);
 
 		/** Pause means "stop playing": save where we are and go back. */
@@ -68,6 +70,18 @@ final class EmulatorOverlay {
 
 		/** How many floppy drives the running machine has. */
 		int floppyCount();
+
+		/** JSEM_MODE for port 1: 3 is a joystick, 7 is a CD32 pad. The core
+		 *  has to be told which, or a seven-button pad reports into a port
+		 *  that understands two of them. */
+		void onPortMode(int mode);
+
+		/** Whether the running config is a CD32, which picks the pad that is
+		 *  drawn before the player has chosen one. */
+		boolean isCd32();
+
+		/** Whether a real controller is plugged in or paired. */
+		boolean hasGamepad();
 
 		/** Where the on-screen controls sit, as JSON. Kept by the Activity
 		 *  because the overlay engine is built by hand and so has no plugins -
@@ -135,8 +149,7 @@ final class EmulatorOverlay {
 							result.success(true);
 							break;
 						case "toggleKeyboard":
-							listener.onToggleKeyboard();
-							result.success(true);
+							result.success(listener.onToggleKeyboard());
 							break;
 						case "insertDisk":
 							listener.onInsertDisk(arg(call.argument("drive"), 0));
@@ -149,6 +162,16 @@ final class EmulatorOverlay {
 							break;
 						case "floppyCount":
 							result.success(listener.floppyCount());
+							break;
+						case "portMode":
+							listener.onPortMode(arg(call.argument("mode"), 3));
+							result.success(true);
+							break;
+						case "isCd32":
+							result.success(listener.isCd32());
+							break;
+						case "hasGamepad":
+							result.success(listener.hasGamepad());
 							break;
 						case "layoutLoad":
 							result.success(listener.loadLayout());

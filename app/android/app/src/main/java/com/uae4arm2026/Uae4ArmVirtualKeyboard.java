@@ -76,6 +76,34 @@ public class Uae4ArmVirtualKeyboard extends FrameLayout {
 	private void buildKeyboard(Context context) {
 		float density = context.getResources().getDisplayMetrics().density;
 
+		// Keys are sized from the screen, not from a fixed dp, so the keyboard
+		// fills the width the way the C64 one does. A real keyboard is as wide
+		// as the machine it is on; a fixed key size left this one as a narrow
+		// island in the middle of a landscape screen, with keys small enough
+		// to need aiming at while a game is running.
+		//
+		// The widest row sets the unit, and every other row uses the same one,
+		// so the columns still line up and the short rows simply centre.
+		final int screenWidth = context.getResources().getDisplayMetrics().widthPixels;
+		final int sideMargin = (int) (2 * density);   // container padding, both sides
+		final int keyMargin = (int) density;          // per key, both sides
+		float widestUnits = 0;
+		int keysInWidest = 0;
+		for (Object[][] row : ROWS) {
+			float units = 0;
+			for (Object[] key : row) units += (Float) key[2];
+			if (units > widestUnits) {
+				widestUnits = units;
+				keysInWidest = row.length;
+			}
+		}
+		final float unitWidth = widestUnits <= 0
+			? 34 * density
+			: (screenWidth - 2 * sideMargin - 2 * keyMargin * keysInWidest) / widestUnits;
+		// Taller keys to match, or a full-width keyboard is a row of letterboxes.
+		// Capped so it cannot eat the game on a tall screen.
+		final int keyHeight = (int) Math.max(31 * density, Math.min(unitWidth * 0.85f, 46 * density));
+
 		LinearLayout container = new LinearLayout(context);
 		container.setOrientation(LinearLayout.VERTICAL);
 		container.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -84,7 +112,7 @@ public class Uae4ArmVirtualKeyboard extends FrameLayout {
 		background.setColor(0xDD1A1A1A);
 		background.setCornerRadii(new float[]{12 * density, 12 * density, 12 * density, 12 * density, 0, 0, 0, 0});
 		container.setBackground(background);
-		container.setPadding((int) (4 * density), (int) (6 * density), (int) (4 * density), (int) (4 * density));
+		container.setPadding(sideMargin, (int) (6 * density), sideMargin, (int) (4 * density));
 
 		LinearLayout header = new LinearLayout(context);
 		header.setOrientation(LinearLayout.HORIZONTAL);
@@ -126,15 +154,17 @@ public class Uae4ArmVirtualKeyboard extends FrameLayout {
 				button.setText(label);
 				button.setAllCaps(false);
 				button.setTextColor(0xFFEEEEEE);
-				button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+				// Legends scale with the keys: 12sp on a key half again as big
+				// reads as a label printed on the wrong keyboard.
+				button.setTextSize(TypedValue.COMPLEX_UNIT_SP,
+					Math.max(12f, Math.min(keyHeight / density * 0.36f, 18f)));
 				button.setIncludeFontPadding(false);
 				button.setMinHeight(0);
 				button.setMinimumHeight(0);
 				button.setMinWidth(0);
 				button.setMinimumWidth(0);
 
-				int keyWidth = (int) (relativeWidth * 34 * density);
-				int keyHeight = (int) (31 * density);
+				int keyWidth = (int) (relativeWidth * unitWidth);
 				button.setPadding((int) (2 * density), (int) density, (int) (2 * density), (int) density);
 
 				GradientDrawable keyBackground = new GradientDrawable();

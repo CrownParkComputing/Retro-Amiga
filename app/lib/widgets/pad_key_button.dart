@@ -16,6 +16,7 @@ class PadKeyButton extends StatefulWidget {
     required this.onKey,
     required this.onDirection,
     this.onRemove,
+    this.enabled = true,
     this.size = 52,
   });
 
@@ -28,6 +29,10 @@ class PadKeyButton extends StatefulWidget {
 
   /// Shown as a delete badge while the layout is being arranged.
   final VoidCallback? onRemove;
+
+  /// False while arranging, so dragging the cluster into place does not press
+  /// every button it passes over.
+  final bool enabled;
 
   final double size;
 
@@ -48,6 +53,7 @@ class _PadKeyButtonState extends State<PadKeyButton> {
   }
 
   void _down() {
+    if (!widget.enabled) return;
     setState(() => _pressed = true);
     _send(true);
   }
@@ -103,13 +109,19 @@ class _PadKeyButtonState extends State<PadKeyButton> {
 
     if (widget.onRemove == null) return face;
 
+    // The badge sits INSIDE the button's box, in room made for it, rather
+    // than hanging off the corner. A widget drawn outside its parent's bounds
+    // still paints but is not hit-tested, which is why the delete badge could
+    // be seen and not tapped.
     return Stack(
-      clipBehavior: Clip.none,
       children: <Widget>[
-        face,
+        Padding(
+          padding: const EdgeInsets.only(top: 11, right: 11),
+          child: face,
+        ),
         Positioned(
-          top: -6,
-          right: -6,
+          top: 0,
+          right: 0,
           child: GestureDetector(
             onTap: widget.onRemove,
             child: Container(
