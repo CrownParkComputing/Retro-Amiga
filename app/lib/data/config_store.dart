@@ -253,6 +253,24 @@ class ConfigStore {
     return paths.toList();
   }
 
+  /// The raw text of a config, for the editor to read back.
+  static Future<String> read(String path) async =>
+      File(path).readAsStringSync();
+
+  /// Writes [settings] over an existing config, keeping its filename.
+  ///
+  /// Regenerated rather than patched line by line: the generator is the one
+  /// place that knows how a config is shaped, and two ways of writing the same
+  /// file drift apart. The cost is that a key someone added by hand does not
+  /// survive an edit, which is worth saying out loud.
+  static Future<File> saveOver(String path, EmulatorSettings settings) async {
+    final File file = File(path);
+    file.writeAsStringSync(
+      ConfigGenerator.generate(await _repairPaths(settings)),
+    );
+    return file;
+  }
+
   static Future<List<SavedConfig>> list() async {
     final Directory dir = await configDirectory();
     final List<SavedConfig> configs = <SavedConfig>[];

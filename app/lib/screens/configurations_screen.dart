@@ -5,6 +5,7 @@ import '../data/config_store.dart';
 import '../emulator.dart';
 import '../theme/amiga_theme.dart';
 import '../widgets/amiga_logo.dart';
+import 'config_editor_screen.dart';
 import 'guided_config_screen.dart';
 
 /// The shelf: every saved setup as a card, tap to play.
@@ -198,6 +199,7 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
                                   config: _visible[i],
                                   onPlay: () => _play(_visible[i]),
                                   onDelete: () => _delete(_visible[i]),
+                                  onEdit: () => _edit(_visible[i]),
                                 ),
                               );
                             },
@@ -208,6 +210,18 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
         ),
       ),
     );
+  }
+
+  /// Opens the full editor. Reached by a long press, which is the gesture for
+  /// "the other thing this does" - a tap plays, because that is what a shelf
+  /// of games is for.
+  Future<void> _edit(SavedConfig config) async {
+    final bool? saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (BuildContext context) => ConfigEditorScreen(config: config),
+      ),
+    );
+    if (saved == true && mounted) _reload();
   }
 
   Widget _machineTabs() {
@@ -247,11 +261,13 @@ class _SetupCard extends StatelessWidget {
     required this.config,
     required this.onPlay,
     required this.onDelete,
+    required this.onEdit,
   });
 
   final SavedConfig config;
   final VoidCallback onPlay;
   final VoidCallback onDelete;
+  final VoidCallback onEdit;
 
   @override
   Widget build(BuildContext context) {
@@ -261,6 +277,7 @@ class _SetupCard extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onPlay,
+        onLongPress: onEdit,
         child: Padding(
           padding: const EdgeInsets.all(10),
           child: Column(
@@ -289,8 +306,13 @@ class _SetupCard extends StatelessWidget {
                         iconSize: 18,
                         onSelected: (String action) {
                           if (action == 'delete') onDelete();
+                          if (action == 'edit') onEdit();
                         },
                         itemBuilder: (_) => <PopupMenuEntry<String>>[
+                          const PopupMenuItem<String>(
+                            value: 'edit',
+                            child: Text('Edit'),
+                          ),
                           const PopupMenuItem<String>(
                             value: 'delete',
                             child: Text('Delete'),

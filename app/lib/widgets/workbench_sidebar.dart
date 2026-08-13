@@ -12,7 +12,7 @@ import '../theme/amiga_theme.dart';
 /// that is what it is - a list of what is on the device, and a place to make a
 /// setup from one of them.
 enum WorkbenchSection {
-  setups('Setups', Icons.tune),
+  setups('Configs', Icons.tune),
   resume('Resume', Icons.play_circle_outline),
   music('Music', Icons.music_note_outlined),
   history('History', Icons.history_edu_outlined),
