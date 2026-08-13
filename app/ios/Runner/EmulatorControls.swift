@@ -23,9 +23,18 @@ final class EmulatorControls {
   /// Called with the new state when the player pauses or resumes.
   var onPause: ((Bool) -> Void)?
 
+  /// The window the launcher was using, so it can be given back when
+  /// emulation ends. SDL makes its own window key while a game runs, and
+  /// without this the app is left showing nothing anybody can touch.
+  private weak var previousKeyWindow: UIWindow?
+
   func show() {
     guard window == nil else { return }
     target.controls = self
+    previousKeyWindow = UIApplication.shared.connectedScenes
+      .compactMap { $0 as? UIWindowScene }
+      .flatMap { $0.windows }
+      .first { $0.isKeyWindow }
     guard let scene = UIApplication.shared.connectedScenes
       .compactMap({ $0 as? UIWindowScene })
       .first(where: { $0.activationState == .foregroundActive })
@@ -68,6 +77,9 @@ final class EmulatorControls {
     window = nil
     pauseButton = nil
     paused = false
+    // Hand the screen back to the launcher.
+    previousKeyWindow?.makeKeyAndVisible()
+    previousKeyWindow = nil
   }
 
   fileprivate func togglePause() {
@@ -117,6 +129,15 @@ final class EmulatorControls {
 private final class PassthroughWindow: UIWindow {
   override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
     guard let hit = super.hitTest(point, with: event) else { return nil }
-    return hit is UIButton ? hit : nil
+    // Walk up rather than asking whether the hit view IS a button. A tap on
+    // the icon lands on the button's image view, not the button, so the
+    // stricter test passed those touches through to the game - which made the
+    // controls work only when a finger caught the ring around the icon.
+    var view: UIView? = hit
+    while let current = view {
+      if current is UIControl { return hit }
+      view = current.superview
+    }
+    return nil
   }
 }

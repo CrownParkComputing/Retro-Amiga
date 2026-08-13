@@ -66,6 +66,18 @@ enum WizardMode {
     }
   }
 
+  /// The machine this kind of setup starts from, with what the kind needs on
+  /// top of it.
+  ///
+  /// WHDLoad gets 8MB of Z2 fast RAM. Almost every slave expects it - it is
+  /// what an expanded A1200 had and what WHDLoad's own install notes assume -
+  /// and an A1200 out of the box has none, so a game that wants it either
+  /// refuses to start or runs from chip RAM and crawls.
+  EmulatorSettings settingsFor(AmigaModel model) {
+    final EmulatorSettings base = EmulatorSettings.fromModel(model);
+    return this == WizardMode.whdload ? base.copyWith(fastRam: 8) : base;
+  }
+
   AmigaModel get initialModel {
     switch (this) {
       case WizardMode.cd:
@@ -176,7 +188,7 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
     });
     _settings =
         widget.initialSettings ??
-        EmulatorSettings.fromModel(widget.mode.initialModel);
+        widget.mode.settingsFor(widget.mode.initialModel);
     _name.text = widget.initialName ?? '';
     // Whatever the user has not typed themselves follows the media and the
     // machine, so a shelf of setups reads "Lotus Turbo Challenge (A500)"
@@ -361,7 +373,7 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
             // Take the machine's defaults wholesale: chipset, RAM and CPU all
             // move together, and mixing them is how you get a config that
             // boots to a grey screen.
-            _settings = EmulatorSettings.fromModel(model).copyWith(
+            _settings = widget.mode.settingsFor(model).copyWith(
               romFile: _settings.romFile,
               floppy0: _settings.floppy0,
               cdImage: _settings.cdImage,
