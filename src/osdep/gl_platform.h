@@ -154,6 +154,10 @@ void gl_platform_bind_framebuffer(unsigned int target, unsigned int framebuffer)
 /* Re-reads the window framebuffer from SDL; call after the GL context or the
    window changes. */
 void gl_platform_refresh_default_framebuffer();
+
+/* Drops the cached id when the context it belongs to is going away, so the
+   next run cannot draw into a framebuffer from the last one. */
+void gl_platform_forget_default_framebuffer();
 #undef glBindFramebuffer
 #define glBindFramebuffer gl_platform_bind_framebuffer
 #endif

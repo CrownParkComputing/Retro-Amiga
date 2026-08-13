@@ -159,6 +159,12 @@ void OpenGLRenderer::destroy_context()
 	amiberry_hw_vsync_pacing_set_blocking(false);
 	if (m_gl_context != nullptr)
 	{
+#ifdef AMIBERRY_IOS
+		/* The window's framebuffer id belongs to this context. Where the host
+		   runs another game in the same process, a remembered id would be
+		   bound into the next context and nothing would be drawn. */
+		gl_platform_forget_default_framebuffer();
+#endif
 		SDL_GL_DestroyContext(m_gl_context);
 		m_gl_context = nullptr;
 		m_vsync.current_interval = INVALID_SWAP_INTERVAL;
