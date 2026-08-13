@@ -63,6 +63,16 @@ final class EmulatorHost {
     if running {
       throw HostError.message("Emulation is already running.")
     }
+    // The core can only be run once in a process. It tears SDL down on the way
+    // out, and a second run blocks in SDL's own startup - on iOS the core has
+    // the main thread, so that blocks the whole app: the launcher froze behind
+    // its own controls with no way back. Refusing is not good, but it is
+    // recoverable and it says what to do.
+    if hasRun {
+      throw HostError.message(
+        "The emulator can only be started once per session. "
+        + "Close and reopen the app to play another game.")
+    }
     guard let handle = load() else {
       throw HostError.message("The emulator core could not be loaded.")
     }
@@ -84,6 +94,7 @@ final class EmulatorHost {
     controls.onPause = { [weak self] paused in self?.setPaused(paused) }
     controls.show()
 
+    hasRun = true
     let run = unsafeBitCast(runSymbol, to: RunFn.self)
     // argv[0] is the program name, as the core's option parser expects.
     let argv: [String] = ["Amiga-Retro"] + args
@@ -121,6 +132,9 @@ final class EmulatorHost {
   private typealias FloatFn = @convention(c) () -> Float
   private typealias SetFloatFn = @convention(c) (Float) -> Void
   private typealias StringFn = @convention(c) () -> UnsafePointer<CChar>?
+
+  /// Whether the core has been run in this process. See [launch].
+  private var hasRun = false
 
   /// The in-game controls, which iOS has to draw itself - see
   /// EmulatorControls for why Flutter cannot.
