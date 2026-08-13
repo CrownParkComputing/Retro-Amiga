@@ -4,6 +4,7 @@ import '../data/amiga_model.dart';
 import '../data/config_store.dart';
 import '../emulator.dart';
 import '../theme/amiga_theme.dart';
+import '../widgets/alphabet_filter.dart';
 import '../widgets/amiga_logo.dart';
 import 'config_editor_screen.dart';
 import 'guided_config_screen.dart';
@@ -37,10 +38,29 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
     return AmigaModel.values.where(present.contains).toList();
   }
 
-  List<SavedConfig> get _visible {
+  /// The chosen initial from the letter strip, or null for everything.
+  String? _initial;
+
+  /// The initials present on the machine tab currently showing.
+  List<String> get _initials =>
+      AlphabetFilter.from(_onTab.map((SavedConfig c) => c.name));
+
+  /// What the chosen machine tab holds, before the letter strip.
+  List<SavedConfig> get _onTab {
     final AmigaModel? machine = _machine;
     if (machine == null) return _configs;
     return _configs.where((SavedConfig c) => c.model == machine).toList();
+  }
+
+  List<SavedConfig> get _visible {
+    final List<SavedConfig> onTab = _onTab;
+    // A letter with nothing behind it - after a delete, or a tab change -
+    // would leave an empty list and no obvious way back.
+    final String? initial = _initials.contains(_initial) ? _initial : null;
+    if (initial == null) return onTab;
+    return onTab
+        .where((SavedConfig c) => AlphabetFilter.initialOf(c.name) == initial)
+        .toList();
   }
 
   /// Selects a machine once the configs are known, since there is no longer an
@@ -200,34 +220,6 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
     }
   }
 
-  /// Asks first. A config is minutes of choosing a machine, a ROM and a disk,
-  /// and the menu it is deleted from is two taps from the one that plays it.
-  Future<void> _delete(SavedConfig config) async {
-    final bool confirmed = await showDialog<bool>(
-          context: context,
-          builder: (BuildContext context) => AlertDialog(
-            title: Text('Delete ${config.name}?'),
-            content: const Text(
-              'The config goes; the disks and hard drives it points at stay.',
-            ),
-            actions: <Widget>[
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('Keep'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('Delete'),
-              ),
-            ],
-          ),
-        ) ??
-        false;
-    if (!confirmed) return;
-    await ConfigStore.delete(config.path);
-    await _reload();
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -259,56 +251,49 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
             // What the gestures do. Long press is not discoverable by itself,
             // and a shelf where the only visible action is "play" hides the
             // half of the screen's job that is keeping the shelf tidy.
-            if (!_loading && _configs.isNotEmpty)
+            if (!_loading && _configs.isNotEmpty) ...<Widget>[
               const Padding(
                 padding: EdgeInsets.fromLTRB(16, 4, 16, 2),
                 child: Text(
-                  'Tap to play · Long press to edit · ⋮ for delete',
+                  'Tap to play · Long press to edit or delete',
                   style: TextStyle(fontSize: 11, color: AmigaColors.textDim),
                 ),
               ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 2, 12, 4),
+                child: AlphabetFilter(
+                  initials: _initials,
+                  selected: _initial,
+                  onSelected: (String? value) =>
+                      setState(() => _initial = value),
+                ),
+              ),
+            ],
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : _configs.isEmpty
                   ? const _EmptyShelf()
+                  // A list, not a wall of cards. A config's name is the whole
+                  // point of it - "Gods (Disk 1) A500" against "Gods AGA
+                  // WHDLoad" - and a card cropped it to two words. The machine
+                  // is a small picture at the side, which is all it has to be.
                   : RefreshIndicator(
                       onRefresh: _reload,
-                      child: LayoutBuilder(
-                        builder:
-                            (BuildContext context, BoxConstraints constraints) {
-                              // Cards sized so the machine photo is worth
-                              // showing; three across a handheld, more on a
-                              // tablet.
-                              // Small enough that a shelf of setups reads as
-                              // a shelf rather than two posters.
-                              final int columns = (constraints.maxWidth / 130)
-                                  .floor()
-                                  .clamp(2, 10);
-                              return GridView.builder(
-                                padding: const EdgeInsets.fromLTRB(
-                                  14,
-                                  6,
-                                  14,
-                                  96,
-                                ),
-                                gridDelegate:
-                                    SliverGridDelegateWithFixedCrossAxisCount(
-                                      crossAxisCount: columns,
-                                      childAspectRatio: 1.0,
-                                      crossAxisSpacing: 10,
-                                      mainAxisSpacing: 10,
-                                    ),
-                                itemCount: _visible.length,
-                                itemBuilder: (BuildContext context, int i) =>
-                                    _SetupCard(
-                                      config: _visible[i],
-                                      onPlay: () => _play(_visible[i]),
-                                      onDelete: () => _delete(_visible[i]),
-                                      onEdit: () => _edit(_visible[i]),
-                                    ),
-                              );
-                            },
+                      child: ListView.separated(
+                        padding: const EdgeInsets.fromLTRB(12, 2, 12, 96),
+                        itemCount: _visible.length,
+                        separatorBuilder:
+                            (BuildContext context, int index) => const Divider(
+                          height: 1,
+                          indent: 56,
+                          color: Color(0x14FFFFFF),
+                        ),
+                        itemBuilder: (BuildContext context, int i) => _SetupRow(
+                          config: _visible[i],
+                          onPlay: () => _play(_visible[i]),
+                          onEdit: () => _edit(_visible[i]),
+                        ),
                       ),
                     ),
             ),
@@ -357,97 +342,78 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
 /// A card rather than a row because a setup has a face: the machine photo says
 /// at a glance whether this is the A500 disk version or the CD32 one, which is
 /// the distinction that actually matters when two setups share a game's name.
-class _SetupCard extends StatelessWidget {
-  const _SetupCard({
+class _SetupRow extends StatelessWidget {
+  const _SetupRow({
     required this.config,
     required this.onPlay,
-    required this.onDelete,
     required this.onEdit,
   });
 
   final SavedConfig config;
   final VoidCallback onPlay;
-  final VoidCallback onDelete;
   final VoidCallback onEdit;
 
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: AmigaColors.card,
-      borderRadius: BorderRadius.circular(10),
-      clipBehavior: Clip.antiAlias,
+      color: Colors.transparent,
       child: InkWell(
         onTap: onPlay,
         onLongPress: onEdit,
         child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          child: Row(
             children: <Widget>[
+              // Small: the machine is worth showing and not worth a card.
+              SizedBox(
+                width: 44,
+                height: 30,
+                child: config.model == null
+                    ? const Center(child: AmigaLogo(height: 18))
+                    : Image.asset(
+                        config.model!.artworkPath,
+                        fit: BoxFit.contain,
+                        errorBuilder:
+                            (BuildContext c, Object e, StackTrace? s) =>
+                                const Center(child: AmigaLogo(height: 18)),
+                      ),
+              ),
+              const SizedBox(width: 10),
               Expanded(
-                child: Stack(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    Positioned.fill(
-                      child: config.model == null
-                          ? const Center(child: AmigaLogo(height: 34))
-                          : Image.asset(
-                              config.model!.artworkPath,
-                              fit: BoxFit.contain,
-                              errorBuilder:
-                                  (BuildContext c, Object e, StackTrace? s) =>
-                                      const Center(
-                                        child: AmigaLogo(height: 34),
-                                      ),
-                            ),
+                    // The whole name, on a line wide enough to hold it. Two
+                    // setups for one game differ at the end - "(Disk 1)",
+                    // "AGA", "WHDLoad" - which is exactly what a card cropped.
+                    Text(
+                      config.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AmigaColors.text,
+                      ),
                     ),
-                    // Inside the card, not hanging off its corner: a widget
-                    // drawn outside its parent's bounds still paints but is
-                    // never hit-tested, so this menu could be seen and not
-                    // opened - which is why there appeared to be no way to
-                    // delete a config.
-                    Positioned(
-                      top: 0,
-                      right: 0,
-                      child: PopupMenuButton<String>(
-                        iconSize: 18,
-                        onSelected: (String action) {
-                          if (action == 'delete') onDelete();
-                          if (action == 'edit') onEdit();
-                        },
-                        itemBuilder: (_) => <PopupMenuEntry<String>>[
-                          const PopupMenuItem<String>(
-                            value: 'edit',
-                            child: Text('Edit'),
-                          ),
-                          const PopupMenuItem<String>(
-                            value: 'delete',
-                            child: Text('Delete'),
-                          ),
-                        ],
+                    Text(
+                      config.summary,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: AmigaColors.textDim,
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 6),
-              Text(
-                config.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: AmigaColors.text,
-                ),
-              ),
-              Text(
-                config.summary,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: AmigaColors.textDim,
-                ),
+              const SizedBox(width: 8),
+              const Icon(
+                Icons.play_circle_fill,
+                size: 26,
+                color: AmigaColors.tickGreen,
               ),
             ],
           ),

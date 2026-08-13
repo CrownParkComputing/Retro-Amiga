@@ -7,6 +7,7 @@ import '../widgets/amiga_logo.dart';
 import '../widgets/boing_backdrop.dart';
 import '../widgets/workbench_sidebar.dart';
 import '../data/file_category.dart';
+import '../data/config_store.dart';
 import '../data/media_library.dart';
 import '../data/music_player.dart';
 import '../data/save_states.dart';
@@ -40,6 +41,10 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
 
   WorkbenchSection _section = WorkbenchSection.setups;
   bool _idle = false;
+
+  /// What the scan found and how many configs there are, for the scroller.
+  MediaIndex _index = const MediaIndex.empty();
+  int _configCount = 0;
   Timer? _idleTimer;
 
   /// Resume is only offered when a game was left running - see Session. It is
@@ -78,14 +83,55 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     super.dispose();
   }
 
-  /// Puts a tune on while the workbench is up.
+  /// Puts a tune on while the workbench is up, and takes the count of what is
+  /// on the device for the scroller while the index is in hand.
   Future<void> _startMusic() async {
     final MediaIndex index = await MediaLibrary.cached();
     final List<String> tunes = index.files
         .where((MediaFile f) => f.category == FileCategory.music)
         .map((MediaFile f) => f.path)
         .toList();
+    final List<SavedConfig> configs = await ConfigStore.list();
+    if (mounted) {
+      setState(() {
+        _index = index;
+        _configCount = configs.length;
+      });
+    }
     await MusicPlayer.playRandom(tunes);
+  }
+
+  /// What the scroller says.
+  ///
+  /// A demo scroller with nothing to say is filler; one that says what is on
+  /// the machine is the shelf reading itself out, which is what these always
+  /// did. Read fresh each time the screensaver comes up, because a count that
+  /// is out of date is worse than none.
+  @visibleForTesting
+  String get scrollTextForTest => _scrollText;
+
+  String get _scrollText {
+    final StringBuffer text = StringBuffer('AMIGA-RETRO  ***  ');
+    text.write('$_configCount CONFIG${_configCount == 1 ? '' : 'S'}  ***  ');
+    for (final FileCategory category in <FileCategory>[
+      FileCategory.floppies,
+      FileCategory.whdloadGames,
+      FileCategory.hardDrives,
+      FileCategory.cdImages,
+      FileCategory.roms,
+      FileCategory.music,
+    ]) {
+      final int count = _index.of(category).length;
+      // A category with nothing in it is not a statistic, it is a blank.
+      if (count == 0) continue;
+      text.write('$count ${category.displayName.toUpperCase()}  ***  ');
+    }
+    final MusicState music = MusicPlayer.state;
+    if (music.playing && music.title.isNotEmpty) {
+      text.write('NOW PLAYING ${music.title.toUpperCase()}  ***  ');
+    }
+    text.write('KICKSTART YOUR MEMORY  ***  ');
+    return text.toString();
   }
 
   Future<void> _refreshSession() async {
@@ -130,7 +176,8 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
           children: <Widget>[
             // The demo is the screensaver, not wallpaper: behind a panel in
             // use it is motion competing with the thing being read.
-            if (_idle) const Positioned.fill(child: BoingBackdrop()),
+            if (_idle)
+              Positioned.fill(child: BoingBackdrop(scrollText: _scrollText)),
             // The logos belong to the demo, not to every screen: a masthead
             // repeated above every panel is a band of chrome doing nothing,
             // and the space is worth more to the panel underneath. They fade

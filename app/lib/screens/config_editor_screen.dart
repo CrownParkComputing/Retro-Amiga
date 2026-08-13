@@ -67,6 +67,40 @@ class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
 
   void _update(EmulatorSettings next) => setState(() => _settings = next);
 
+  /// Deleting lives here, with editing, rather than behind a menu on the
+  /// shelf: this is the screen you are already on when you have decided a
+  /// setup is not worth keeping, and a delete on the shelf itself sits one
+  /// slip away from the tap that plays.
+  Future<void> _delete() async {
+    final bool confirmed = await showDialog<bool>(
+          context: context,
+          builder: (BuildContext context) => AlertDialog(
+            title: Text('Delete ${widget.config.name}?'),
+            content: const Text(
+              'The config goes; the disks and hard drives it points at stay.',
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Keep'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed) return;
+    try {
+      await ConfigStore.delete(widget.config.path);
+      if (mounted) Navigator.of(context).pop(true);
+    } on Object catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final EmulatorSettings? settings = _settings;
@@ -75,6 +109,11 @@ class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
       appBar: AppBar(
         title: Text(widget.config.name),
         actions: <Widget>[
+          IconButton(
+            tooltip: 'Delete',
+            onPressed: _saving ? null : _delete,
+            icon: const Icon(Icons.delete_outline),
+          ),
           TextButton(
             onPressed: _saving || settings == null ? null : _save,
             child: const Text('Save'),

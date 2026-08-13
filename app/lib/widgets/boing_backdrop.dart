@@ -314,7 +314,16 @@ class _BoingPainter extends CustomPainter {
   void _paintScroller(Canvas canvas, Size size) {
     const double speed = 90; // points per second
     const double amplitude = 14;
-    final double baseline = size.height - 34;
+
+    // Room for the whole glyph AND the sine it rides on.
+    //
+    // The offset a glyph is painted at is its TOP, not its baseline, so
+    // "height - 34" put a 40-point letter's feet past the bottom of the
+    // screen, and the sine took the rest of it with them. Measured from the
+    // glyph rather than guessed, so a bigger font cannot walk off again.
+    final double glyphHeight = _glyph('A').height;
+    final double baseline =
+        size.height - glyphHeight - amplitude - size.height * 0.05;
 
     // Total width once, from the cached glyphs.
     double total = 0;
