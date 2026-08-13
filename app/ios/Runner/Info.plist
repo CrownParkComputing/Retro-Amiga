@@ -80,9 +80,19 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!-- iPad only for the first release, matching TARGETED_DEVICE_FAMILY = "2".
+	     Xcode injects this key from that build setting, but the Linux iosbox
+	     build does not read the project file, and an app with no UIDeviceFamily
+	     is treated as iPhone-only: on iPad it runs letterboxed in compatibility
+	     mode instead of filling the screen.
+
+	     Apple demands a screenshot set for every family the binary claims, and
+	     the app has only ever been tested on an iPad. Widening to "1,2" in a
+	     later update is allowed and costs only the iPhone screenshots and a
+	     build; narrowing after release is what strands existing users, so
+	     starting narrow is the safe direction. -->
 	<key>UIDeviceFamily</key>
 	<array>
-		<integer>1</integer>
 		<integer>2</integer>
 	</array>
 	<!-- The app only ever opens files you pick yourself (ADFs, Kickstart

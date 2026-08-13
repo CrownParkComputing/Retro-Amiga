@@ -31,7 +31,15 @@ final class EmulatorHost {
 
   private func load() -> UnsafeMutableRawPointer? {
     if let handle = handle { return handle }
-    let path = Bundle.main.bundlePath + "/Frameworks/libuae4arm.dylib"
+    // A .framework bundle, not a bare .dylib. App Store validation rejects an
+    // upload carrying a loose dylib in Frameworks/ with "90426: Invalid Swift
+    // Support. The SwiftSupport folder is missing" -- historically the only
+    // bare dylibs there were the Swift runtime, so Apple's scanner infers an
+    // embedded runtime and demands a folder Xcode will never generate for a
+    // 15.0 deployment target. The rejection is unfixable while the bare dylib
+    // is there, and `altool --validate-app` passes every time because the
+    // check only runs server-side after the upload.
+    let path = Bundle.main.bundlePath + "/Frameworks/libuae4arm.framework/libuae4arm"
     guard let opened = dlopen(path, RTLD_NOW | RTLD_GLOBAL) else {
       NSLog("uae4arm: dlopen failed: %@", String(cString: dlerror()))
       return nil

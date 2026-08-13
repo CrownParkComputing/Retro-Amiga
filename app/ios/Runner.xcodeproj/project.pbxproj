@@ -14,6 +14,7 @@
 		7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */; };
 		7884E8712EC3CC0700C636F2 /* EmulatorHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7884E8702EC3CC0400C636F2 /* EmulatorHost.swift */; };
 		7884E8732EC3CC0700C636F2 /* EmulatorControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7884E8722EC3CC0400C636F2 /* EmulatorControls.swift */; };
+		AMIGA0012F0000000000001A /* libuae4arm.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = AMIGA0032F0000000000001A /* libuae4arm.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
@@ -36,6 +37,7 @@
 			dstPath = "";
 			dstSubfolderSpec = 10;
 			files = (
+				AMIGA0012F0000000000001A /* libuae4arm.framework in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -53,6 +55,7 @@
 		7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		7884E8702EC3CC0400C636F2 /* EmulatorHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmulatorHost.swift; sourceTree = "<group>"; };
 		7884E8722EC3CC0400C636F2 /* EmulatorControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmulatorControls.swift; sourceTree = "<group>"; };
+		AMIGA0032F0000000000001A /* libuae4arm.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = libuae4arm.framework; path = Frameworks/libuae4arm.framework; sourceTree = "<group>"; };
 		7AFA3C8E1D35360C0083082E /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Release.xcconfig; path = Flutter/Release.xcconfig; sourceTree = "<group>"; };
 		9740EEB21CF90195004384FC /* Debug.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; name = Debug.xcconfig; path = Flutter/Debug.xcconfig; sourceTree = "<group>"; };
 		9740EEB31CF90195004384FC /* Generated.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; name = Generated.xcconfig; path = Flutter/Generated.xcconfig; sourceTree = "<group>"; };
@@ -100,7 +103,16 @@
 				97C146F01CF9000F007C117D /* Runner */,
 				97C146EF1CF9000F007C117D /* Products */,
 				331C8082294A63A400263BE5 /* RunnerTests */,
+				AMIGA0052F0000000000001A /* Frameworks */,
 			);
+			sourceTree = "<group>";
+		};
+		AMIGA0052F0000000000001A /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				AMIGA0032F0000000000001A /* libuae4arm.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 		97C146EF1CF9000F007C117D /* Products */ = {
@@ -362,7 +374,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = "2";
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Profile;
@@ -488,7 +500,7 @@
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = "2";
 			};
 			name = Debug;
 		};
@@ -541,7 +553,7 @@
 				SUPPORTED_PLATFORMS = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = "2";
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
