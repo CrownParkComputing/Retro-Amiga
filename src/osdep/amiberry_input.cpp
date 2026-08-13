@@ -1476,6 +1476,7 @@ static int get_kb_widget_type(int kb, int num, TCHAR* name, uae_u32* code)
 
 static int init_kb()
 {
+	write_log(_T("startup: init_kb\n"));
 	osdep_init_keyboard(&keyboard_german, &retroarch_inited, &num_retroarch_kbdjoy);
 	return 1;
 }
@@ -1795,6 +1796,7 @@ void setup_mapping(didata* did, const std::string& controllers, const int id)
 
 static int init_joystick()
 {
+	write_log(_T("startup: init_joystick\n"));
 	if (joystick_inited)
 		return 1;
 	joystick_inited = 1;

@@ -101,8 +101,17 @@ final class EmulatorHost {
     controls.onKey = { [weak self] code, pressed in
       self?.sendKey(code, pressed: pressed)
     }
-    controls.onPadAttach = { [weak self] pad in self?.padCall("uae4arm_host_pad_attach", pad) }
-    controls.onPadDetach = { [weak self] pad in self?.padCall("uae4arm_host_pad_release_all", pad) }
+    controls.onPadAttach = { [weak self] pad in
+      // Register the device AND flip the pad pref: the pref change is what
+      // reruns the port mapping, and without it the device exists but no
+      // port listens - directions posted into silence.
+      self?.padCall("uae4arm_host_pad_attach", pad)
+      self?.padCall("uae4arm_host_set_onscreen_controller", pad)
+    }
+    controls.onPadDetach = { [weak self] pad in
+      self?.padCall("uae4arm_host_pad_release_all", pad)
+      self?.padCall("uae4arm_host_set_onscreen_controller", 0)
+    }
     controls.onPadButton = { [weak self] pad, button, pressed in
       guard let self = self, let fn = self.symbol("uae4arm_host_pad_button") else { return }
       unsafeBitCast(fn, to: PadButtonFn.self)(pad, button, pressed)

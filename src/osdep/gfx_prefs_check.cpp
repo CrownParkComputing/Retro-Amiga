@@ -698,12 +698,25 @@ int check_prefs_changed_gfx()
 		}
 	}
 
-	/* The on-screen pad prefs still arrive - configs write them and the host
-	   may set them - but the core no longer draws a pad. The host draws its
-	   own and feeds the virtual pad devices directly, so all that is kept
-	   here is agreement between prefs, with no machinery behind it. */
-	currprefs.onscreen_joystick = changed_prefs.onscreen_joystick;
-	currprefs.onscreen_cd32pad = changed_prefs.onscreen_cd32pad;
+	/* The core no longer draws a pad - the host does - but these prefs are
+	   still the input wiring: flipping one registers the virtual pad device
+	   and reruns the port mapping, and without that the host's pad posts
+	   deltas into a device the ports have never heard of, which both
+	   setjoystickstate and setmousestate drop without a word. */
+	if (currprefs.onscreen_joystick != changed_prefs.onscreen_joystick
+		|| currprefs.onscreen_cd32pad != changed_prefs.onscreen_cd32pad)
+	{
+		currprefs.onscreen_joystick = changed_prefs.onscreen_joystick;
+		currprefs.onscreen_cd32pad = changed_prefs.onscreen_cd32pad;
+		if (currprefs.onscreen_joystick)
+			ensure_onscreen_joystick_registered();
+		if (currprefs.onscreen_cd32pad)
+			ensure_onscreen_cd32pad_registered();
+		write_log("gfx: virtual pad wiring (joystick=%d cd32=%d)\n",
+			currprefs.onscreen_joystick, currprefs.onscreen_cd32pad);
+		inputdevice_config_change();
+		joystick_refresh_needed = true;
+	}
 #endif
 
 	if (changed_prefs.rtgboards[0].rtgmem_type != currprefs.rtgboards[0].rtgmem_type)

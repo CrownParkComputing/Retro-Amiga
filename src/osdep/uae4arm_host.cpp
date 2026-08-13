@@ -206,6 +206,15 @@ void uae4arm_host_mouse_move(int dx, int dy)
 {
 	if (dx == 0 && dy == 0)
 		return;
+	/* setmousestate drops deltas silently when the mouse device is not
+	   enabled in the current mapping, which reads as "the pointer ignores
+	   me" with nothing in the log. Say so, once per run. */
+	static bool reported;
+	if (!reported) {
+		reported = true;
+		write_log("host: touch mouse first delta (port0 id=%d mode=%d)\n",
+			currprefs.jports[0].id, currprefs.jports[0].mode);
+	}
 	/* Port 0, axes 0 and 1, relative: the fourth argument is what makes it
 	   relative rather than an absolute position. */
 	setmousestate(0, 0, dx, 0);

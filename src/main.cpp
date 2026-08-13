@@ -1699,7 +1699,9 @@ static int real_main2 (int argc, TCHAR **argv)
 	write_log(_T("startup: prefs reset\n"));
 	if (restart_config[0]) {
 		default_prefs (&currprefs, true, 0);
+		write_log(_T("startup: defaults applied\n"));
 		fixup_prefs (&currprefs, true);
+		write_log(_T("startup: defaults fixed up\n"));
 	}
 	write_log(_T("startup: graphics setup\n"));
 
