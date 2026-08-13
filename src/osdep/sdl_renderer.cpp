@@ -23,8 +23,6 @@
 #include "gfx_platform_internal.h"
 #include "imgui_overlay.h"
 #include "imgui_osk.h"
-#include "on_screen_joystick.h"
-#include "on_screen_cd32pad.h"
 
 #ifdef AMIBERRY
 
@@ -411,8 +409,6 @@ bool SDLRenderer::render_frame(int monid, int mode, int immediate)
 		}
 
 		render_vkbd(monid);
-		render_onscreen_joystick(monid);
-		render_onscreen_cd32pad(monid);
 
 		return true;
 	}
@@ -427,15 +423,6 @@ void SDLRenderer::render_vkbd(int monid)
 	// UAE4ARM 2026: Native engine virtual keyboard suppressed.
 }
 
-void SDLRenderer::render_onscreen_joystick(int monid)
-{
-	// UAE4ARM 2026: Native engine joystick rendering suppressed.
-}
-
-void SDLRenderer::render_onscreen_cd32pad(int monid)
-{
-	// UAE4ARM 2026: Native engine joystick rendering suppressed.
-}
 
 void SDLRenderer::present_frame(int monid, int mode)
 {

@@ -37,8 +37,6 @@
 #include "imgui_impl_vulkan.h"
 #endif
 #include "imgui_osk.h"
-#include "on_screen_joystick.h"
-#include "on_screen_cd32pad.h"
 #include "fsdb_host.h"
 #include "uae/types.h"
 
@@ -1344,44 +1342,13 @@ bool doInit(AmigaMonitor* mon)
 	imgui_osk_set_language(currprefs.vkbd_language);
 	imgui_osk_set_numpad(currprefs.vkbd_numpad);
 
-	// Initialize on-screen joystick if enabled
+	/* The host draws the pad; the core keeps only the virtual pad devices,
+	   registered here when a config asks for a pad so port assignment works
+	   from the first frame. */
 	if (currprefs.onscreen_joystick)
-	{
-		// Ensure the on-screen joystick device is registered without
-		// re-enumerating physical devices (which would wipe custom
-		// controller mappings loaded from config files).
 		ensure_onscreen_joystick_registered();
-
-		on_screen_joystick_init(mon->amiga_renderer);
-		int sw = 0, sh = 0;
-		IRenderer* renderer = get_renderer(mon->monitor_id);
-		if (renderer) {
-			renderer->get_drawable_size(mon->amiga_window, &sw, &sh);
-			on_screen_joystick_update_layout(sw, sh, renderer->render_quad);
-		} else if (mon->amiga_renderer) {
-			SDL_GetCurrentRenderOutputSize(mon->amiga_renderer, &sw, &sh);
-			on_screen_joystick_update_layout(sw, sh, {});
-		}
-		on_screen_joystick_set_enabled(true);
-	}
-
-	// Initialize on-screen CD32 pad if enabled
 	if (currprefs.onscreen_cd32pad)
-	{
 		ensure_onscreen_cd32pad_registered();
-
-		on_screen_cd32pad_init(mon->amiga_renderer);
-		int sw = 0, sh = 0;
-		IRenderer* renderer = get_renderer(mon->monitor_id);
-		if (renderer) {
-			renderer->get_drawable_size(mon->amiga_window, &sw, &sh);
-			on_screen_cd32pad_update_layout(sw, sh, renderer->render_quad);
-		} else if (mon->amiga_renderer) {
-			SDL_GetCurrentRenderOutputSize(mon->amiga_renderer, &sw, &sh);
-			on_screen_cd32pad_update_layout(sw, sh, {});
-		}
-		on_screen_cd32pad_set_enabled(true);
-	}
 
 	return true;
 }

@@ -276,9 +276,6 @@ set(SOURCE_FILES
         src/qemuvga/vga.cpp
         src/sounddep/sound.cpp
         src/threaddep/threading.cpp
-        src/osdep/on_screen_joystick.cpp
-        src/osdep/on_screen_joystick_gl.cpp
-        src/osdep/on_screen_cd32pad.cpp
         src/newcpu.cpp
         src/newcpu_common.cpp
         src/readcpu.cpp

@@ -79,8 +79,6 @@ public:
 	virtual void render_software_cursor(int monid, int x, int y, int w, int h) {}
 	virtual void destroy_bezel() {}
 	virtual void render_vkbd(int monid) {}
-	virtual void render_onscreen_joystick(int monid) {}
-	virtual void render_onscreen_cd32pad(int monid) {}
 
 	// --- Input coordinate translation ---
 	// Computes offsets and scale factors for mouse input mapping.

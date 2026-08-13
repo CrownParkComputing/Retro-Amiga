@@ -24,8 +24,6 @@
 
 #include "imgui_overlay.h"
 #include "imgui_osk.h"
-#include "on_screen_joystick.h"
-#include "on_screen_cd32pad.h"
 #include "amiberry_input.h"
 
 #ifdef WITH_MIDIEMU
@@ -700,86 +698,12 @@ int check_prefs_changed_gfx()
 		}
 	}
 
-	// On-screen joystick
-	if (currprefs.onscreen_joystick != changed_prefs.onscreen_joystick)
-	{
-		write_log("gfx: on-screen joystick -> %d\n", changed_prefs.onscreen_joystick);
-		currprefs.onscreen_joystick = changed_prefs.onscreen_joystick;
-		// Real controllers are already enumerated once at startup (amiberry.cpp calls
-		// import_joysticks() during input init) - ensure_onscreen_joystick_registered() below
-		// just appends a synthetic entry to the existing di_joystick table, it doesn't need a
-		// fresh scan. Calling import_joysticks() here (as this used to) closes and reopens every
-		// REAL controller (each doing blocking Retroarch-cfg file lookups on disk), stalling the
-		// emulation thread audibly on every single tap of the overlay's controller icon. Worse,
-		// close_joystick() only resets osj_device_index and NOT cd32pad_device_index, so any
-		// reimport triggered while the CD32 pad was already registered left cd32pad_device_index
-		// dangling at a slot number that the freshly rebuilt table could reassign to a real
-		// controller - the on-screen CD32 pad silently stopped responding, or worse, aliased a
-		// physical gamepad. Never re-scanning real hardware here avoids both problems.
-		inputdevice_config_change();
-		joystick_refresh_needed = true;
-
-		if (currprefs.onscreen_joystick)
-		{
-			// Disable cd32 pad when enabling simple joystick
-			if (currprefs.onscreen_cd32pad)
-			{
-				on_screen_cd32pad_set_enabled(false);
-				on_screen_cd32pad_quit();
-				currprefs.onscreen_cd32pad = false;
-				changed_prefs.onscreen_cd32pad = false;
-			}
-
-			ensure_onscreen_joystick_registered();
-			AmigaMonitor* mon = &AMonitors[0];
-			on_screen_joystick_init(mon->amiga_renderer);
-			int sw = 0, sh = 0;
-			if (g_renderer)
-				g_renderer->get_drawable_size(mon->amiga_window, &sw, &sh);
-			on_screen_joystick_update_layout(sw, sh, g_renderer->render_quad);
-			on_screen_joystick_set_enabled(true);
-		}
-		else
-		{
-			on_screen_joystick_set_enabled(false);
-			on_screen_joystick_quit();
-		}
-	}
-
-	// On-screen CD32 pad
-	if (currprefs.onscreen_cd32pad != changed_prefs.onscreen_cd32pad)
-	{
-		currprefs.onscreen_cd32pad = changed_prefs.onscreen_cd32pad;
-		// See the on-screen joystick block above - no need to re-scan real controllers here either.
-		inputdevice_config_change();
-		joystick_refresh_needed = true;
-
-		if (currprefs.onscreen_cd32pad)
-		{
-			// Disable simple joystick when enabling CD32 pad
-			if (currprefs.onscreen_joystick)
-			{
-				on_screen_joystick_set_enabled(false);
-				on_screen_joystick_quit();
-				currprefs.onscreen_joystick = false;
-				changed_prefs.onscreen_joystick = false;
-			}
-
-			ensure_onscreen_cd32pad_registered();
-			AmigaMonitor* mon = &AMonitors[0];
-			on_screen_cd32pad_init(mon->amiga_renderer);
-			int sw = 0, sh = 0;
-			if (g_renderer)
-				g_renderer->get_drawable_size(mon->amiga_window, &sw, &sh);
-			on_screen_cd32pad_update_layout(sw, sh, g_renderer->render_quad);
-			on_screen_cd32pad_set_enabled(true);
-		}
-		else
-		{
-			on_screen_cd32pad_set_enabled(false);
-			on_screen_cd32pad_quit();
-		}
-	}
+	/* The on-screen pad prefs still arrive - configs write them and the host
+	   may set them - but the core no longer draws a pad. The host draws its
+	   own and feeds the virtual pad devices directly, so all that is kept
+	   here is agreement between prefs, with no machinery behind it. */
+	currprefs.onscreen_joystick = changed_prefs.onscreen_joystick;
+	currprefs.onscreen_cd32pad = changed_prefs.onscreen_cd32pad;
 #endif
 
 	if (changed_prefs.rtgboards[0].rtgmem_type != currprefs.rtgboards[0].rtgmem_type)

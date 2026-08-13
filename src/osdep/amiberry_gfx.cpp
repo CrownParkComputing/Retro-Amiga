@@ -46,7 +46,6 @@
 
 #include "threaddep/thread.h"
 // imgui_osk.h included for vkbd_allowed() - no old vkbd dependency
-#include "on_screen_joystick.h"
 #include "fsdb_host.h"
 #include "savestate.h"
 #include "uae/types.h"

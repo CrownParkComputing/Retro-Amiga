@@ -75,7 +75,6 @@ public:
 	void render_bezel(int x, int y, int w, int h) override;
 	void render_software_cursor(int monid, int x, int y, int w, int h) override;
 	void render_vkbd(int monid) override;
-	void render_onscreen_joystick(int monid) override;
 	void destroy_bezel() override;
 	void update_custom_bezel() override;
 	BezelHoleInfo get_bezel_hole_info() const override;

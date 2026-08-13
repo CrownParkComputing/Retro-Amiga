@@ -32,7 +32,6 @@
 #include "imgui_overlay.h"
 #include "imgui_osk.h"
 #include <imgui_impl_vulkan.h>
-#include "on_screen_joystick.h"
 #include "statusline.h"
 
 #define VMA_IMPLEMENTATION
@@ -1072,7 +1071,10 @@ bool VulkanRenderer::render_frame(int monid, int /*mode*/, int /*immediate*/)
 	const bool bezel_active = filter_prefs.use_custom_bezel && filter_prefs.custom_bezel[0] != '\0'
 		&& strcmp(filter_prefs.custom_bezel, "none") != 0;
 	const bool cursor_active = ad->picasso_on && p96_uses_software_cursor();
-	const bool osj_active = on_screen_joystick_is_enabled() && !imgui_osk_should_render();
+	/* The host draws the pad now; the Vulkan overlay plumbing for it stays
+	   dormant rather than excised, because it is interwoven with the frame
+	   slots and none of it runs while this is false. */
+	const bool osj_active = false;
 	std::unique_lock<std::mutex> overlay_lock(m_overlay_mutex, std::defer_lock);
 	const auto lock_overlays = [&]() {
 		if (!overlay_lock.owns_lock())
@@ -1141,40 +1143,8 @@ bool VulkanRenderer::render_frame(int monid, int /*mode*/, int /*immediate*/)
 
 	// Virtual keyboard: ImGui OSK rendered later in this function within the render pass
 
-	// On-screen joystick
 	slot.draw_osj = false;
-	{
-		OsjRenderInfo osj_info{};
-		if (osj_active && on_screen_joystick_get_render_info(osj_info)) {
-			if (m_osj_base_tex.descriptor_set == VK_NULL_HANDLE ||
-				m_osj_knob_tex.descriptor_set == VK_NULL_HANDLE ||
-				m_osj_btn1_tex.descriptor_set == VK_NULL_HANDLE ||
-				m_osj_btn2_tex.descriptor_set == VK_NULL_HANDLE ||
-				(osj_info.btnkb.surface && m_osj_btnkb_tex.descriptor_set == VK_NULL_HANDLE))
-				lock_overlays();
-			if (m_osj_base_tex.descriptor_set == VK_NULL_HANDLE)
-				upload_overlay_texture(m_osj_base_tex, osj_info.base.surface);
-			if (m_osj_knob_tex.descriptor_set == VK_NULL_HANDLE)
-				upload_overlay_texture(m_osj_knob_tex, osj_info.knob.surface);
-			if (m_osj_btn1_tex.descriptor_set == VK_NULL_HANDLE)
-				upload_overlay_texture(m_osj_btn1_tex, osj_info.btn1.surface);
-			if (m_osj_btn2_tex.descriptor_set == VK_NULL_HANDLE)
-				upload_overlay_texture(m_osj_btn2_tex, osj_info.btn2.surface);
-			if (osj_info.btnkb.surface && m_osj_btnkb_tex.descriptor_set == VK_NULL_HANDLE)
-				upload_overlay_texture(m_osj_btnkb_tex, osj_info.btnkb.surface);
-			slot.osj_screen_w = osj_info.screen_w;
-			slot.osj_screen_h = osj_info.screen_h;
-			slot.osj_base_rect = osj_info.base.rect;
-			slot.osj_knob_rect = osj_info.knob.rect;
-			slot.osj_btn1_rect = osj_info.btn1.rect;
-			slot.osj_btn2_rect = osj_info.btn2.rect;
-			slot.osj_btnkb_rect = osj_info.btnkb.rect;
-			slot.draw_osj = m_osj_base_tex.descriptor_set != VK_NULL_HANDLE &&
-				m_osj_knob_tex.descriptor_set != VK_NULL_HANDLE &&
-				m_osj_btn1_tex.descriptor_set != VK_NULL_HANDLE &&
-				m_osj_btn2_tex.descriptor_set != VK_NULL_HANDLE;
-		}
-	}
+	(void)osj_active;
 
 	// OSD overlay
 	slot.draw_osd = m_osd_uploaded && m_osd_image != VK_NULL_HANDLE &&
@@ -4347,10 +4317,6 @@ void VulkanRenderer::render_vkbd(int /*monid*/)
 
 // --- On-screen joystick ---
 
-void VulkanRenderer::render_onscreen_joystick(int /*monid*/)
-{
-	// On-screen joystick rendering is done inline in present_frame() via the command buffer.
-}
 
 void VulkanRenderer::destroy_shaders()
 {

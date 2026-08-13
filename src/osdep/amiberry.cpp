@@ -78,8 +78,6 @@
 #include "sana2.h"
 #include "gui_handling_platform.h"
 #include "gui/gui_handling.h"
-#include "on_screen_joystick.h"
-#include "on_screen_cd32pad.h"
 #include "android_keyboard_bridge.h"
 #include "imgui_osk.h"
 #ifdef __ANDROID__
@@ -444,12 +442,9 @@ static void amiberry_android_handle_removed_mouse_index(int mouse_index)
 static void amiberry_android_check_touch_overlay_transitions()
 {
 	const bool osk_rendering = imgui_osk_should_render();
-	const bool joystick_enabled = on_screen_joystick_is_enabled();
-	if (osk_rendering != android_last_osk_rendering
-		|| joystick_enabled != android_last_joystick_enabled)
+	if (osk_rendering != android_last_osk_rendering)
 		neutralize_touch_controls();
 	android_last_osk_rendering = osk_rendering;
-	android_last_joystick_enabled = joystick_enabled;
 }
 
 static bool amiberry_android_touch_mouse_owns(const SDL_Event& event)
@@ -548,7 +543,6 @@ static bool SDLCALL android_touch_event_filter(void*, SDL_Event* event)
 
 static void neutralize_touch_controls()
 {
-	on_screen_joystick_release_all();
 #ifdef __ANDROID__
 	amiberry_android_touch_mouse_neutralize();
 #endif
@@ -4009,27 +4003,9 @@ static void process_event(const SDL_Event& event)
 					consumed = true;
 			}
 
-			// The CD32 pad replaces the plain joystick when enabled.
-			if (!consumed && on_screen_cd32pad_is_enabled() && ww > 0 && wh > 0) {
-				if (event.type == SDL_EVENT_FINGER_DOWN)
-					consumed = on_screen_cd32pad_handle_finger_down(event, ww, wh);
-				else
-					consumed = on_screen_cd32pad_handle_finger_up(event, ww, wh);
-			}
-			// Then let on-screen joystick try
-			else if (!consumed && !imgui_osk_should_render() && on_screen_joystick_is_enabled() && ww > 0 && wh > 0) {
-				if (event.type == SDL_EVENT_FINGER_DOWN)
-					consumed = on_screen_joystick_handle_finger_down(event);
-				else
-					consumed = on_screen_joystick_handle_finger_up(event);
-			}
-			// Check if the on-screen keyboard button was tapped
-			if (on_screen_joystick_keyboard_tapped()) {
-				if (vkbd_allowed(0)) {
-					neutralize_touch_controls();
-					imgui_osk_toggle();
-				}
-			}
+			/* The core no longer draws a pad of its own - the host does, and
+			   its touches never reach SDL. Anything arriving here belongs to
+			   the game. */
 			if (!consumed) {
 #ifdef __ANDROID__
 				amiberry_android_route_touch_mouse(event);
@@ -4049,7 +4025,7 @@ static void process_event(const SDL_Event& event)
 #endif
 			// Skip touch-synthesized mouse events when the on-screen keyboard or joystick is active,
 			// otherwise touches also inject unwanted mouse input into Amiga port 1
-			if ((imgui_osk_should_render() || on_screen_joystick_is_enabled()) && event.button.which == SDL_TOUCH_MOUSEID)
+			if (imgui_osk_should_render() && event.button.which == SDL_TOUCH_MOUSEID)
 				break;
 			mon = monitor_from_window_id(event.button.windowID);
 			mouse_monid = mon->monitor_id;
@@ -4081,10 +4057,7 @@ static void process_event(const SDL_Event& event)
 				if (!consumed && imgui_osk_hit_test(sx, sy))
 					consumed = true;
 			}
-			if (!consumed && on_screen_cd32pad_is_enabled() && ww > 0 && wh > 0)
-				consumed = on_screen_cd32pad_handle_finger_motion(event, ww, wh);
-			else if (!consumed && !imgui_osk_should_render() && on_screen_joystick_is_enabled() && ww > 0 && wh > 0)
-				consumed = on_screen_joystick_handle_finger_motion(event);
+
 			if (!consumed) {
 #ifdef __ANDROID__
 				amiberry_android_route_touch_mouse(event);
@@ -4103,7 +4076,7 @@ static void process_event(const SDL_Event& event)
 #endif
 			// Skip touch-synthesized mouse events when touch overlays are active,
 			// otherwise overlay touches also inject unwanted mouse input into Amiga port 1
-			if ((imgui_osk_should_render() || on_screen_joystick_is_enabled()) && event.motion.which == SDL_TOUCH_MOUSEID)
+			if (imgui_osk_should_render() && event.motion.which == SDL_TOUCH_MOUSEID)
 				break;
 			mon = monitor_from_window_id(event.motion.windowID);
 			mouse_monid = mon->monitor_id;

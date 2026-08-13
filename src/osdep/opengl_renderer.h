@@ -118,8 +118,6 @@ public:
 	void render_software_cursor(int monid, int x, int y, int w, int h) override;
 	void destroy_bezel() override;
 	void render_vkbd(int monid) override;
-	void render_onscreen_joystick(int monid) override;
-	void render_onscreen_cd32pad(int monid) override;
 
 	// Input coordinate translation
 	void get_gfx_offset(int monid, float src_w, float src_h, float src_x, float src_y,
