@@ -140,11 +140,39 @@ class ConfigStore {
 
     text = await _relocateMissingMedia(text);
     text = await _addMissingRoms(text);
+    text = _moveOverflowingDrivesOffIde(text);
 
     if (text != original) {
       file.writeAsStringSync(text);
     }
     return configPath;
+  }
+
+  /// Moves a big set of drives off the IDE controller.
+  ///
+  /// A real A600/A1200/A4000 IDE has two units. A config written before that
+  /// was understood puts ten drives on ide0..ide9, and the machine starts and
+  /// never boots. Rewriting the controller on launch fixes configs already
+  /// saved - an AGS set is not something anyone wants to build twice.
+  static String _moveOverflowingDrivesOffIde(String text) {
+    final List<String> lines = text.split('\n');
+    final int drives =
+        lines.where((String l) => l.startsWith('hardfile2=')).length;
+    if (drives <= 2) return text;
+
+    bool changed = false;
+    for (int i = 0; i < lines.length; i++) {
+      if (!lines[i].startsWith('hardfile2=')) continue;
+      final String fixed = lines[i].replaceAllMapped(
+        RegExp(r',ide(\d+)$'),
+        (Match m) => ',uae${m.group(1)}',
+      );
+      if (fixed != lines[i]) {
+        lines[i] = fixed;
+        changed = true;
+      }
+    }
+    return changed ? lines.join('\n') : text;
   }
 
   /// Fills in ROMs a config was saved without.

@@ -119,7 +119,11 @@ enum AmigaModel {
 
   /// Whether a graphics card can be plugged in. It needs a Zorro bus, which
   /// the wedge machines and both consoles do not have.
+  /// A1200 included: it has no Zorro slots itself, but every accelerator that
+  /// matters brings them, and an RTG A1200 is what AGS and the RTG game builds
+  /// actually run on.
   bool get canRtg => switch (this) {
+        AmigaModel.a1200 ||
         AmigaModel.a2000 ||
         AmigaModel.a3000 ||
         AmigaModel.a4000 =>

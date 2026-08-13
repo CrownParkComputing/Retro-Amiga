@@ -85,6 +85,16 @@ class EmulatorSettings {
   final bool ntsc;
   final bool useRtg;
 
+  /// Whether [path] names a build made for a graphics card.
+  ///
+  /// The convention is the filename: 1942_RTG.hdf, Gaplus-RTG.hdf. Those are
+  /// built to draw on a Picasso screen and show nothing on a native one, so
+  /// getting this wrong looks like a broken game rather than a wrong setting.
+  static bool looksLikeRtg(String path) {
+    final String name = path.toLowerCase().split('/').last;
+    return RegExp(r'(^|[^a-z])rtg([^a-z]|$)').hasMatch(name);
+  }
+
   final int chipRam;
   final int slowRam;
   final int fastRam;

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../data/amiga_model.dart';
 import '../data/config_store.dart';
 import '../data/emulator_settings.dart';
 import '../data/file_category.dart';
@@ -285,7 +286,16 @@ class _LibraryPanelState extends State<LibraryPanel> {
   /// Puts the file in the drive its type belongs in. An archive could be any
   /// of them, so it goes nowhere and the wizard asks.
   static EmulatorSettings _settingsFor(MediaFile file) {
-    const EmulatorSettings base = EmulatorSettings();
+    // A file with RTG in its name wants a graphics card, and an A1200 with a
+    // Zorro III card is what those builds are made for. Without it they run
+    // and draw nothing.
+    final EmulatorSettings base = EmulatorSettings.looksLikeRtg(file.name)
+        ? EmulatorSettings.fromModel(AmigaModel.a1200).copyWith(
+            useRtg: true,
+            z3Ram: 64,
+            fastRam: 8,
+          )
+        : const EmulatorSettings();
     switch (file.category) {
       case FileCategory.floppies:
         return base.copyWith(floppy0: file.path);

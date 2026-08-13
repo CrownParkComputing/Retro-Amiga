@@ -103,7 +103,9 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
         onPointerSignal: (_) => _wake(),
         child: Stack(
           children: <Widget>[
-            Positioned.fill(child: BoingBackdrop(opacity: _idle ? 1 : 0.32)),
+            // The demo is the screensaver, not wallpaper: behind a panel in
+            // use it is motion competing with the thing being read.
+            if (_idle) const Positioned.fill(child: BoingBackdrop()),
             // The logos belong to the demo, not to every screen: a masthead
             // repeated above every panel is a band of chrome doing nothing,
             // and the space is worth more to the panel underneath. They fade

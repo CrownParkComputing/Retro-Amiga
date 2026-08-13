@@ -89,52 +89,90 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
     final WizardMode? mode = await showModalBottomSheet<WizardMode>(
       context: context,
       showDragHandle: true,
-      // Five short rows that fit without scrolling. The blurbs were what made
-      // this a scrolling list on a handheld's short landscape screen, and a
-      // one-line label answers "what are you setting up" on its own.
+      // Without this a sheet is capped at nine sixteenths of the screen and
+      // the last row falls off the bottom, which is what the overflow was.
+      isScrollControlled: true,
+      // Two columns, because five choices in one column is a list that
+      // scrolls on a handheld's landscape screen - and a thing you scroll to
+      // find is worse than a thing you can see all of at once.
       builder: (BuildContext context) => SafeArea(
-        child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               const Padding(
-                padding: EdgeInsets.fromLTRB(20, 0, 20, 6),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'What are you setting up?',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                  ),
+                padding: EdgeInsets.fromLTRB(4, 0, 4, 12),
+                child: Text(
+                  'What are you setting up?',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                 ),
               ),
-              ...WizardMode.values
-                  .where((WizardMode m) => m != WizardMode.edit)
-                  .map(
-                    (WizardMode m) => ListTile(
-                      dense: true,
-                      visualDensity: VisualDensity.compact,
-                      // The media itself rather than a description of it, in
-                      // the same uae4arm artwork the rest of the app uses. The
-                      // blurb was also what overflowed the row: a ListTile
-                      // gives its trailing child whatever width it asks for,
-                      // and "ADF, ADZ, IPF and the rest" asks for more than is
-                      // left on a handheld.
-                      leading: SizedBox(
-                        width: 64,
-                        height: 40,
-                        child: Image.asset(
-                          m.artworkPath,
-                          fit: BoxFit.contain,
-                          errorBuilder:
-                              (BuildContext c, Object e, StackTrace? s) =>
-                                  const Icon(Icons.folder_outlined, size: 22),
+              LayoutBuilder(
+                builder: (BuildContext context, BoxConstraints constraints) {
+                  const double gap = 12;
+                  final double tile = (constraints.maxWidth - gap) / 2;
+                  return Wrap(
+                    spacing: gap,
+                    runSpacing: gap,
+                    children: <Widget>[
+                      for (final WizardMode m in WizardMode.values
+                          .where((WizardMode m) => m != WizardMode.edit))
+                        SizedBox(
+                          width: tile,
+                          child: Material(
+                            color: AmigaColors.card,
+                            borderRadius: BorderRadius.circular(10),
+                            clipBehavior: Clip.antiAlias,
+                            child: InkWell(
+                              onTap: () => Navigator.of(context).pop(m),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                                child: Row(
+                                  children: <Widget>[
+                                    SizedBox(
+                                      width: 56,
+                                      height: 38,
+                                      child: Image.asset(
+                                        m.artworkPath,
+                                        fit: BoxFit.contain,
+                                        errorBuilder: (
+                                          BuildContext c,
+                                          Object e,
+                                          StackTrace? s,
+                                        ) => const Icon(
+                                          Icons.folder_outlined,
+                                          size: 22,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(
+                                        m.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w600,
+                                          color: AmigaColors.text,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
-                      title: Text(m.title),
-                      onTap: () => Navigator.of(context).pop(m),
-                    ),
-                  ),
-              const SizedBox(height: 8),
+                    ],
+                  );
+                },
+              ),
             ],
           ),
         ),
@@ -171,10 +209,10 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: widget.embedded ? Colors.transparent : null,
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton: FloatingActionButton(
         onPressed: _newSetup,
-        icon: const Icon(Icons.add),
-        label: const Text('New setup'),
+        tooltip: 'New config',
+        child: const Icon(Icons.add),
       ),
       body: SafeArea(
         // The workbench panel has already inset and clipped this.
