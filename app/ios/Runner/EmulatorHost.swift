@@ -20,6 +20,10 @@ final class EmulatorHost {
   private var handle: UnsafeMutableRawPointer?
   private var running = false
 
+  /// True from X being pressed until the core actually returns. A new launch
+  /// during this window waits instead of being refused.
+  private var quitting = false
+
   private typealias RunFn = @convention(c) (Int32, UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32
   private typealias SetMainReadyFn = @convention(c) () -> Void
 
@@ -68,7 +72,7 @@ final class EmulatorHost {
   /// its reply back to Dart first - the reply would otherwise be stuck behind
   /// a main thread that never comes back.
   func launch(args: [String]) throws {
-    if running {
+    if running && !quitting {
       throw HostError.message("Emulation is already running.")
     }
     // A second game runs the core again. That used to hang: SDL_Quit at the
@@ -92,23 +96,48 @@ final class EmulatorHost {
       unsafeBitCast(readySymbol, to: SetMainReadyFn.self)()
     }
 
-    // The controls go up before the core takes the main thread: once it has
-    // it, nothing else on this thread runs until emulation ends, so there
-    // would be no later moment to add them.
     controls.onQuit = { [weak self] in self?.quit() }
     controls.onPause = { [weak self] paused in self?.setPaused(paused) }
-    controls.show()
 
     hasRun = true
     let run = unsafeBitCast(runSymbol, to: RunFn.self)
     // argv[0] is the program name, as the core's option parser expects.
     let argv: [String] = ["Amiga-Retro"] + args
+    startWhenIdle(run: run, argv: argv, attemptsLeft: 50)
+  }
+
+  /// Starts the core once the previous run has actually let go.
+  ///
+  /// X ends the session, but the core takes a moment to wind down after
+  /// uae_quit - and a player who taps the next game inside that moment used
+  /// to be told "Emulation is already running" about a game they had just
+  /// left. Waiting here is invisible; the error was not.
+  private func startWhenIdle(
+    run: @escaping RunFn, argv: [String], attemptsLeft: Int
+  ) {
+    if running {
+      guard attemptsLeft > 0 else {
+        NSLog("uae4arm: previous run never ended; not starting another")
+        return
+      }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+        self?.startWhenIdle(run: run, argv: argv, attemptsLeft: attemptsLeft - 1)
+      }
+      return
+    }
     running = true
+    quitting = false
 
     DispatchQueue.main.async { [weak self] in
       // Copies that outlive this scope: the core keeps the pointers.
       var cStrings: [UnsafeMutablePointer<CChar>?] = argv.map { strdup($0) }
       cStrings.append(nil)
+
+      // The controls go up here, at the last moment before the core takes the
+      // main thread, so pause and X are only ever on screen when a session is
+      // genuinely being entered - and once the core has the thread, there
+      // would be no later moment to add them.
+      self?.controls.show()
 
       NSLog("uae4arm: starting the core with %d arguments", argv.count)
       let status = cStrings.withUnsafeMutableBufferPointer { buffer -> Int32 in
@@ -119,8 +148,11 @@ final class EmulatorHost {
       for pointer in cStrings where pointer != nil {
         free(pointer)
       }
-      self?.controls.hide()
+      // Truth first, appearance second: the state says "ended" before the
+      // buttons go, so the visible session can never outlive the real one.
       self?.running = false
+      self?.quitting = false
+      self?.controls.hide()
     }
   }
 
@@ -163,9 +195,10 @@ final class EmulatorHost {
   /// which by then was SDL's own. The launcher's window is held explicitly
   /// now, and SDL's is put out of the way rather than merely hidden.
   func quit() {
-    // Ends the core. Pausing it instead leaves the launcher untouchable, and
-    // an app that has to be force-quit is worse than one that has to be
-    // reopened between games.
+    // Ends the core - X closes the session; pause is what pauses. Pausing
+    // here instead left the launcher untouchable, and an app that has to be
+    // force-quit is worse than one that has to be reopened between games.
+    quitting = true
     if let fn = symbol("uae4arm_host_quit") {
       unsafeBitCast(fn, to: VoidFn.self)()
     }
