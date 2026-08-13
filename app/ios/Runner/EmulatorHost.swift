@@ -63,15 +63,14 @@ final class EmulatorHost {
     if running {
       throw HostError.message("Emulation is already running.")
     }
-    // The core can only be run once in a process. It tears SDL down on the way
-    // out, and a second run blocks in SDL's own startup - on iOS the core has
-    // the main thread, so that blocks the whole app: the launcher froze behind
-    // its own controls with no way back. Refusing is not good, but it is
-    // recoverable and it says what to do.
+    // A second game is a restart, not a second run. The core can only be run
+    // once in a process - it tears SDL down on the way out, and running it
+    // again blocks in SDL's startup, which on iOS freezes the app because the
+    // core has the main thread. So the core is never ended: it is handed the
+    // new machine and its own restart loop picks it up.
     if hasRun {
-      throw HostError.message(
-        "The emulator can only be started once per session. "
-        + "Close and reopen the app to play another game.")
+      try restart(args: args)
+      return
     }
     guard let handle = load() else {
       throw HostError.message("The emulator core could not be loaded.")
@@ -125,6 +124,8 @@ final class EmulatorHost {
   // independent of emulation: it opens its own audio device and runs whether
   // or not a machine is running. So these load the core without starting it.
 
+  private typealias LaunchFn =
+    @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Bool
   private typealias PlayFn = @convention(c) (UnsafePointer<CChar>?) -> Bool
   private typealias VoidFn = @convention(c) () -> Void
   private typealias BoolFn = @convention(c) () -> Bool
@@ -140,11 +141,50 @@ final class EmulatorHost {
   /// EmulatorControls for why Flutter cannot.
   private let controls = EmulatorControls()
 
-  /// Ends emulation. The core unwinds on its next frame, uae4arm_host_run
-  /// returns, and the launcher's own window is on top again.
+  /// Leaves the game and gives the screen back to the launcher.
+  ///
+  /// Deliberately does NOT end the core. Emulation pauses and the emulator's
+  /// window is hidden, so the core stays in its own loop with the main thread
+  /// pumping - which is what lets the next game be a restart rather than a
+  /// second run the process cannot survive.
   func quit() {
-    guard let fn = symbol("uae4arm_host_quit") else { return }
-    unsafeBitCast(fn, to: VoidFn.self)()
+    setPaused(true)
+    setEmulationVisible(false)
+    controls.hide()
+  }
+
+  /// Hands the running core a different machine.
+  private func restart(args: [String]) throws {
+    guard let fn = symbol("uae4arm_host_launch") else {
+      throw HostError.message("This core cannot start a second game.")
+    }
+    let config = value(after: "--config", in: args) ?? ""
+    let archive = value(after: "--autoload", in: args) ?? ""
+    let started = config.withCString { configPointer in
+      archive.withCString { archivePointer in
+        unsafeBitCast(fn, to: LaunchFn.self)(configPointer, archivePointer)
+      }
+    }
+    if !started {
+      throw HostError.message("That setup could not be loaded.")
+    }
+    setEmulationVisible(true)
+    setPaused(false)
+    controls.show()
+  }
+
+  /// The argument after [flag], which is how the launcher passes the config
+  /// and the archive.
+  private func value(after flag: String, in args: [String]) -> String? {
+    guard let index = args.firstIndex(of: flag), index + 1 < args.count else {
+      return nil
+    }
+    return args[index + 1]
+  }
+
+  func setEmulationVisible(_ visible: Bool) {
+    guard let fn = symbol("uae4arm_host_set_emulation_visible") else { return }
+    unsafeBitCast(fn, to: SetBoolFn.self)(visible)
   }
 
   func setPaused(_ paused: Bool) {

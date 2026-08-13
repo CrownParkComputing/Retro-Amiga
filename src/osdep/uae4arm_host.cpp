@@ -15,6 +15,7 @@
 #include "inputdevice.h"
 #include "target.h"
 #include "amiberry_input.h"
+#include "amiberry_gfx.h"
 #include "protracker.h"
 #include "savestate.h"
 #include "uae.h"
@@ -137,6 +138,46 @@ void uae4arm_host_quit(void)
 	   it up on the next frame and unwinds, which is what lets the host know
 	   emulation is over rather than having to guess. */
 	uae_quit();
+}
+
+bool uae4arm_host_launch(const char* config_path, const char* whdload_archive)
+{
+	const bool have_archive = whdload_archive && *whdload_archive;
+	const bool have_config = config_path && *config_path;
+	if (!have_archive && !have_config)
+		return false;
+
+	/* From the machine's defaults each time: a restart that inherited the
+	   last game's prefs would carry its memory, its ROM and its disks into
+	   the next one. */
+	default_prefs(&changed_prefs, true, 0);
+
+	if (have_config && target_cfgfile_load(&changed_prefs, config_path, CONFIG_TYPE_ALL, 0) == 0)
+		return false;
+
+	if (have_archive)
+	{
+		/* The same call --autoload makes. It writes the hardware the game's
+		   database entry asks for over what the config said, which is what
+		   makes a WHDLoad game work. */
+		whdload_auto_prefs(&changed_prefs, whdload_archive);
+	}
+
+	/* opengui 0 leaves restart_config empty, and real_main2 then takes
+	   changed_prefs as they stand - which is where the new machine is. */
+	uae_restart(&changed_prefs, 0, nullptr);
+	return true;
+}
+
+void uae4arm_host_set_emulation_visible(bool visible)
+{
+	AmigaMonitor* mon = &AMonitors[0];
+	if (!mon->amiga_window)
+		return;
+	if (visible)
+		SDL_ShowWindow(mon->amiga_window);
+	else
+		SDL_HideWindow(mon->amiga_window);
 }
 
 /* ---- mouse ------------------------------------------------------------- */

@@ -78,6 +78,24 @@ void uae4arm_host_mouse_button(int button, bool pressed);
 void uae4arm_host_set_pause(bool paused);
 void uae4arm_host_restart(void);
 
+/* Starts a different machine without leaving the core.
+ *
+ * The core can only be run once in a process - it tears SDL down on the way
+ * out and a second run blocks in SDL's startup - which on a host that runs it
+ * on the main thread means one game per launch of the app. So a second game
+ * is a RESTART rather than a new run: the prefs are replaced and the core's
+ * own restart loop picks them up, exactly as its Reboot does.
+ *
+ * [whdload_archive] may be empty for a plain config, or an .lha, in which case
+ * the booter builds the machine around it the way --autoload does. Returns
+ * false if the config could not be read, in which case nothing changes and
+ * whatever was running keeps running. */
+bool uae4arm_host_launch(const char* config_path, const char* whdload_archive);
+
+/* Shows or hides the emulator's window, so a host with its own launcher can
+   have the screen back without ending emulation. */
+void uae4arm_host_set_emulation_visible(bool visible);
+
 /* Ends emulation, so uae4arm_host_run returns and the host gets its screen
    back. Needed where the launcher and the emulator are one process - iOS runs
    the core on the main thread, so without this there is no way out of a game
