@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../data/amiga_model.dart';
@@ -205,62 +204,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
   }
 
-  /// Copies chosen files into the app's own storage, then rescans.
-  ///
-  /// This is the way in on iOS, where there is no shared storage to walk, and
-  /// a useful fallback on Android when storage access is refused.
-  Future<void> _import() async {
-    try {
-      final FilePickerResult? result = await FilePicker.platform.pickFiles(
-        allowMultiple: true,
-        type: FileType.any,
-      );
-      if (result == null || result.files.isEmpty) return;
-
-      setState(() => _scanning = true);
-      int copied = 0;
-      for (final PlatformFile picked in result.files) {
-        final String? path = picked.path;
-        if (path == null) continue;
-        // Filed by kind on the way in, so an imported disk lands with the
-        // other disks rather than in a flat heap.
-        final FileCategory? category = FileCategory.fromPath(path);
-        if (category == null) continue;
-        try {
-          final Directory target = await MediaRoot.folderFor(category);
-          File(path).copySync('${target.path}/${picked.name}');
-          copied++;
-        } on FileSystemException {
-          // Skip the one file rather than abandoning the import.
-        }
-      }
-
-      final MediaIndex index = await MediaLibrary.scan(
-        roots: <String>[
-          ...await MediaLibrary.defaultRoots(),
-          await MediaRoot.path(),
-        ],
-      );
-      if (mounted) {
-        setState(() {
-          _index = index;
-          _scanning = false;
-          _scanned = true;
-          _notice = copied == 0
-              ? 'Nothing imported: none of those files were Amiga media.'
-              : null;
-        });
-      }
-    } on Object catch (e) {
-      if (mounted) {
-        setState(() {
-          _scanning = false;
-          _notice = 'Import failed: $e';
-        });
-      }
-    }
-  }
-
   Future<void> _finish() async {
     await AppPrefs.setDefaultModel(_model);
     await AppPrefs.setSetupComplete(value: true);
@@ -298,7 +241,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             const SizedBox(height: 8),
             const Text(
               'Kickstart ROMs, floppies, hard drives, CD images and WHDLoad '
-              'archives. You supply your own.',
+              'archives. You supply your own: drop them - zipped is fine - '
+              'into this app\'s folder in the Files app '
+              '(On My iPad > Amiga-Retro), then Scan.',
             ),
             const SizedBox(height: 12),
             if (_scanning)
@@ -317,24 +262,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 ),
               )
             else
-              Row(
-                children: <Widget>[
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _scan,
-                      icon: const Icon(Icons.search),
-                      label: Text(_scanned ? 'Scan again' : 'Scan for files'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _import,
-                      icon: const Icon(Icons.file_download),
-                      label: const Text('Import files'),
-                    ),
-                  ),
-                ],
+              // One button. The app's folder is the only door - the scan
+              // files whatever zips are waiting there and reports what it
+              // found, exactly as C64-Retro does. A Files picker here was a
+              // second road in, one that filed things by the picker's rules
+              // instead of the importer's.
+              OutlinedButton.icon(
+                onPressed: _scan,
+                icon: const Icon(Icons.search),
+                label: Text(_scanned ? 'Scan again' : 'Scan for files'),
               ),
             if (_notice != null)
               Padding(
