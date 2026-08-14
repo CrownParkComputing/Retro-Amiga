@@ -133,6 +133,9 @@ bool gl_platform_init()
 	}
 
 	write_log("OpenGL extension functions loaded successfully\n");
+#ifdef AMIBERRY_IOS
+	gl_platform_refresh_default_framebuffer();
+#endif
 	return true;
 }
 
@@ -185,3 +188,55 @@ const GlShaderPreambles& get_gl_shader_preambles()
 }
 
 #endif // USE_OPENGL
+
+
+#ifdef AMIBERRY_IOS
+/* See gl_platform.h: iOS draws the window through an SDL-owned framebuffer
+   object, never framebuffer 0.
+   The header redirects glBindFramebuffer here, so it has to be put back to the
+   real GLES entry point before the shim can call through to it. */
+#undef glBindFramebuffer
+static unsigned int ios_default_framebuffer = 0;
+
+void gl_platform_refresh_default_framebuffer()
+{
+	SDL_Window* window = SDL_GL_GetCurrentWindow();
+	if (!window) {
+		/* Forgotten rather than kept.
+		 *
+		 * This id belongs to a context, and where the launcher and the
+		 * emulator share a process the context goes away between games while
+		 * this variable does not. Keeping the old id meant the second game
+		 * drew into a framebuffer that no longer existed: a black screen, and
+		 * silent, because the value never changed and so was never logged. */
+		ios_default_framebuffer = 0;
+		return;
+	}
+	const SDL_PropertiesID props = SDL_GetWindowProperties(window);
+	const auto fbo = static_cast<unsigned int>(SDL_GetNumberProperty(
+		props, SDL_PROP_WINDOW_UIKIT_OPENGL_FRAMEBUFFER_NUMBER, 0));
+	if (fbo != ios_default_framebuffer) {
+		ios_default_framebuffer = fbo;
+		write_log("iOS window framebuffer is %u\n", fbo);
+	}
+}
+
+void gl_platform_forget_default_framebuffer()
+{
+	if (ios_default_framebuffer != 0)
+		write_log("iOS window framebuffer %u forgotten\n", ios_default_framebuffer);
+	ios_default_framebuffer = 0;
+}
+
+void gl_platform_bind_framebuffer(unsigned int target, unsigned int framebuffer)
+{
+	if (framebuffer == 0) {
+		/* The window's framebuffer is recreated on rotation and on a resize,
+		   so a stale id has to be noticed. Re-querying only when unbinding
+		   keeps this off the per-pass path. */
+		gl_platform_refresh_default_framebuffer();
+		framebuffer = ios_default_framebuffer;
+	}
+	glBindFramebuffer(target, framebuffer);
+}
+#endif

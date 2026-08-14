@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(uae4arm
-    VERSION 4.4.2
+    VERSION 4.3.0
     LANGUAGES C CXX
     DESCRIPTION "UAE4ARM 2026 - Amiga emulator for Android"
-    HOMEPAGE_URL "https://github.com/CrownParkComputing/uae4arm_2026"
+    HOMEPAGE_URL "https://github.com/uae4arm-dev/uae4arm_2026"
 )
 
 # Prevent in-tree builds
@@ -17,6 +17,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake ${CMAKE_MODULE_PATH})
 
 # Feature options
 option(USE_PCEM          "Use PCem for hardware emulation (no support for RISC-V)" ON)
+option(USE_PPC           "Enable PowerPC accelerator board support" OFF)
 option(USE_LIBSERIALPORT "Use LibSerialPort for serial port emulation" ON)
 option(USE_LIBENET       "Use LibENET for network emulation" ON)
 option(USE_PORTMIDI      "Use PortMidi for MIDI emulation" ON)
@@ -54,8 +55,8 @@ set(VERSION_PRE_RELEASE "" CACHE STRING "Pre-release version")
 
 # Project identity
 set(UPSTREAM_EMULATOR_NAME "Copperline")
-set(PRODUCT_DISPLAY_NAME "UAE4Arm 2026")
-set(PROJECT_COMPANY_NAME "CrownParkComputing")
+set(PRODUCT_DISPLAY_NAME "Amiga-Retro")
+set(PROJECT_COMPANY_NAME "UAE4Arm Team")
 set(PROJECT_COMPANY_NAMESPACE "com.uae4arm2026")
 # Legacy variable retained for existing packaging logic.
 set(AMIBERRY_DISPLAY_NAME "${PRODUCT_DISPLAY_NAME}")

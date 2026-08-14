@@ -214,8 +214,19 @@ static void zfile_free (struct zfile *f)
 	xfree (f);
 }
 
+static void zvolume_exit (void);
+
 void zfile_exit (void)
 {
+	/* The archive volumes go first, while the files inside them are still
+	   alive to be closed properly. They also must not outlive this call at
+	   all: everything below frees every zfile in the process, and a volume
+	   left on the static list would enter the next run holding a freed
+	   archive - get_zvolume() then reads that corpse the moment anything
+	   mounts an archive again. On Linux that is a segfault; on iOS the dead
+	   memory happens to stay readable and it is an endless spin, which is
+	   why a second game froze the app with no crash to show for it. */
+	zvolume_exit ();
 	struct zfile *l;
 	while ((l = zlist)) {
 		zlist = l->next;
@@ -2853,6 +2864,25 @@ struct zvolume *zvolume_alloc_empty (struct zvolume *prev, const TCHAR *name)
 	if (prev)
 		zv->zfdmask = prev->zfdmask;
 	return zv;
+}
+
+/* Closes every archive volume still mounted, for the end of a run.
+   zfile_fclose_archive unlinks what it frees - including any child volumes it
+   recurses into - so taking the head until the list is empty visits exactly
+   the volumes that are still alive, each once. */
+static void zvolume_exit (void)
+{
+	while (zvolume_list) {
+		struct zvolume *zv = zvolume_list;
+		zfile_fclose_archive (zv);
+		if (zvolume_list == zv) {
+			/* Should be unreachable - fclose_archive unlinks - but a list
+			   that will not shrink must not become a hang of its own, and
+			   zv is freed now so there is nothing safe to advance to. */
+			zvolume_list = NULL;
+			break;
+		}
+	}
 }
 
 static struct zvolume *get_zvolume (const TCHAR *path)

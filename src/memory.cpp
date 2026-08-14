@@ -19,6 +19,9 @@
 #include "memory.h"
 #include "rommgr.h"
 #include "zfile.h"
+#ifdef AMIBERRY
+#include "fsdb.h"
+#endif
 #include "custom.h"
 #include "newcpu.h"
 #include "autoconf.h"
@@ -48,12 +51,13 @@
 
 bool canbang;
 uaecptr highest_ram;
-static bool rom_write_enabled;
+bool rom_write_enabled;
 #ifdef JIT
 /* Set by each memory handler that does not simply access real memory. */
 int special_mem, special_mem_default;
 /* do not use get_n_addr */
 int jit_n_addr_unsafe;
+int jit_n_addr_bank_unsafe;
 #endif
 static int mem_hardreset;
 static bool roms_modified;
@@ -1179,16 +1183,10 @@ static void REGPARAM2 kickmem_lput (uaecptr addr, uae_u32 b)
 		record_rom_access(kickmem_bank.start + addr, b, 4, true);
 	}
 #endif
-	if (currprefs.rom_readwrite && rom_write_enabled) {
+	if (currprefs.rom_readwrite || rom_write_enabled) {
 		addr &= kickmem_bank.mask;
 		m = (uae_u32*)(kickmem_bank.baseaddr + addr);
 		do_put_mem_long (m, b);
-#if 0
-		if (addr == ROM_SIZE_512-4) {
-			rom_write_enabled = false;
-			write_log (_T("ROM write disabled\n"));
-		}
-#endif
 	} else if (a1000_kickstart_mode) {
 		if (addr >= 0x1000000 - ROM_SIZE_256) {
 			addr = get_a1000_addr(addr);
@@ -1211,7 +1209,7 @@ static void REGPARAM2 kickmem_wput (uaecptr addr, uae_u32 b)
 		record_rom_access(kickmem_bank.start + addr, b, 2, true);
 	}
 #endif
-	if (currprefs.rom_readwrite && rom_write_enabled) {
+	if (currprefs.rom_readwrite || rom_write_enabled) {
 		addr &= kickmem_bank.mask;
 		m = (uae_u16 *)(kickmem_bank.baseaddr + addr);
 		do_put_mem_word (m, b);
@@ -1236,7 +1234,7 @@ static void REGPARAM2 kickmem_bput (uaecptr addr, uae_u32 b)
 		record_rom_access(kickmem_bank.start + addr, b, 1, true);
 	}
 #endif
-	if (currprefs.rom_readwrite && rom_write_enabled) {
+	if (currprefs.rom_readwrite || rom_write_enabled) {
 		addr &= kickmem_bank.mask;
 		kickmem_bank.baseaddr[addr] = b;
 	} else if (a1000_kickstart_mode) {
@@ -1295,22 +1293,38 @@ MEMORY_LGET(extendedkickmem);
 MEMORY_CHECK(extendedkickmem);
 MEMORY_XLATE(extendedkickmem);
 
-static void REGPARAM2 extendedkickmem_lput (uaecptr addr, uae_u32 b)
+static void REGPARAM2 extendedkickmem_lput(uaecptr addr, uae_u32 b)
 {
-	if (currprefs.illegal_mem)
-		write_log (_T("Illegal extendedkickmem lput at %08x\n"), addr);
+	if (currprefs.rom_readwrite || rom_write_enabled) {
+		addr &= extendedkickmem_bank.mask;
+		uae_u32 *m = (uae_u32*)(extendedkickmem_bank.baseaddr + addr);
+		do_put_mem_long(m, b);
+	} else {
+		if (currprefs.illegal_mem)
+			write_log(_T("Illegal extendedkickmem lput at %08x PC=%08x\n"), addr, M68K_GETPC);
+	}
 }
-static void REGPARAM2 extendedkickmem_wput (uaecptr addr, uae_u32 b)
+static void REGPARAM2 extendedkickmem_wput(uaecptr addr, uae_u32 b)
 {
-	if (currprefs.illegal_mem)
-		write_log (_T("Illegal extendedkickmem wput at %08x\n"), addr);
+	if (currprefs.rom_readwrite || rom_write_enabled) {
+		addr &= extendedkickmem_bank.mask;
+		uae_u16 *m = (uae_u16*)(extendedkickmem_bank.baseaddr + addr);
+		do_put_mem_word(m, b);
+	} else {
+		if (currprefs.illegal_mem)
+			write_log(_T("Illegal extendedkickmem wput at %08x PC=%08x\n"), addr, M68K_GETPC);
+	}
 }
-static void REGPARAM2 extendedkickmem_bput (uaecptr addr, uae_u32 b)
+static void REGPARAM2 extendedkickmem_bput(uaecptr addr, uae_u32 b)
 {
-	if (currprefs.illegal_mem)
-		write_log (_T("Illegal extendedkickmem lput at %08x\n"), addr);
+	if (currprefs.rom_readwrite || rom_write_enabled) {
+		addr &= extendedkickmem_bank.mask;
+		extendedkickmem_bank.baseaddr[addr] = b;
+	} else {
+		if (currprefs.illegal_mem)
+			write_log(_T("Illegal extendedkickmem bput at %08x PC=%08x\n"), addr, M68K_GETPC);
+	}
 }
-
 
 static void REGPARAM3 extendedkickmem2a_lput(uaecptr, uae_u32) REGPARAM;
 static void REGPARAM3 extendedkickmem2a_wput(uaecptr, uae_u32) REGPARAM;
@@ -1333,36 +1347,69 @@ MEMORY_XLATE(extendedkickmem2b);
 
 static void REGPARAM2 extendedkickmem2a_lput (uaecptr addr, uae_u32 b)
 {
-	if (currprefs.illegal_mem)
-		write_log (_T("Illegal extendedkickmem2a lput at %08x\n"), addr);
+	if (currprefs.rom_readwrite || rom_write_enabled) {
+		addr &= extendedkickmem2a_bank.mask;
+		uae_u32 *m = (uae_u32*)(extendedkickmem2a_bank.baseaddr + addr);
+		do_put_mem_long(m, b);
+	} else {
+		if (currprefs.illegal_mem)
+			write_log (_T("Illegal extendedkickmem2a lput at %08x PC=%08x\n"), addr, M68K_GETPC);
+	}
 }
 static void REGPARAM2 extendedkickmem2a_wput (uaecptr addr, uae_u32 b)
 {
-	if (currprefs.illegal_mem)
-		write_log (_T("Illegal extendedkickmem2a wput at %08x\n"), addr);
+	if (currprefs.rom_readwrite || rom_write_enabled) {
+		addr &= extendedkickmem2a_bank.mask;
+		uae_u16 *m = (uae_u16*)(extendedkickmem2a_bank.baseaddr + addr);
+		do_put_mem_word(m, b);
+	} else {
+		if (currprefs.illegal_mem)
+			write_log (_T("Illegal extendedkickmem2a wput at %08x PC=%08x\n"), addr, M68K_GETPC);
+	}
 }
 static void REGPARAM2 extendedkickmem2a_bput (uaecptr addr, uae_u32 b)
 {
-	if (currprefs.illegal_mem)
-		write_log (_T("Illegal extendedkickmem2a lput at %08x\n"), addr);
+	if (currprefs.rom_readwrite || rom_write_enabled) {
+		addr &= extendedkickmem2a_bank.mask;
+		extendedkickmem2a_bank.baseaddr[addr] = b;
+	} else {
+		if (currprefs.illegal_mem)
+			write_log (_T("Illegal extendedkickmem2a bput at %08x PC=%08x\n"), addr, M68K_GETPC);
+	}
 }
 
 static void REGPARAM2 extendedkickmem2b_lput(uaecptr addr, uae_u32 b)
 {
-	if (currprefs.illegal_mem)
-		write_log(_T("Illegal extendedkickmem2b lput at %08x\n"), addr);
+	if (currprefs.rom_readwrite || rom_write_enabled) {
+		addr &= extendedkickmem2b_bank.mask;
+		uae_u32 *m = (uae_u32*)(extendedkickmem2b_bank.baseaddr + addr);
+		do_put_mem_long(m, b);
+	} else {
+		if (currprefs.illegal_mem)
+			write_log(_T("Illegal extendedkickmem2b lput at %08x PC=%08x\n"), addr, M68K_GETPC);
+	}
 }
 static void REGPARAM2 extendedkickmem2b_wput(uaecptr addr, uae_u32 b)
 {
-	if (currprefs.illegal_mem)
-		write_log(_T("Illegal extendedkickmem2b wput at %08x\n"), addr);
+	if (currprefs.rom_readwrite || rom_write_enabled) {
+		addr &= extendedkickmem2b_bank.mask;
+		uae_u16 *m = (uae_u16*)(extendedkickmem2b_bank.baseaddr + addr);
+		do_put_mem_word(m, b);
+	} else {
+		if (currprefs.illegal_mem)
+			write_log(_T("Illegal extendedkickmem2b wput at %08x PC=%08x\n"), addr, M68K_GETPC);
+	}
 }
 static void REGPARAM2 extendedkickmem2b_bput(uaecptr addr, uae_u32 b)
 {
-	if (currprefs.illegal_mem)
-		write_log(_T("Illegal extendedkickmem2b lput at %08x\n"), addr);
+	if (currprefs.rom_readwrite || rom_write_enabled) {
+		addr &= extendedkickmem2b_bank.mask;
+		extendedkickmem2b_bank.baseaddr[addr] = b;
+	} else {
+		if (currprefs.illegal_mem)
+			write_log(_T("Illegal extendedkickmem2b bput at %08x PC=%08x\n"), addr, M68K_GETPC);
+	}
 }
-
 
 /* Default memory access functions */
 
@@ -1545,7 +1592,7 @@ addrbank extendedkickmem2a_bank = {
 addrbank extendedkickmem2b_bank = {
 	extendedkickmem2b_lget, extendedkickmem2b_wget, extendedkickmem2b_bget,
 	extendedkickmem2b_lput, extendedkickmem2b_wput, extendedkickmem2b_bput,
-	extendedkickmem2b_xlate, extendedkickmem2b_check, NULL, _T("rom_b0"), _T("Extended 3nd Kickstart ROM"),
+	extendedkickmem2b_xlate, extendedkickmem2b_check, NULL, _T("rom_b0"), _T("Extended 3rd Kickstart ROM"),
 	extendedkickmem2b_lget, extendedkickmem2b_wget,
 	ABFLAG_ROM | ABFLAG_THREADSAFE | ABFLAG_CACHE_ENABLE_ALL | ABFLAG_DIRECTACCESS, 0, S_WRITE
 };
@@ -1791,6 +1838,12 @@ static bool load_extendedkickstart (const TCHAR *romextfile, int type)
 
 	if (romextfile[0] == '\0')
 		return false;
+#ifdef AMIBERRY
+	if (my_existsdir(romextfile)) {
+		write_log(_T("Extended ROM path '%s' is a directory, ignoring.\n"), romextfile);
+		return false;
+	}
+#endif
 #ifdef ARCADIA
 	if (is_arcadia_rom (romextfile) == ARCADIA_BIOS) {
 		extendedkickmem_type = EXTENDED_ROM_ARCADIA;
@@ -1868,22 +1921,45 @@ static bool load_extendedkickstart (const TCHAR *romextfile, int type)
 #ifndef AMIBERRY
 extern unsigned char arosrom[];
 extern unsigned int arosrom_len;
+#else
+static std::string find_kickstart_replacement_directory()
+{
+	const auto find_replacement = [](const TCHAR* directory) {
+		if (directory == nullptr || directory[0] == '\0')
+			return std::string();
+
+		std::string candidate(directory);
+		fix_trailing(candidate);
+		if (zfile_exists((candidate + "aros-ext.bin").c_str())
+			&& zfile_exists((candidate + "aros-rom.bin").c_str()))
+			return candidate;
+		return std::string();
+	};
+
+	for (const auto& directory : currprefs.path_rom.path) {
+		if (auto candidate = find_replacement(directory); !candidate.empty())
+			return candidate;
+	}
+
+	const auto default_rom_path = get_rom_path();
+	return find_replacement(default_rom_path.c_str());
+}
 #endif
 extern int seriallog;
 static bool load_kickstart_replacement(void)
 {
 #ifdef AMIBERRY
 	int arosrom_len;
-	char path[MAX_DPATH];
-	get_rom_path(path, MAX_DPATH);
-	strcat(path, "aros-ext.bin");
-	auto* arosrom = zfile_load_file(path, &arosrom_len);
-	if (arosrom == nullptr)
-	{
-		gui_message("Could not find the 'aros-ext.bin' file in the ROMs directory!");
+	const auto aros_directory = find_kickstart_replacement_directory();
+	if (aros_directory.empty()) {
+		gui_message("Could not find the 'aros-ext.bin' and 'aros-rom.bin' files in the configured ROM directories!");
 		return false;
 	}
-	struct zfile* f = zfile_fopen_data(path, arosrom_len, arosrom);
+	auto path = aros_directory + "aros-ext.bin";
+	auto* arosrom = zfile_load_file(path.c_str(), &arosrom_len);
+	if (arosrom == nullptr)
+		return false;
+	struct zfile* f = zfile_fopen_data(path.c_str(), arosrom_len, arosrom);
 	if (!f)
 	{
 		xfree(arosrom);
@@ -1908,15 +1984,11 @@ static bool load_kickstart_replacement(void)
 #ifdef AMIBERRY
 	zfile_fclose(f);
 	xfree(arosrom);
-	get_rom_path(path, MAX_DPATH);
-	strcat(path, "aros-rom.bin");
-	arosrom = zfile_load_file(path, &arosrom_len);
+	path = aros_directory + "aros-rom.bin";
+	arosrom = zfile_load_file(path.c_str(), &arosrom_len);
 	if (arosrom == nullptr)
-	{
-		gui_message("Could not find the 'aros-rom.bin' file in the ROMs directory!");
 		return false;
-	}
-	f = zfile_fopen_data(path, arosrom_len, arosrom);
+	f = zfile_fopen_data(path.c_str(), arosrom_len, arosrom);
 	if (!f)
 	{
 		xfree(arosrom);
@@ -2081,6 +2153,8 @@ static const uae_u8 romend[20] = {
 static int load_kickstart (void)
 {
 	TCHAR tmprom[MAX_DPATH];
+
+	rom_write_enabled = false;
 	cloanto_rom = 0;
 	if (!_tcscmp(currprefs.romfile, _T(":AROS"))) {
 		return load_kickstart_replacement();
@@ -2110,6 +2184,8 @@ static int load_kickstart (void)
 				int size = zfile_size32(zf);
 				zfile_fclose(f);
 				f = zf;
+				// Executable loaded ROMs are always read-write
+				rom_write_enabled = true;
 				if (size > ROM_SIZE_512) {
 					maxsize = zfile_size32(zf);
 					singlebigrom = true;
@@ -2146,7 +2222,7 @@ static int load_kickstart (void)
 				}
 				if (filesize >= ROM_SIZE_512 * 2) {
 					struct romdata *rd = getromdatabyzfile(f);
-					// CD32 with swapper upper and lower 512k?
+					// CD32 with swapped upper and lower 512k?
 					if (rd && (rd->type & ROMTYPE_KICKCD32) && rd->size == ROM_SIZE_512) {
 						kspos = 0;
 						extpos = ROM_SIZE_512;
@@ -2221,8 +2297,21 @@ static void set_direct_memory(addrbank *ab)
 		return;
 	}
 	ab->baseaddr_direct_r = ab->baseaddr;
-	if (!(ab->flags & ABFLAG_ROM))
+	if (!(ab->flags & ABFLAG_ROM)) {
+#ifdef AMIBERRY
+		// RTG VRAM needs every CPU write to pass through the bank's *_put
+		// handler so mark_dirty() records the touched pages. WinUAE gets
+		// this for free from GetWriteWatch(); Amiberry tracks dirtiness
+		// manually (see GFXMEM_PUT_FUNCTIONS in picasso96.cpp). If we wire
+		// baseaddr_direct_w here, memory_put_*() short-circuits past the
+		// put handler and mark_dirty() is never called — breaking things
+		// like IconLib's alpha-drag (WritePixelArrayAlpha) which pokes
+		// pixels one at a time straight into VRAM.
+		if (ab->flags & ABFLAG_RTG)
+			return;
+#endif
 		ab->baseaddr_direct_w = ab->baseaddr;
+	}
 }
 
 #ifndef NATMEM_OFFSET
@@ -2374,7 +2463,7 @@ bool mapped_malloc (addrbank *ab)
 	ab->baseaddr_direct_w = NULL;
 	ab->flags &= ~ABFLAG_MAPPED;
 
-	if (ab->label && ab->label[0] == '*') {
+	if (canbang && ab->label && ab->label[0] == '*') {
 		if (ab->start == 0 || ab->start == 0xffffffff) {
 			write_log(_T("mapped_malloc(*) without start address!\n"));
 			return false;
@@ -3141,11 +3230,17 @@ void memory_reset (void)
 
 	highest_ram = 0;
 	need_hardreset = false;
-	rom_write_enabled = true;
 #ifdef JIT
 	/* Start in direct n_addr mode; map_banks() will flip this if a bank
 	 * explicitly requires S_N_ADDR indirection. */
 	jit_n_addr_unsafe = 0;
+	jit_n_addr_bank_unsafe = 0;
+#if defined(CPU_x86_64) && defined(NATMEM_OFFSET)
+	if ((uintptr_t)natmem_offset + natmem_reserved_size > (uintptr_t)0x100000000ULL) {
+		write_log(_T("JIT: jit_n_addr_unsafe enabled for high x86-64 natmem at %p\n"), natmem_offset);
+		jit_n_addr_unsafe = 1;
+	}
+#endif
 #endif
 	/* Use changed_prefs, as m68k_reset is called later.  */
 	if (last_address_space_24 != changed_prefs.address_space_24)
@@ -3421,7 +3516,6 @@ void memory_reset (void)
 		commit_natmem_gaps();
 	}
 #endif
-
 	write_log (_T("memory init end\n"));
 }
 
@@ -3787,13 +3881,12 @@ void map_banks (addrbank *bank, int start, int size, int realsize)
 
 #ifdef JIT
 	if ((bank->jit_read_flag | bank->jit_write_flag) & S_N_ADDR) {
-#ifdef AMIBERRY
-		if (!jit_n_addr_unsafe) {
+		if (!jit_n_addr_bank_unsafe) {
 			write_log(_T("JIT: jit_n_addr_unsafe enabled by bank '%s' at %08x (r=%d w=%d)\n"),
 				bank->name ? bank->name : _T("<unnamed>"), start << 16, bank->jit_read_flag, bank->jit_write_flag);
 		}
-#endif
 		jit_n_addr_unsafe = 1;
+		jit_n_addr_bank_unsafe = 1;
 	}
 #endif
 

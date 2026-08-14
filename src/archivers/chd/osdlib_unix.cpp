@@ -12,6 +12,10 @@
 #include "osdcore.h"
 #include "osdlib.h"
 
+#if defined(__APPLE__)
+#include <libkern/OSCacheControl.h>
+#endif
+
 #include <SDL3/SDL.h>
 
 #include <csignal>
@@ -162,7 +166,12 @@ namespace osd {
 
 	bool invalidate_instruction_cache(void const* start, std::size_t size)
 	{
-#if !defined(SDLMAME_EMSCRIPTEN)
+#if defined(__APPLE__)
+		// Apple's compiler-rt does not ship __clear_cache, which is what
+		// __builtin___clear_cache lowers to; the platform interface is
+		// sys_icache_invalidate() instead.
+		sys_icache_invalidate(const_cast<void*>(start), size);
+#elif !defined(SDLMAME_EMSCRIPTEN)
 		char const* const begin(reinterpret_cast<char const*>(start));
 		char const* const end(begin + size);
 		__builtin___clear_cache(const_cast<char*>(begin), const_cast<char*>(end));

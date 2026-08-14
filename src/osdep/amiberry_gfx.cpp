@@ -8,6 +8,8 @@
 */
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #ifndef _WIN32
@@ -16,6 +18,7 @@
 #include <cstdio>
 #include <cmath>
 #include <iostream>
+#include <random>
 
 #include "sysdeps.h"
 #include "options.h"
@@ -28,6 +31,7 @@
 #include "picasso96.h"
 #include "gui.h"
 #include "amiberry_gfx.h"
+#include "perf_monitor.h"
 #include "sounddep/sound.h"
 #include "inputdevice.h"
 #ifdef WITH_MIDI
@@ -41,8 +45,7 @@
 #include "devices.h"
 
 #include "threaddep/thread.h"
-#include "vkbd/vkbd.h"
-#include "on_screen_joystick.h"
+// imgui_osk.h included for vkbd_allowed() - no old vkbd dependency
 #include "fsdb_host.h"
 #include "savestate.h"
 #include "uae/types.h"
@@ -60,6 +63,10 @@
 #include "gfx_prefs_check.h"
 #include "display_modes.h"
 #include "renderer_factory.h"
+#include "amiberry_input_helpers.h"
+#include "amiberry_autocrop_helpers.h"
+#include "amiberry_gfx_geometry.h"
+#include "amiberry_gui_geometry.h"
 
 #ifdef USE_OPENGL
 #include "gl_platform.h"
@@ -109,9 +116,590 @@ void update_system_pixel_format()
 	}
 }
 
+constexpr int auto_crop_base_width = 320;
+constexpr int auto_crop_normal_min_height = 180;
+constexpr int auto_crop_cinematic_min_height = 120;
+constexpr int auto_crop_pal_guard_height = 240;
+constexpr int auto_crop_ntsc_guard_height = 216;
+constexpr int auto_crop_full_width_tolerance = 4;
+constexpr int auto_crop_guard_top_base_tolerance = 8;
+constexpr int auto_crop_wide_aspect_w = 21;
+constexpr int auto_crop_wide_aspect_h = 9;
+constexpr int auto_crop_shrink_stable_frames = 6;
+constexpr int auto_crop_min_outside_pixels = 16;
+constexpr int auto_crop_horizontal_jitter_tolerance = 2;
+
+struct AutoCropVisibleState {
+	const SDL_Surface* surface = nullptr;
+	int surface_w = 0;
+	int surface_h = 0;
+	SDL_Rect source_rect{};
+	SDL_Rect visible_rect{};
+	int hres = 0;
+	int vres = 0;
+	AmiberryAutoCropBorderColors border{};
+	bool source_left_is_sprite = false;
+	bool source_right_is_sprite = false;
+	AmiberryAutoCropHorizontalEvidence sprite_zero{};
+	bool valid = false;
+};
+
+static int auto_crop_source_origin_x;
+static int auto_crop_source_origin_y;
+static bool auto_crop_source_origin_valid;
+
+static int auto_crop_rect_right(const SDL_Rect& rect)
+{
+	return rect.x + rect.w;
+}
+
+static int auto_crop_rect_bottom(const SDL_Rect& rect)
+{
+	return rect.y + rect.h;
+}
+
+static bool auto_crop_rect_equals(const SDL_Rect& a, const SDL_Rect& b)
+{
+	return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
+}
+
+static bool auto_crop_rect_contains(const SDL_Rect& outer, const SDL_Rect& inner)
+{
+	return outer.x <= inner.x
+		&& outer.y <= inner.y
+		&& auto_crop_rect_right(outer) >= auto_crop_rect_right(inner)
+		&& auto_crop_rect_bottom(outer) >= auto_crop_rect_bottom(inner);
+}
+
+static bool auto_crop_rect_grows_beyond(const SDL_Rect& rect, const SDL_Rect& previous)
+{
+	return auto_crop_rect_contains(rect, previous) && !auto_crop_rect_equals(rect, previous);
+}
+
+static bool auto_crop_rect_reveals_new_edges(const SDL_Rect& rect, const SDL_Rect& previous)
+{
+	return rect.x < previous.x
+		|| rect.y < previous.y
+		|| auto_crop_rect_right(rect) > auto_crop_rect_right(previous)
+		|| auto_crop_rect_bottom(rect) > auto_crop_rect_bottom(previous);
+}
+
+static SDL_Rect auto_crop_rect_union(const SDL_Rect& a, const SDL_Rect& b)
+{
+	const int x = std::min(a.x, b.x);
+	const int y = std::min(a.y, b.y);
+	const int right = std::max(auto_crop_rect_right(a), auto_crop_rect_right(b));
+	const int bottom = std::max(auto_crop_rect_bottom(a), auto_crop_rect_bottom(b));
+	return { x, y, right - x, bottom - y };
+}
+
+static void clamp_auto_crop_rect(const SDL_Surface* surface, SDL_Rect& rect)
+{
+	if (!surface || surface->w <= 0 || surface->h <= 0) {
+		rect = {};
+		return;
+	}
+
+	if (rect.w <= 0 || rect.h <= 0 || rect.x >= surface->w || rect.y >= surface->h) {
+		rect = { 0, 0, surface->w, surface->h };
+		return;
+	}
+
+	if (rect.x < 0) {
+		rect.w += rect.x;
+		rect.x = 0;
+	}
+	if (rect.y < 0) {
+		rect.h += rect.y;
+		rect.y = 0;
+	}
+	if (rect.w <= 0 || rect.h <= 0) {
+		rect = { 0, 0, surface->w, surface->h };
+		return;
+	}
+	if (auto_crop_rect_right(rect) > surface->w) {
+		rect.w = surface->w - rect.x;
+	}
+	if (auto_crop_rect_bottom(rect) > surface->h) {
+		rect.h = surface->h - rect.y;
+	}
+}
+
+static bool get_auto_crop_pixel_buffer(const SDL_Surface* surface,
+	AmiberryAutoCropPixelBuffer& buffer)
+{
+	if (!surface || !surface->pixels || surface->w <= 0 || surface->h <= 0) {
+		return false;
+	}
+	const int bytes_per_pixel = SDL_BYTESPERPIXEL(surface->format);
+	if (bytes_per_pixel <= 0 || bytes_per_pixel > static_cast<int>(sizeof(uint32_t))) {
+		return false;
+	}
+	const SDL_PixelFormatDetails* details = SDL_GetPixelFormatDetails(surface->format);
+	if (!details) {
+		return false;
+	}
+	buffer = {
+		static_cast<const uint8_t*>(surface->pixels),
+		surface->w,
+		surface->h,
+		surface->pitch,
+		bytes_per_pixel,
+		details->Rmask | details->Gmask | details->Bmask
+	};
+	return true;
+}
+
+static void expand_auto_crop_rect_to_visible_content(const SDL_Surface* surface,
+	SDL_Rect& rect, const bool interlaced, AmiberryAutoCropScanState& scan_state)
+{
+	clamp_auto_crop_rect(surface, rect);
+	if (rect.w <= 0 || rect.h <= 0) {
+		return;
+	}
+
+	AmiberryAutoCropPixelBuffer buffer;
+	if (!get_auto_crop_pixel_buffer(surface, buffer)) {
+		return;
+	}
+	AmiberryAutoCropRect visible_rect = { rect.x, rect.y, rect.w, rect.h };
+	if (amiberry_auto_crop_expand_to_visible_content(buffer,
+		auto_crop_min_outside_pixels, interlaced, visible_rect, scan_state)) {
+		rect = { visible_rect.x, visible_rect.y, visible_rect.w, visible_rect.h };
+	}
+}
+
+static void preserve_auto_crop_visible_content(const SDL_Surface* surface,
+	const SDL_Rect& source_rect, SDL_Rect& visible_rect, const int hres,
+	const int vres, const AmiberryAutoCropBorderColors& border,
+	const bool source_left_is_sprite, const bool source_right_is_sprite,
+	const AmiberryAutoCropHorizontalEvidence& sprite_zero,
+	AutoCropVisibleState& state, const bool reset)
+{
+	if (!surface || surface->w <= 0 || surface->h <= 0
+		|| source_rect.w <= 0 || source_rect.h <= 0
+		|| visible_rect.w <= 0 || visible_rect.h <= 0) {
+		state = {};
+		return;
+	}
+
+	const bool presentation_changed = state.surface != surface
+		|| state.surface_w != surface->w
+		|| state.surface_h != surface->h
+		|| state.hres != hres
+		|| state.vres != vres;
+	const bool border_changed = amiberry_auto_crop_border_state_changed(
+		state.border, border);
+	if (!reset && state.valid && !presentation_changed && !border_changed) {
+		const AmiberryAutoCropRect previous_source = {
+			state.source_rect.x, state.source_rect.y,
+			state.source_rect.w, state.source_rect.h
+		};
+		const AmiberryAutoCropRect current_source = {
+			source_rect.x, source_rect.y, source_rect.w, source_rect.h
+		};
+		const AmiberryAutoCropRect previous_rect = {
+			state.visible_rect.x, state.visible_rect.y,
+			state.visible_rect.w, state.visible_rect.h
+		};
+		AmiberryAutoCropRect current_rect = {
+			visible_rect.x, visible_rect.y, visible_rect.w, visible_rect.h
+		};
+		const int horizontal_tolerance = auto_crop_horizontal_jitter_tolerance
+			<< std::clamp(hres, RES_LORES, RES_SUPERHIRES);
+		const int vertical_tolerance = auto_crop_guard_top_base_tolerance
+			<< std::clamp(vres, VRES_NONDOUBLE, VRES_DOUBLE);
+		AmiberryAutoCropPixelBuffer buffer;
+		if (amiberry_auto_crop_should_preserve_vertical_translation(
+			current_source, previous_rect, current_rect, vertical_tolerance)) {
+			// A prior frame established a same-size vertical translation. Do not
+			// union it back with the unchanged source on the following frame.
+			visible_rect = state.visible_rect;
+			return;
+		}
+		if (auto_crop_rect_equals(state.source_rect, source_rect)
+			&& border.count > 0 && get_auto_crop_pixel_buffer(surface, buffer)
+			&& amiberry_auto_crop_stabilize_vertical_transition(
+				buffer, auto_crop_min_outside_pixels, previous_rect, current_rect,
+				border, vertical_tolerance)) {
+			visible_rect = { current_rect.x, current_rect.y,
+				current_rect.w, current_rect.h };
+			state.visible_rect = visible_rect;
+			state.source_left_is_sprite = source_left_is_sprite;
+			state.source_right_is_sprite = source_right_is_sprite;
+			state.sprite_zero = sprite_zero;
+			return;
+		}
+		if (amiberry_auto_crop_should_preserve_horizontal_jitter(
+			previous_source, current_source, previous_rect, current_rect,
+			state.source_left_is_sprite, state.source_right_is_sprite,
+			source_left_is_sprite, source_right_is_sprite, horizontal_tolerance)
+			|| amiberry_auto_crop_should_preserve_sprite_zero_scan_jitter(
+				previous_source, current_source, previous_rect, current_rect,
+				state.sprite_zero, sprite_zero, horizontal_tolerance)) {
+			// Hardware sprites can move a crop edge by a pixel or two as they
+			// reach or leave a screen edge. Keep the previous final crop so
+			// pointer motion does not pan or resize the presentation.
+			visible_rect = state.visible_rect;
+			return;
+		}
+	}
+
+	const bool source_changed = presentation_changed
+		|| !auto_crop_rect_equals(state.source_rect, source_rect)
+		|| border_changed;
+	if (reset || source_changed || !state.valid) {
+		state = {};
+		state.surface = surface;
+		state.surface_w = surface->w;
+		state.surface_h = surface->h;
+		state.source_rect = source_rect;
+		state.visible_rect = visible_rect;
+		state.hres = hres;
+		state.vres = vres;
+		state.border = border;
+		state.source_left_is_sprite = source_left_is_sprite;
+		state.source_right_is_sprite = source_right_is_sprite;
+		state.sprite_zero = sprite_zero;
+		state.valid = true;
+		return;
+	}
+
+	// Pixel content beyond DIW/bitplane limits may be intermittent (sprites,
+	// raster effects, or blank frames between screens). Once observed, retain
+	// those bounds until the hardware geometry or border color changes.
+	visible_rect = auto_crop_rect_union(visible_rect, state.visible_rect);
+	clamp_auto_crop_rect(surface, visible_rect);
+	state.visible_rect = visible_rect;
+	state.source_left_is_sprite = source_left_is_sprite;
+	state.source_right_is_sprite = source_right_is_sprite;
+	state.sprite_zero = sprite_zero;
+	if (border.count > 0) {
+		state.border = border;
+	}
+}
+
+static int auto_crop_minimum_width(const int hres)
+{
+	const int clamped_hres = std::clamp(hres, RES_LORES, RES_SUPERHIRES);
+	return auto_crop_base_width << clamped_hres;
+}
+
+void auto_crop_display_dimensions(const int w, const int h, const int hres,
+	const int vres, const bool is_ntsc, int& display_w, int& display_h)
+{
+	display_w = w;
+	display_h = h;
+
+	if (vres == VRES_NONDOUBLE) {
+		if (hres == RES_HIRES || hres == RES_SUPERHIRES) {
+			display_h *= 2;
+		}
+	} else {
+		if (hres == RES_LORES) {
+			display_w *= 2;
+		}
+	}
+
+	if (is_ntsc) {
+		display_h = display_h * 6 / 5;
+	}
+}
+
+static bool auto_crop_uses_cinematic_minimum(const SDL_Rect& rect,
+	const int hres, const int vres, const bool is_ntsc)
+{
+	const int clamped_hres = std::clamp(hres, RES_LORES, RES_SUPERHIRES);
+	const int min_w = auto_crop_base_width << clamped_hres;
+	const int width_tolerance = auto_crop_full_width_tolerance << clamped_hres;
+	if (rect.w < min_w - width_tolerance || rect.h <= 0) {
+		return false;
+	}
+
+	int display_w, display_h;
+	auto_crop_display_dimensions(rect.w, rect.h, hres, vres, is_ntsc, display_w, display_h);
+	return display_h > 0 && display_w * auto_crop_wide_aspect_h >= display_h * auto_crop_wide_aspect_w;
+}
+
+static int auto_crop_minimum_height(const bool use_cinematic_minimum, const int vres)
+{
+	const int base_height = use_cinematic_minimum ? auto_crop_cinematic_min_height : auto_crop_normal_min_height;
+	return vres > VRES_NONDOUBLE ? base_height << 1 : base_height;
+}
+
+static int auto_crop_guard_height(const int vres, const bool is_ntsc)
+{
+	const int base_height = is_ntsc ? auto_crop_ntsc_guard_height : auto_crop_pal_guard_height;
+	return vres > VRES_NONDOUBLE ? base_height << 1 : base_height;
+}
+
+static int auto_crop_guard_top_tolerance(const int vres)
+{
+	return vres > VRES_NONDOUBLE ? auto_crop_guard_top_base_tolerance << 1 : auto_crop_guard_top_base_tolerance;
+}
+
+static int auto_crop_expanded_origin(const int pos, const int size, const int min_size,
+	const int limit, const int preferred_pos, const bool has_preferred)
+{
+	if (min_size <= size || limit <= 0) {
+		return pos;
+	}
+
+	const int expanded_size = std::min(min_size, limit);
+	const int min_origin = pos + size - expanded_size;
+	const int max_origin = pos;
+	const int centered_origin = pos - (expanded_size - size) / 2;
+	const int wanted_origin = has_preferred ? preferred_pos : centered_origin;
+	int origin = std::clamp(wanted_origin, min_origin, max_origin);
+	origin = std::clamp(origin, 0, limit - expanded_size);
+	return origin;
+}
+
+static void expand_auto_crop_rect_to_minimum(const SDL_Surface* surface, SDL_Rect& rect,
+	const int hres, const int vres, const bool is_ntsc, const SDL_Rect* preferred_rect)
+{
+	if (!surface || surface->w <= 0 || surface->h <= 0 || rect.w <= 0 || rect.h <= 0) {
+		return;
+	}
+
+	const int surface_w = surface->w;
+	const int surface_h = surface->h;
+	const int min_w = std::min(auto_crop_minimum_width(hres), surface_w);
+	const bool use_cinematic_minimum = auto_crop_uses_cinematic_minimum(rect, hres, vres, is_ntsc);
+	const int min_h = std::min(auto_crop_minimum_height(use_cinematic_minimum, vres), surface_h);
+	const int preferred_x = preferred_rect ? preferred_rect->x : 0;
+	const int preferred_y = preferred_rect ? preferred_rect->y : 0;
+	const bool has_preferred = preferred_rect && preferred_rect->w > 0 && preferred_rect->h > 0;
+
+	const int x = auto_crop_expanded_origin(rect.x, rect.w, min_w, surface_w, preferred_x, has_preferred);
+	const int y = auto_crop_expanded_origin(rect.y, rect.h, min_h, surface_h, preferred_y,
+		has_preferred && !use_cinematic_minimum);
+	rect.x = x;
+	rect.y = y;
+	rect.w = std::max(rect.w, min_w);
+	rect.h = std::max(rect.h, min_h);
+	clamp_auto_crop_rect(surface, rect);
+}
+
+static void preserve_auto_crop_bottom_edge(const SDL_Surface* surface, SDL_Rect& rect,
+	const int vres, const bool is_ntsc, const SDL_Rect& guard_rect, const bool guard_valid)
+{
+	if (!surface || surface->h <= 0 || rect.h <= 0 || !guard_valid || guard_rect.h <= 0) {
+		return;
+	}
+
+	const int surface_h = surface->h;
+	if (rect.y > guard_rect.y + auto_crop_guard_top_tolerance(vres)) {
+		return;
+	}
+
+	const int guard_h = std::min(auto_crop_guard_height(vres, is_ntsc), surface_h);
+	if (rect.h >= guard_h) {
+		return;
+	}
+
+	const int previous_bottom = auto_crop_rect_bottom(guard_rect);
+	const int rect_bottom = auto_crop_rect_bottom(rect);
+	if (rect_bottom >= previous_bottom) {
+		return;
+	}
+
+	const int guarded_bottom = std::min({ previous_bottom, surface_h, rect.y + guard_h });
+	if (guarded_bottom > rect_bottom) {
+		rect.h = guarded_bottom - rect.y;
+		clamp_auto_crop_rect(surface, rect);
+	}
+}
+
+void apply_auto_crop_policy(const SDL_Surface* surface, SDL_Rect& rect,
+	const int hres, const int vres, const bool is_ntsc, AutoCropState& state, const bool reset)
+{
+	clamp_auto_crop_rect(surface, rect);
+	if (rect.w <= 0 || rect.h <= 0) {
+		return;
+	}
+
+	const int surface_w = surface->w;
+	const int surface_h = surface->h;
+	const bool surface_changed = state.surface != surface
+		|| state.surface_w != surface_w
+		|| state.surface_h != surface_h;
+	if (reset || surface_changed || !state.valid) {
+		state = {};
+		state.surface = surface;
+		state.surface_w = surface_w;
+		state.surface_h = surface_h;
+		expand_auto_crop_rect_to_minimum(surface, rect, hres, vres, is_ntsc, nullptr);
+		state.rect = rect;
+		state.guard_rect = rect;
+		state.valid = true;
+		state.guard_valid = true;
+		return;
+	}
+
+	expand_auto_crop_rect_to_minimum(surface, rect, hres, vres, is_ntsc, &state.rect);
+	preserve_auto_crop_bottom_edge(surface, rect, vres, is_ntsc, state.guard_rect, state.guard_valid);
+	if (auto_crop_rect_equals(rect, state.rect)) {
+		state.shrink_frames = 0;
+		state.pending_valid = false;
+		return;
+	}
+
+	if (auto_crop_rect_grows_beyond(rect, state.rect)) {
+		state.rect = rect;
+		state.guard_rect = rect;
+		state.guard_valid = true;
+		state.shrink_frames = 0;
+		state.pending_valid = false;
+		return;
+	}
+
+	if (auto_crop_rect_reveals_new_edges(rect, state.rect)) {
+		rect = auto_crop_rect_union(rect, state.rect);
+		clamp_auto_crop_rect(surface, rect);
+		state.rect = rect;
+		state.guard_rect = rect;
+		state.guard_valid = true;
+		state.shrink_frames = 0;
+		state.pending_valid = false;
+		return;
+	}
+
+	if (!state.pending_valid || !auto_crop_rect_equals(rect, state.pending_rect)) {
+		state.pending_rect = rect;
+		state.pending_valid = true;
+		state.shrink_frames = 1;
+	} else {
+		state.shrink_frames++;
+	}
+
+	if (state.shrink_frames >= auto_crop_shrink_stable_frames) {
+		state.rect = rect;
+		state.shrink_frames = 0;
+		state.pending_valid = false;
+	} else {
+		rect = state.rect;
+	}
+}
+
 static int dx = 0, dy = 0;
 const char* sdl_video_driver;
 bool kmsdrm_detected = false;
+bool no_wm_detected = false;
+
+// Detect when we're running without a window manager. This covers two cases:
+//   1. KMSDRM — inherently WM-less (console framebuffer / direct-to-display)
+//   2. x11 without a WM — e.g. kiosk-style setups like Batocera
+// Without a WM, separate windows can't be properly focus/stacking-managed,
+// so we must reuse a single shared window for both emulation and GUI
+// (see #1962).
+//
+// Self-contained: probes SDL's current video driver itself, so callers
+// don't need to set kmsdrm_detected first. Sets BOTH kmsdrm_detected and
+// no_wm_detected when KMSDRM is the driver. Idempotent — once a definitive
+// detection has been made, subsequent calls are no-ops. If SDL video isn't
+// initialized yet (driver is null), the call is a no-op so a later call
+// can retry.
+//
+// Override via AMIBERRY_NO_WM env var: "1" forces on, "0" forces off.
+// KMSDRM is never overridable.
+void detect_no_wm()
+{
+	static bool already_detected = false;
+	if (already_detected) return;
+
+	const char* driver = SDL_GetCurrentVideoDriver();
+	if (!driver) {
+		// SDL video not yet initialized — don't lock in a (false) result;
+		// allow a subsequent call to do real detection.
+		return;
+	}
+
+	// KMSDRM is always WM-less by definition — not overridable, as the
+	// emulator physically cannot run with separate windows under KMSDRM.
+	if (strcmpi(driver, "KMSDRM") == 0) {
+		kmsdrm_detected = true;
+		no_wm_detected = true;
+		already_detected = true;
+		return;
+	}
+
+	already_detected = true;
+
+	// Explicit override for non-KMSDRM platforms. Useful when the heuristic
+	// below gets it wrong (e.g. a user wants to test shared-window mode on
+	// a standard desktop, or Batocera ships a build that does export some
+	// session env var).
+	const char* override_env = getenv("AMIBERRY_NO_WM");
+	if (override_env) {
+		if (strcmp(override_env, "1") == 0) {
+			no_wm_detected = true;
+			write_log("AMIBERRY_NO_WM=1: forcing shared-window mode (driver=%s)\n", driver);
+			return;
+		}
+		if (strcmp(override_env, "0") == 0) {
+			write_log("AMIBERRY_NO_WM=0: skipping no-WM auto-detection (driver=%s)\n", driver);
+			return;
+		}
+	}
+
+	// Auto-detection: x11 driver without any desktop-session env vars set.
+	// Naturally skips on macOS/Windows/Wayland — only bare x11 reaches the
+	// heuristic. Note: this is a heuristic, not a definitive WM probe; users
+	// on minimalist x11 setups (xinit + twm/fvwm/xmonad without any session
+	// vars exported) can be misclassified — they should set AMIBERRY_NO_WM=0
+	// to opt out. A more rigorous _NET_SUPPORTING_WM_CHECK probe via X11
+	// interop could replace this if the heuristic proves troublesome.
+	if (strcmpi(driver, "x11") != 0)
+		return;
+
+	auto env_set = [](const char* name) {
+		const char* v = getenv(name);
+		return v && *v;
+	};
+
+	// Common desktop-session / WM env vars.
+	if (env_set("XDG_CURRENT_DESKTOP") || env_set("DESKTOP_SESSION")
+		|| env_set("GNOME_DESKTOP_SESSION_ID") || env_set("KDE_FULL_SESSION")
+		|| env_set("XFCE4_SESSION") || env_set("MATE_DESKTOP_SESSION_ID")
+		|| env_set("LXQT_SESSION_CONFIG") || env_set("SWAYSOCK")
+		|| env_set("I3SOCK") || env_set("HYPRLAND_INSTANCE_SIGNATURE")) {
+		return;
+	}
+
+	no_wm_detected = true;
+	write_log("x11 without window manager detected (driver=%s) — using shared-window mode for GUI (set AMIBERRY_NO_WM=0 to disable)\n", driver);
+}
+
+bool get_kmsdrm_drawable_size(SDL_Window* window, int* width, int* height)
+{
+	if (!kmsdrm_detected)
+		return false;
+
+	int window_width = 0;
+	int window_height = 0;
+	SDL_GetWindowSize(window, &window_width, &window_height);
+
+	// SDL's KMSDRM pixel size can include a display scale that must not be
+	// applied to the direct-to-display output. Check once per window so the
+	// diagnostic does not add another SDL query to every rendered frame.
+	static SDL_Window* checked_window = nullptr;
+	if (checked_window != window) {
+		int pixel_width = 0;
+		int pixel_height = 0;
+		SDL_GetWindowSizeInPixels(window, &pixel_width, &pixel_height);
+		if ((pixel_width != 0 && pixel_width != window_width) ||
+			(pixel_height != 0 && pixel_height != window_height)) {
+			write_log("KMSDRM: using window size as drawable size (window=%dx%d pixels=%dx%d)\n",
+				window_width, window_height, pixel_width, pixel_height);
+		}
+		checked_window = window;
+	}
+
+	*width = window_width;
+	*height = window_height;
+	return true;
+}
 
 SDL_PixelFormat pixel_format = SDL_PIXELFORMAT_ABGR8888;
 
@@ -123,6 +711,16 @@ static SDL_Surface* current_screenshot = nullptr;
 std::string screenshot_filename;
 FILE* screenshot_file = nullptr;
 int delay_savestate_frame = 0;
+
+static std::string make_gui_runtime_id()
+{
+	const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+	const auto random = std::random_device{}();
+	return std::to_string(now) + "-" + std::to_string(random);
+}
+
+static AmiberryGuiGeometryState gui_geometry_state(make_gui_runtime_id());
+static std::atomic<std::uint64_t> gui_capture_sequence{0};
 #endif
 
 struct MultiDisplay Displays[MAX_DISPLAYS + 1];
@@ -178,6 +776,43 @@ float amiberry_getrefreshrate(const int monid)
 	return mode->refresh_rate;
 }
 
+// Returns the SDL_DisplayID (as uint32_t) of the display hosting the emulator
+// window (tracks window drags across monitors), falling back to the configured
+// display, then to SDL display 0. Returns 0 if nothing is usable yet.
+uint32_t amiberry_get_active_display_id(const int monid)
+{
+	if (monid >= 0 && monid < MAX_AMIGAMONITORS) {
+		const AmigaMonitor* mon = &AMonitors[monid];
+		if (mon->amiga_window) {
+			const SDL_DisplayID id = SDL_GetDisplayForWindow(mon->amiga_window);
+			if (id)
+				return static_cast<uint32_t>(id);
+		}
+	}
+	const struct MultiDisplay* md = getdisplay(&currprefs, monid >= 0 ? monid : 0);
+	if (md && md->display_id)
+		return static_cast<uint32_t>(md->display_id);
+	return 0;
+}
+
+// Returns the current refresh rate for the given SDL_DisplayID, or 0.0f if
+// the display isn't known to SDL. Separated from id resolution so callers can
+// key a cache on the display id cheaply without re-probing the refresh.
+float amiberry_get_refreshrate_for_display_id(const uint32_t display_id)
+{
+	if (!display_id)
+		return 0.0f;
+	const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(static_cast<SDL_DisplayID>(display_id));
+	return mode ? mode->refresh_rate : 0.0f;
+}
+
+// Returns the current refresh rate of the display actually hosting the
+// emulator window. Retained for callers that don't track the display id.
+float amiberry_get_active_display_refreshrate(const int monid)
+{
+	return amiberry_get_refreshrate_for_display_id(amiberry_get_active_display_id(monid));
+}
+
 void GetWindowRect(SDL_Window* window, SDL_Rect* rect)
 {
 	SDL_GetWindowPosition(window, &rect->x, &rect->y);
@@ -209,8 +844,7 @@ bool MonitorFromPoint(const SDL_Point pt)
 #ifdef AMIBERRY
 bool vkbd_allowed(const int monid)
 {
-	struct AmigaMonitor* mon = &AMonitors[monid];
-	return currprefs.vkbd_enabled && !mon->screen_is_picasso;
+	return currprefs.vkbd_enabled;
 }
 
 static bool amiberry_renderframe(const int monid, int mode, int immediate)
@@ -229,14 +863,16 @@ static bool amiberry_renderframe(const int monid, int mode, int immediate)
 	{
 		update_leds(monid);
 	}
-#ifdef WITH_THREADED_CPU
+	// Consume the zero-copy refresh request. The flag is set by picasso96
+	// state changes (SetDisplay, SetPanning) and forces the host surface
+	// binding to follow the current Amiga VRAM address. This is orthogonal
+	// to WITH_THREADED_CPU so must not be wrapped by that define.
 	if (ad->picasso_zero_copy_update_needed) {
 		const_cast<amigadisplay*>(ad)->picasso_zero_copy_update_needed = false;
-		if (currprefs.rtg_zerocopy) {
+		if (p96_is_zero_copy_enabled(monid)) {
 			target_graphics_buffer_update(monid, true);
 		}
 	}
-#endif
 	IRenderer* renderer = get_renderer(monid);
 	return renderer ? renderer->render_frame(monid, mode, immediate) : false;
 }
@@ -291,6 +927,25 @@ void getgfxoffset(const int monid, float* dxp, float* dyp, float* mxp, float* my
 	*myp = 1.0f / my;
 }
 
+bool getgfxsourceorigin(const int monid, int* xp, int* yp)
+{
+	*xp = 0;
+	*yp = 0;
+#ifdef AMIBERRY
+	const amigadisplay* ad = &adisplays[monid];
+	if (monid == 0 && currprefs.gfx_auto_crop && !ad->picasso_on
+		&& auto_crop_source_origin_valid) {
+		// Mousehack needs the native display origin before auto-crop policy
+		// expansion. The final renderer crop may include extra guard area,
+		// which is presentation padding rather than part of the Amiga screen.
+		*xp = auto_crop_source_origin_x;
+		*yp = auto_crop_source_origin_y;
+		return true;
+	}
+#endif
+	return false;
+}
+
 
 bool render_screen(const int monid, const int mode, const bool immediate)
 {
@@ -315,7 +970,9 @@ bool render_screen(const int monid, const int mode, const bool immediate)
 			return mon->render_ok;
 		}
 	}
+	const frame_time_t perf_t0 = read_processor_time();
 	mon->render_ok = amiberry_renderframe(monid, mode, immediate);
+	perf_monitor_add_render(read_processor_time() - perf_t0);
 	return mon->render_ok;
 }
 
@@ -380,6 +1037,55 @@ float calculate_desired_aspect(const AmigaMonitor* mon)
 	return 4.0f / 3.0f;
 }
 
+float calculate_rtg_integer_scale(int render_width, int render_height,
+	int src_width, int src_height, int scale_limit)
+{
+	if (render_width <= 0 || render_height <= 0 || src_width <= 0 || src_height <= 0) {
+		return 1.0f;
+	}
+
+	if (scale_limit < 0) {
+		scale_limit = 0;
+	} else if (scale_limit > 3) {
+		scale_limit = 3;
+	}
+
+	const int scale_unit = 1 << scale_limit;
+	const float fdivx = static_cast<float>(render_width) / static_cast<float>(src_width);
+	const float fdivy = static_cast<float>(render_height) / static_cast<float>(src_height);
+	float scale = (fdivx < 1.0f || fdivy < 1.0f) ? 1.0f : std::min(fdivx, fdivy);
+
+	const int scale_steps = static_cast<int>(scale * scale_unit);
+	scale = static_cast<float>(scale_steps) / static_cast<float>(scale_unit);
+
+	if (fdivx < 1.0f || fdivy < 1.0f) {
+		float adjust = 0.5f / static_cast<float>(scale_unit);
+		scale = 1.0f;
+		float previous_scale = scale;
+
+		for (;;) {
+			if (scale <= adjust) {
+				adjust /= 2.0f;
+				if (adjust < 0.10f) {
+					break;
+				}
+			}
+			scale -= adjust;
+			if (scale < 0.10f) {
+				scale = 0.10f;
+				break;
+			}
+			if (fdivx > 2.0f * scale || fdivy > 2.0f * scale) {
+				scale = previous_scale;
+				break;
+			}
+			previous_scale = scale;
+		}
+	}
+
+	return scale;
+}
+
 void show_screen(const int monid, int mode)
 {
 	// Skip all rendering if headless mode
@@ -405,7 +1111,9 @@ void show_screen(const int monid, int mode)
 		return;
 	}
 
+	const frame_time_t perf_t0 = read_processor_time();
 	renderer->present_frame(monid, mode);
+	perf_monitor_add_present(read_processor_time() - perf_t0);
 	mon->render_ok = false;
 }
 
@@ -489,12 +1197,23 @@ void unlockscr(struct vidbuffer* vb, int y_start, int y_end)
 			if (surface && clamped_y_end >= surface->h) {
 				clamped_y_end = surface->h - 1;
 			}
-			
+
+			// Clamp width to the current surface width as well.  width_allocated
+			// is set by lockscr from the surface that was current at lock time; if
+			// the surface has since been recreated (e.g. RTG→native switch in
+			// doInit), width_allocated may still reflect the old, larger surface.
+			// An unclamped dirty_rect.w feeds SDL_UpdateTexture / glTexSubImage2D
+			// which read past the end of the new surface's pixel buffer.
+			int clamped_w = vb->width_allocated;
+			if (surface && clamped_w > surface->w) {
+				clamped_w = surface->w;
+			}
+
 			if (clamped_y_end >= y_start) {
 				SDL_Rect dirty_rect;
 				dirty_rect.x = 0;
 				dirty_rect.y = y_start;
-				dirty_rect.w = vb->width_allocated;
+				dirty_rect.w = clamped_w;
 				dirty_rect.h = clamped_y_end - y_start + 1;
 
 				add_dirty_rect(mon, dirty_rect);
@@ -558,11 +1277,8 @@ static uae_u8* gfx_lock_picasso2(int monid, bool fullupdate)
 		return nullptr;
 	}
 
-	if (currprefs.rtg_zerocopy) {
-		uae_u8* rtg_vram = p96_get_render_buffer_pointer(monid);
-		if (rtg_vram != nullptr && surface->pixels == rtg_vram) {
-			return nullptr;
-		}
+	if (p96_is_zero_copy_surface(monid, surface->pixels)) {
+		return nullptr;
 	}
 
 
@@ -825,6 +1541,9 @@ void gfx_set_picasso_state(const int monid, const int on)
 
 	if (mon->screen_is_picasso == on)
 		return;
+	amiberry_gui_geometry_invalidate(monid);
+	// Absolute coordinates from the previous display mode use a different coordinate space.
+	input_mousehack_invalidate_last_abs_position();
 	mon->screen_is_picasso = on;
 #ifdef RETROPLATFORM
 	rp_rtg_switch();
@@ -958,7 +1677,7 @@ int graphics_init(bool mousecapture)
 	if (currprefs.headless) {
 		write_log("Headless mode: Skipping graphics initialization.\n");
 		g_renderer->vsync_state().wait_vblank_timestamp = read_processor_time();
-		update_pixel_format();
+		update_pixel_format(0);
 		if (amiga_surface == nullptr) {
 			amiga_surface = SDL_CreateSurface(1920, 1080, pixel_format);
 			if (!amiga_surface) {
@@ -971,7 +1690,7 @@ int graphics_init(bool mousecapture)
 	}
 
 	g_renderer->vsync_state().wait_vblank_timestamp = read_processor_time();
-	update_pixel_format();
+	update_pixel_format(0);
 	AMonitors[0].active = true;
 	gfxmode_reset(0);
 	if (open_windows(&AMonitors[0], mousecapture, false)) {
@@ -979,6 +1698,10 @@ int graphics_init(bool mousecapture)
 			gfxmode_reset(currprefs.monitoremu_mon);
 			open_windows(&AMonitors[currprefs.monitoremu_mon], mousecapture, false);
 		}
+		// Prime the hw VSync pacing cache on the main thread — the emulator
+		// thread reads the cached value but must not call SDL video APIs
+		// directly (SDL3 documents them as main-thread-only).
+		amiberry_hw_vsync_pacing_invalidate();
 		return true;
 	}
 	return false;
@@ -994,6 +1717,7 @@ int graphics_setup()
 
 void graphics_leave()
 {
+	amiberry_gui_geometry_invalidate();
 	for (int i = 0; i < MAX_AMIGAMONITORS; i++)
 	{
 		close_windows(&AMonitors[i], true);
@@ -1052,10 +1776,14 @@ static void configure_render_rects(const int monid, const int w, const int h, co
 			(currprefs.gfx_manual_crop_height > 0) ? currprefs.gfx_manual_crop_height : h
 		};
 		int crop_scaled_w, crop_scaled_h;
-		compute_scaled_dimensions(cr.w, cr.h, false, crop_scaled_w, crop_scaled_h);
-		if (currprefs.gfx_correct_aspect == 0) {
-			crop_scaled_w = sdl_mode.w;
-			crop_scaled_h = sdl_mode.h;
+		if (currprefs.gfx_correct_aspect) {
+			compute_scaled_dimensions(cr.w, cr.h, false, crop_scaled_w, crop_scaled_h);
+		} else {
+			// Uncorrected means the crop's own pixel aspect, matching
+			// calculate_desired_aspect(). Filling the window is Stretch's job,
+			// and sdl_mode is the display mode, which is wrong in a window anyway.
+			crop_scaled_w = cr.w;
+			crop_scaled_h = cr.h;
 		}
 		renderer->crop_aspect = (crop_scaled_h > 0)
 			? static_cast<float>(crop_scaled_w) / static_cast<float>(crop_scaled_h) : 0.0f;
@@ -1063,6 +1791,33 @@ static void configure_render_rects(const int monid, const int w, const int h, co
 	else if (!currprefs.gfx_auto_crop) {
 		rq = { dx, dy, scaled_w, scaled_h };
 		cr = { dx, dy, w, h };
+		renderer->crop_aspect = 0.0f;
+		// WinUAE parity (od-win32/win32_scaler.cpp, AUTOSCALE_STATIC_NOMINAL):
+		// in full-window mode scale from the nominal visible area instead of
+		// the full overscan frame, presented at 4:3.
+		if (isfullscreen() < 0 && currprefs.gfx_overscanmode < OVERSCANMODE_ULTRA) {
+			const int hs = currprefs.gfx_resolution;
+			const int vs = currprefs.gfx_vresolution;
+			int cx = 28 << hs;
+			int cy = 10 << vs;
+			int cw = w - (40 << hs);
+			int ch = h - (20 << vs);
+			if (currprefs.gfx_overscanmode == OVERSCANMODE_BROADCAST) {
+				cx -= 4 << hs;
+				cy -= 2 << vs;
+				cw += 8 << hs;
+				ch += 4 << vs;
+			} else if (currprefs.gfx_overscanmode == OVERSCANMODE_EXTREME) {
+				cx -= 7 << hs;
+				cy -= 10 << vs;
+				cw += 14 << hs;
+				ch += 20 << vs;
+			}
+			if (cx >= 0 && cy >= 0 && cw > 0 && ch > 0 && cx + cw <= w && cy + ch <= h) {
+				cr = { cx, cy, cw, ch };
+				renderer->crop_aspect = 4.0f / 3.0f;
+			}
+		}
 	}
 }
 
@@ -1081,9 +1836,9 @@ bool target_graphics_buffer_update(const int monid, const bool force)
 	if (mon->screen_is_picasso) {
 		w = state->Width;
 		h = state->Height;
-		update_pixel_format();
+		update_pixel_format(monid);
 	} else {
-		update_pixel_format();
+		update_pixel_format(monid);
 		vb = avidinfo->inbuffer;
 		vbout = avidinfo->outbuffer;
 		if (!vb) {
@@ -1095,7 +1850,7 @@ bool target_graphics_buffer_update(const int monid, const bool force)
 
 	if (!force && oldtex_w[monid] == w && oldtex_h[monid] == h && oldtex_rtg[monid] == mon->screen_is_picasso && surface_ref && surface_ref->format == pixel_format) {
 		bool skip_update = true;
-		if (mon->screen_is_picasso) {
+		if (mon->screen_is_picasso && p96_is_zero_copy_enabled(mon->monitor_id)) {
 			uae_u8* rtg_ptr = p96_get_render_buffer_pointer(mon->monitor_id);
 			if (rtg_ptr && surface_ref->pixels != rtg_ptr) {
 				skip_update = false;
@@ -1125,7 +1880,8 @@ bool target_graphics_buffer_update(const int monid, const bool force)
 		oldtex_w[monid] = w;
 		oldtex_h[monid] = h;
 		oldtex_rtg[monid] = mon->screen_is_picasso;
-		
+		oldtex_zero_copy[monid] = 0;
+
 		// Even if buffer dimensions aren't ready yet, we need to ensure the shader is created
 		// for native mode. Use the surface dimensions that doInit already set up.
 		// This is critical for RTG→Native switches where the shader must be recreated for native mode.
@@ -1141,12 +1897,13 @@ bool target_graphics_buffer_update(const int monid, const bool force)
 	uae_u8* rtg_render_ptr = p96_get_render_buffer_pointer(mon->monitor_id);
 	bool is_zero_copy_eligible = false;
 	
-	if (mon->screen_is_picasso && currprefs.rtgboards[0].rtgmem_type < GFXBOARD_HARDWARE && currprefs.rtg_zerocopy) {
+	if (mon->screen_is_picasso && p96_is_zero_copy_enabled(mon->monitor_id)) {
 		int p96_bpp = state->BytesPerPixel;
 
 		int host_bpp = SDL_BYTESPERPIXEL(pixel_format);
 
-		if (rtg_render_ptr != nullptr && p96_bpp == host_bpp && pixel_format == SDL_PIXELFORMAT_ABGR8888) {
+		if (rtg_render_ptr != nullptr && p96_bpp == host_bpp &&
+			p96_rgbformat_matches_host_pixel_format(state->RGBFormat, pixel_format)) {
 			is_zero_copy_eligible = true;
 		}
 	}
@@ -1161,8 +1918,17 @@ bool target_graphics_buffer_update(const int monid, const bool force)
 	if (surface_ref && is_zero_copy_eligible && surface_ref->pixels != (void*)rtg_render_ptr) {
 		recreate_surface = true;
 	}
-	// If Zero-Copy is disabled, but we are still pointing to VRAM, we must recreate the surface
+	// If Zero-Copy is disabled, but we are still pointing to VRAM, we must recreate the surface.
+	// The current-pointer check catches "surface still points at the current RTG base"; the
+	// last-zero-copy check catches the transition where we previously bound the surface to a
+	// *different* screen's VRAM (e.g. 32-bit Workbench) and are now switching to a format/screen
+	// that is not zero-copy eligible (e.g. a promoted 8-bit screen at the same resolution). Without
+	// this, the surface would stay bound to the old screen's VRAM and picasso_flushpixels would
+	// corrupt it by converting the new screen's pixels into the old screen's backing bitmap.
 	if (surface_ref && !is_zero_copy_eligible && rtg_render_ptr && surface_ref->pixels == rtg_render_ptr) {
+		recreate_surface = true;
+	}
+	if (surface_ref && !is_zero_copy_eligible && oldtex_zero_copy[monid]) {
 		recreate_surface = true;
 	}
 
@@ -1220,6 +1986,7 @@ bool target_graphics_buffer_update(const int monid, const bool force)
 	oldtex_w[monid] = w;
 	oldtex_h[monid] = h;
 	oldtex_rtg[monid] = mon->screen_is_picasso;
+	oldtex_zero_copy[monid] = is_zero_copy_eligible ? 1 : 0;
 	//osk_setup(monid, -2);
 
 	write_log(_T("Buffer %d size (%d*%d) %s\n"), monid, w, h, mon->screen_is_picasso ? _T("RTG") : _T("Native"));
@@ -1262,6 +2029,10 @@ void updatewinfsmode(const int monid, struct uae_prefs* p)
 	struct MultiDisplay* md;
 	struct amigadisplay* ad = &adisplays[monid];
 
+	p->gfx_apmode[APMODE_NATIVE].gfx_fullscreen = amiberry_normalize_gfx_fullscreen_mode(
+		p->gfx_apmode[APMODE_NATIVE].gfx_fullscreen);
+	p->gfx_apmode[APMODE_RTG].gfx_fullscreen = amiberry_normalize_gfx_fullscreen_mode(
+		p->gfx_apmode[APMODE_RTG].gfx_fullscreen);
 	fixup_prefs_dimensions(p);
 	int fs = isfullscreen_2(p);
 	if (fs != 0) {
@@ -1282,8 +2053,19 @@ void updatewinfsmode(const int monid, struct uae_prefs* p)
 
 #ifdef AMIBERRY
 	const AmigaMonitor* mon = &AMonitors[monid];
-	if (!mon->screen_is_picasso)
+	if (!mon->screen_is_picasso) {
 		force_auto_crop = true;
+		// Mode switches (windowed <-> full-window) do not change the buffer
+		// size, so target_graphics_buffer_update() would keep stale rects.
+		if (mon->screen_is_initialized && get_renderer(monid)) {
+			SDL_Surface* surf = get_amiga_surface(monid);
+			if (surf && surf->w > 0 && surf->h > 0) {
+				int sw = 0, sh = 0;
+				compute_scaled_dimensions(surf->w, surf->h, false, sw, sh);
+				configure_render_rects(monid, surf->w, surf->h, sw, sh, false);
+			}
+		}
+	}
 #endif
 }
 
@@ -1405,53 +2187,14 @@ void toggle_fullscreen(const int monid, const int mode)
 {
 	const amigadisplay* ad = &adisplays[monid];
 	auto* p = ad->picasso_on ? &changed_prefs.gfx_apmode[APMODE_RTG].gfx_fullscreen : &changed_prefs.gfx_apmode[APMODE_NATIVE].gfx_fullscreen;
-	int* wfw = &wasfs[ad->picasso_on ? 1 : 0];
-	auto v = *p;
-	//static int prevmode = -1;
+	auto v = amiberry_normalize_gfx_fullscreen_mode(*p);
 
-	if (mode < 0) {
-		// fullwindow->window->fullwindow.
-		// fullscreen->window->fullscreen.
-		// window->fullscreen->window.
-		if (v == GFX_FULLWINDOW) {
-			//prevmode = v;
-			*wfw = -1;
-			v = GFX_WINDOW;
-		} else if (v == GFX_WINDOW) {
-			if (*wfw >= 0) {
-				v = GFX_FULLSCREEN;
-			} else {
-				v = GFX_FULLWINDOW;
-			}
-		} else if (v == GFX_FULLSCREEN) {
-			//prevmode = v;
-			*wfw = 1;
-			v = GFX_WINDOW;
-		}
-	} else if (mode == 0) {
-		//prevmode = v;
-		// fullscreen <> window
-		if (v == GFX_FULLSCREEN)
-			v = GFX_WINDOW;
-		else
-			v = GFX_FULLSCREEN;
-	} else if (mode == 1) {
-		//prevmode = v;
-		// fullscreen <> fullwindow
-		if (v == GFX_FULLSCREEN)
-			v = GFX_FULLWINDOW;
-		else
-			v = GFX_FULLSCREEN;
-	} else if (mode == 2) {
-		//prevmode = v;
-		// window <> fullwindow
-		if (v == GFX_FULLWINDOW)
-			v = GFX_WINDOW;
-		else
-			v = GFX_FULLWINDOW;
-	} else if (mode == 10) {
+	// All legacy fullscreen toggle actions now select desktop Full-window.
+	// Keep their input-event IDs working so existing mappings remain valid.
+	if (mode == 10)
 		v = GFX_WINDOW;
-	}
+	else
+		v = v == GFX_FULLWINDOW ? GFX_WINDOW : GFX_FULLWINDOW;
 	*p = v;
 	devices_unsafeperiod();
 	updatewinfsmode(monid, &changed_prefs);
@@ -1467,82 +2210,239 @@ void auto_crop_image()
 	if (currprefs.gfx_auto_crop)
 	{
 		static int last_cw = 0, last_ch = 0, last_cx = 0, last_cy = 0;
+		static int last_hres = 0, last_vres = 0;
+		static int last_content_hres = 0, last_content_vres = 0;
 		static bool last_is_ntsc = false;
+		static SDL_Surface* last_surface = nullptr;
+		static int last_surface_w = 0, last_surface_h = 0;
+#ifdef LIBRETRO
+		static AutoCropState crop_state;
+#else
+		static AutoCropVisibleState visible_state;
+		static AmiberryAutoCropScanState scan_state;
+		static SDL_Rect last_valid_crop;
+		static int last_valid_crop_hres = 0, last_valid_crop_vres = 0;
+		static bool last_valid_crop_available = false;
+#endif
 		int cw, ch, cx, cy, crealh = 0;
 		int hres = currprefs.gfx_resolution;
 		int vres = currprefs.gfx_vresolution;
 		get_custom_limits(&cw, &ch, &cx, &cy, &crealh, &hres, &vres);
+		const bool raw_crop_valid = cw > 0 && ch > 0;
+		const bool raw_crop_provisional = custom_limits_are_provisional();
+		const int content_hres = std::clamp(detected_screen_resolution,
+			RES_LORES, std::min(hres, RES_SUPERHIRES));
+		const int content_vres = interlace_seen > 0
+			? std::min(vres, VRES_DOUBLE) : VRES_NONDOUBLE;
+		const int raw_cw = cw;
+		const int raw_ch = ch;
+		const int raw_cx = cx;
+		const int raw_cy = cy;
+		// Cache the raw source origin at render cadence. Input must not call
+		// get_custom_limits(), which advances its interlace sampling state.
+		auto_crop_source_origin_x = cx;
+		auto_crop_source_origin_y = amiberry_input_native_interlace_origin(cy,
+			interlace_seen > 0, lof_display,
+			1 << std::clamp(vres, 0, VRES_MAX));
+		auto_crop_source_origin_valid = cw > 0 && ch > 0;
 
 		// Detect NTSC from actual display timing — more reliable than
 		// currprefs.ntscmode which may not reflect the chipset state
 		// (e.g. WHDLoad games that switch PAL/NTSC at runtime).
 		bool is_ntsc = (vblank_hz > 55.0f);
+		SDL_Surface* surface = get_amiga_surface(0);
+		const int surface_w = surface ? surface->w : 0;
+		const int surface_h = surface ? surface->h : 0;
+		SDL_Rect crop_rect = { cx, cy, cw, ch };
+#ifndef LIBRETRO
+		if (!last_autocrop) {
+			last_valid_crop_available = false;
+		}
+		// Graphics resets briefly make get_custom_limits() expose its generic
+		// no-bitplane fallback. Keep the last real crop instead of presenting it.
+		if (amiberry_gfx_should_use_cached_crop(raw_crop_valid,
+			raw_crop_provisional, last_valid_crop_available)) {
+			const AmiberryGfxRect mapped = amiberry_gfx_scale_crop_rect(
+				{ last_valid_crop.x, last_valid_crop.y,
+					last_valid_crop.w, last_valid_crop.h },
+				last_valid_crop_hres, last_valid_crop_vres, hres, vres);
+			crop_rect = { mapped.x, mapped.y, mapped.w, mapped.h };
+			clamp_auto_crop_rect(surface, crop_rect);
+		} else {
+			const int sprite_horizontal_edges = get_autoscale_sprite_horizontal_edges();
+			int sprite_zero_left = 0;
+			int sprite_zero_right = 0;
+			const int sprite_zero_edges = get_autoscale_sprite_zero_horizontal_edges(
+				&sprite_zero_left, &sprite_zero_right);
+			const AmiberryAutoCropHorizontalEvidence sprite_zero = {
+				sprite_zero_left,
+				sprite_zero_right,
+				(sprite_zero_edges & AUTOSCALE_SPRITE_EDGE_LEFT) != 0,
+				(sprite_zero_edges & AUTOSCALE_SPRITE_EDGE_RIGHT) != 0
+			};
+			clamp_auto_crop_rect(surface, crop_rect);
+			const SDL_Rect source_crop_rect = crop_rect;
+			// DIW/bitplane limits can exclude visible sprites or raster content.
+			// Preserve real pixels outside those limits without restoring the
+			// conservative minimum frame that keeps intentional black borders.
+			// Only a line-doubled interlaced buffer weaves two fields together.
+			const bool interlaced = interlace_seen > 0 && vres > VRES_NONDOUBLE;
+			expand_auto_crop_rect_to_visible_content(surface, crop_rect, interlaced,
+				scan_state);
+			preserve_auto_crop_visible_content(surface, source_crop_rect, crop_rect,
+				hres, vres, scan_state.border,
+				(sprite_horizontal_edges & AUTOSCALE_SPRITE_EDGE_LEFT) != 0,
+				(sprite_horizontal_edges & AUTOSCALE_SPRITE_EDGE_RIGHT) != 0, sprite_zero,
+				visible_state,
+				force_auto_crop || last_autocrop != currprefs.gfx_auto_crop);
+		}
+		cx = crop_rect.x;
+		cy = crop_rect.y;
+		cw = crop_rect.w;
+		ch = crop_rect.h;
+		if (raw_crop_valid && !raw_crop_provisional && cw > 0 && ch > 0) {
+			last_valid_crop = crop_rect;
+			last_valid_crop_hres = hres;
+			last_valid_crop_vres = vres;
+			last_valid_crop_available = true;
+		}
+#endif
+		bool crop_is_stable = true;
+#ifdef LIBRETRO
+		crop_is_stable = crop_state.shrink_frames == 0;
+#endif
 
 		if (!force_auto_crop && last_autocrop == currprefs.gfx_auto_crop
 			&& last_cw == cw && last_ch == ch && last_cx == cx && last_cy == cy
-			&& last_is_ntsc == is_ntsc)
+			&& last_hres == hres && last_vres == vres
+			&& last_content_hres == content_hres && last_content_vres == content_vres
+			&& last_is_ntsc == is_ntsc
+			&& last_surface == surface
+			&& last_surface_w == surface_w
+			&& last_surface_h == surface_h
+			&& crop_is_stable)
 		{
 			return;
 		}
+
+#ifdef LIBRETRO
+		const bool reset_policy = force_auto_crop || last_autocrop != currprefs.gfx_auto_crop
+			|| last_hres != hres || last_vres != vres
+			|| last_is_ntsc != is_ntsc
+			|| last_surface != surface
+			|| last_surface_w != surface_w
+			|| last_surface_h != surface_h;
+#endif
 
 		last_cw = cw;
 		last_ch = ch;
 		last_cx = cx;
 		last_cy = cy;
+		last_hres = hres;
+		last_vres = vres;
+		last_content_hres = content_hres;
+		last_content_vres = content_vres;
 		last_is_ntsc = is_ntsc;
+		last_surface = surface;
+		last_surface_w = surface_w;
+		last_surface_h = surface_h;
 		force_auto_crop = false;
 
-		int width = cw;
-		int height = ch;
-		if (vres == VRES_NONDOUBLE)
-		{
-			if (hres == RES_HIRES || hres == RES_SUPERHIRES)
-				height *= 2;
-		}
-		else
-		{
-			if (hres == RES_LORES)
-				width *= 2;
-		}
+#ifdef LIBRETRO
+		apply_auto_crop_policy(surface, crop_rect, hres, vres, is_ntsc, crop_state, reset_policy);
+#else
+		// The native crop was clamped and checked for visible content above.
+#endif
+		cx = crop_rect.x;
+		cy = crop_rect.y;
+		cw = crop_rect.w;
+		ch = crop_rect.h;
 
-		if (is_ntsc)
-			height = height * 6 / 5;
-
-		if (currprefs.gfx_correct_aspect == 0)
-		{
-			width = sdl_mode.w;
-			height = sdl_mode.h;
-		}
+		// Integer scaling follows the native Amiga content grid, not any pixel
+		// repetition introduced by the configured render resolution.
+		int content_width, content_height;
+		amiberry_gfx_native_content_dimensions(
+			cw, ch, hres, vres, content_hres, content_vres,
+			content_width, content_height);
+		int source_width, source_height;
+		auto_crop_display_dimensions(content_width, content_height,
+			content_hres, content_vres, false, source_width, source_height);
+		int width, height;
+		amiberry_gfx_auto_crop_presentation_dimensions(
+			source_width, source_height, is_ntsc, currprefs.gfx_correct_aspect != 0,
+			width, height);
+		// The presentation size no longer depends on the scaling method, so the
+		// integer-scaling candidate is the same rectangle.
+		const int integer_width = width;
+		const int integer_height = height;
+		int presentation_width = width;
+		int presentation_height = height;
+		int integer_presentation_width = integer_width;
+		int integer_presentation_height = integer_height;
+		int output_width = sdl_mode.w;
+		int output_height = sdl_mode.h;
 		// SDL software path needs logical size update
-		if (mon->amiga_renderer)
-			SDL_SetRenderLogicalPresentation(mon->amiga_renderer, width, height, SDL_LOGICAL_PRESENTATION_LETTERBOX);
+		if (mon->amiga_renderer) {
+			SDL_GetCurrentRenderOutputSize(mon->amiga_renderer, &output_width, &output_height);
+			if (output_width <= 0 || output_height <= 0) {
+				output_width = sdl_mode.w;
+				output_height = sdl_mode.h;
+			}
+#if defined(__linux__) && !defined(__ANDROID__)
+			if (currprefs.gfx_correct_aspect && isfullscreen() > 0) {
+				const float desired_aspect = amiberry_gfx_fullscreen_framebuffer_aspect(
+					height > 0 ? static_cast<float>(width) / height : 0.0f,
+					output_width, output_height, mon->desktop_width, mon->desktop_height);
+				if (desired_aspect > 0.0f && presentation_height > 0) {
+					presentation_width = std::max(1,
+						static_cast<int>(presentation_height * desired_aspect + 0.5f));
+				}
+				const float integer_aspect = amiberry_gfx_fullscreen_framebuffer_aspect(
+					integer_height > 0 ? static_cast<float>(integer_width) / integer_height : 0.0f,
+					output_width, output_height, mon->desktop_width, mon->desktop_height);
+				if (integer_aspect > 0.0f && integer_presentation_height > 0) {
+					integer_presentation_width = std::max(1,
+						static_cast<int>(integer_presentation_height * integer_aspect + 0.5f));
+				}
+			}
+#endif
+		}
 
 		IRenderer* renderer = get_renderer(0);
+		bool auto_integer_scaling = false;
+		if (currprefs.scaling_method == -1 && integer_presentation_width > 0
+			&& integer_presentation_height > 0) {
+			const float presentation_aspect = presentation_height > 0
+				? static_cast<float>(presentation_width) / presentation_height : 0.0f;
+			int auto_width = 0;
+			int auto_height = 0;
+			auto_integer_scaling = amiberry_gfx_auto_integer_dimensions(
+				output_width, output_height, integer_presentation_width,
+				integer_presentation_width, integer_presentation_height, false,
+				presentation_aspect, presentation_aspect, auto_width, auto_height);
+			if (auto_integer_scaling) {
+				presentation_width = integer_presentation_width;
+				presentation_height = integer_presentation_height;
+			}
+		}
+		if (mon->amiga_renderer) {
+			renderer->set_auto_crop_presentation(0, currprefs.scaling_method,
+				auto_integer_scaling, presentation_width, presentation_height);
+		}
 		auto& rq = renderer->render_quad;
 		auto& cr = renderer->crop_rect;
 		renderer->crop_aspect = (height > 0) ? static_cast<float>(width) / static_cast<float>(height) : 0.0f;
-		renderer->crop_display_w = width;
-		renderer->crop_display_h = height;
-		write_log(_T("auto_crop: cw=%d ch=%d cx=%d cy=%d hres=%d vres=%d ntsc=%d (vblank=%.1fHz) => display %dx%d aspect=%.4f\n"),
-			cw, ch, cx, cy, hres, vres, is_ntsc, vblank_hz, width, height, renderer->crop_aspect);
-		rq = { dx, dy, width, height };
-		cr = { cx, cy, cw, ch };
-		SDL_Surface* surface = get_amiga_surface(0);
-		if (surface) {
-			if (cr.x < 0) cr.x = 0;
-			if (cr.y < 0) cr.y = 0;
-			if (cr.x >= surface->w) cr.x = 0;
-			if (cr.y >= surface->h) cr.y = 0;
-			if (cr.w <= 0 || cr.x + cr.w > surface->w)
-				cr.w = surface->w - cr.x;
-			if (cr.h <= 0 || cr.y + cr.h > surface->h)
-				cr.h = surface->h - cr.y;
-		}
+		renderer->crop_display_w = integer_width;
+		renderer->crop_display_h = integer_height;
+		write_log(_T("auto_crop: raw=%dx%d+%d+%d valid=%d provisional=%d final=%dx%d+%d+%d render_res=%d/%d content_res=%d/%d content=%dx%d ntsc=%d (vblank=%.1fHz) => display %dx%d aspect=%.4f\n"),
+			raw_cw, raw_ch, raw_cx, raw_cy, raw_crop_valid, raw_crop_provisional,
+			cw, ch, cx, cy, hres, vres,
+			content_hres, content_vres, content_width, content_height,
+			is_ntsc, vblank_hz, width, height, renderer->crop_aspect);
+		rq = { dx, dy, presentation_width, presentation_height };
+		cr = crop_rect;
 
-		if (vkbd_allowed(0))
-		{
-			vkbd_update_position_from_texture();
-		}
+		// ImGui OSK does not need position updates from texture
 	}
 
 	last_autocrop = currprefs.gfx_auto_crop;
@@ -1557,6 +2457,187 @@ unsigned long target_lastsynctime()
 static int save_png(const SDL_Surface* surface, const std::string& path)
 {
 	return gfx_platform_save_png(surface, path);
+}
+
+void amiberry_gui_geometry_publish(const int monid,
+	const AmiberryGfxRect& source, const AmiberryGfxRect& viewport,
+	const AmiberryGuiViewportSpace viewport_space,
+	const int drawable_width, const int drawable_height,
+	const char* renderer_name)
+{
+	if (monid < 0 || monid >= MAX_AMIGAMONITORS || !renderer_name)
+		return;
+	if (amiberry_resolve_active_input_monitor() != monid)
+		return;
+	const auto* mon = &AMonitors[monid];
+	const SDL_Surface* surface = get_amiga_surface(monid);
+	if (!surface || !mon->amiga_window)
+		return;
+
+	int window_width = mon->logical_window_width;
+	int window_height = mon->logical_window_height;
+	if (window_width <= 0 || window_height <= 0) {
+		SDL_GetWindowSize(mon->amiga_window, &window_width, &window_height);
+	}
+	if (window_width <= 0 || window_height <= 0)
+		return;
+
+	const int source_left = std::clamp(source.x, 0, surface->w);
+	const int source_top = std::clamp(source.y, 0, surface->h);
+	const int source_right = std::clamp(source.x + source.w, source_left, surface->w);
+	const int source_bottom = std::clamp(source.y + source.h, source_top, surface->h);
+	const AmiberryGfxRect clipped_source{
+		source_left, source_top, source_right - source_left, source_bottom - source_top
+	};
+	if (clipped_source.w <= 0 || clipped_source.h <= 0
+		|| viewport.w <= 0 || viewport.h <= 0)
+		return;
+
+	AmiberryGfxRect logical_viewport{};
+	if (viewport_space == AmiberryGuiViewportSpace::SdlRendererLogical) {
+		if (!mon->amiga_renderer)
+			return;
+		float left = 0.0f;
+		float top = 0.0f;
+		float right = 0.0f;
+		float bottom = 0.0f;
+		if (!SDL_RenderCoordinatesToWindow(mon->amiga_renderer,
+			static_cast<float>(viewport.x), static_cast<float>(viewport.y),
+			&left, &top)
+			|| !SDL_RenderCoordinatesToWindow(mon->amiga_renderer,
+				static_cast<float>(viewport.x + viewport.w),
+				static_cast<float>(viewport.y + viewport.h), &right, &bottom)) {
+			return;
+		}
+		const int logical_left = static_cast<int>(std::lround(left));
+		const int logical_top = static_cast<int>(std::lround(top));
+		const int logical_right = static_cast<int>(std::lround(right));
+		const int logical_bottom = static_cast<int>(std::lround(bottom));
+		logical_viewport = {
+			logical_left, logical_top,
+			logical_right - logical_left, logical_bottom - logical_top
+		};
+	} else {
+		logical_viewport = amiberry_gui_drawable_to_logical_rect(
+			viewport, drawable_width, drawable_height,
+			window_width, window_height);
+	}
+	if (logical_viewport.w <= 0 || logical_viewport.h <= 0)
+		return;
+
+	AmiberryGuiGeometrySnapshot snapshot;
+	snapshot.monitor_id = monid;
+	snapshot.display_id = amiberry_get_active_display_id(monid);
+	snapshot.display_mode = mon->screen_is_picasso ? "rtg" : "native";
+	snapshot.renderer = renderer_name;
+	snapshot.image_width = surface->w;
+	snapshot.image_height = surface->h;
+	snapshot.source = clipped_source;
+	snapshot.viewport = logical_viewport;
+	snapshot.window_width = window_width;
+	snapshot.window_height = window_height;
+	snapshot.valid = true;
+	gui_geometry_state.publish(std::move(snapshot));
+}
+
+void amiberry_gui_geometry_invalidate(const int monid)
+{
+	gui_geometry_state.invalidate(monid);
+}
+
+void amiberry_gui_geometry_set_active_monitor(const int monid)
+{
+	gui_geometry_state.set_active_monitor(monid);
+}
+
+AmiberryGuiGeometrySnapshot amiberry_gui_geometry_snapshot()
+{
+	return gui_geometry_state.snapshot();
+}
+
+AmiberryGuiGuardedInputResult amiberry_gui_guarded_input_apply(
+	const AmiberryGuiGuardedInputRequest& request,
+	const AmiberryGuiGuardedInputEnvironment& environment,
+	const AmiberryGuiInputMutation& mutation)
+{
+	return amiberry_gui_guarded_input(
+		gui_geometry_state, request, environment, mutation);
+}
+
+static bool saved_png_dimensions(const std::string& path, int& width, int& height)
+{
+	unsigned char header[24]{};
+	FILE* file = fopen(path.c_str(), "rb");
+	if (!file)
+		return false;
+	const size_t bytes_read = fread(header, 1, sizeof header, file);
+	fclose(file);
+	return bytes_read == sizeof header
+		&& amiberry_gui_png_dimensions(header, sizeof header, width, height);
+}
+
+bool amiberry_actionable_screenshot_supported(const int monid)
+{
+	IRenderer* renderer = get_renderer(monid);
+	return renderer && renderer->supports_actionable_screenshot();
+}
+
+bool amiberry_capture_actionable_screenshot(const int monid,
+	const std::string& path, AmiberryGuiGeometrySnapshot& snapshot)
+{
+	if (!amiberry_actionable_screenshot_supported(monid))
+		return false;
+
+	if (current_screenshot != nullptr) {
+		SDL_DestroySurface(current_screenshot);
+		current_screenshot = nullptr;
+	}
+
+	for (int attempt = 0; attempt < 3; ++attempt) {
+		const auto before = amiberry_gui_geometry_snapshot();
+		SDL_Surface* surface = get_amiga_surface(monid);
+		if (!before.valid || before.monitor_id != monid || !surface
+			|| before.image_width != surface->w
+			|| before.image_height != surface->h) {
+			return false;
+		}
+
+		SDL_Surface* duplicate = SDL_DuplicateSurface(surface);
+		if (!duplicate)
+			return false;
+		const auto after = amiberry_gui_geometry_snapshot();
+		if (after.valid && after.runtime_id == before.runtime_id
+			&& after.geometry_revision == before.geometry_revision
+			&& after.monitor_id == before.monitor_id
+			&& duplicate->w == before.image_width
+			&& duplicate->h == before.image_height) {
+			current_screenshot = duplicate;
+			snapshot = before;
+			break;
+		}
+		SDL_DestroySurface(duplicate);
+	}
+	if (!current_screenshot)
+		return false;
+
+	const int saved = save_png(current_screenshot, path);
+	SDL_DestroySurface(current_screenshot);
+	current_screenshot = nullptr;
+	if (!saved)
+		return false;
+
+	int saved_width = 0;
+	int saved_height = 0;
+	if (!saved_png_dimensions(path, saved_width, saved_height)
+		|| saved_width != snapshot.image_width
+		|| saved_height != snapshot.image_height) {
+		std::remove(path.c_str());
+		return false;
+	}
+
+	snapshot.capture_nonce = snapshot.runtime_id + "-"
+		+ std::to_string(++gui_capture_sequence);
+	return true;
 }
 
 bool create_screenshot()
@@ -1600,10 +2681,18 @@ void screenshot(int monid, int mode, int doprepare)
 	else
 		filename = "default.uae";
 
-	screenshot_filename = get_screenshot_path();
-	screenshot_filename += filename;
-	screenshot_filename = remove_file_extension(screenshot_filename);
-	screenshot_filename += ".png";
+	std::string base_path = get_screenshot_path();
+	base_path += remove_file_extension(filename);
 
-	save_thumb(screenshot_filename);
+	screenshot_filename = base_path + ".png";
+
+	// Avoid overwriting existing screenshots by appending a number
+	for (int counter = 1; counter <= 9999 && access(screenshot_filename.c_str(), F_OK) == 0; counter++) {
+		screenshot_filename = base_path + "_" + std::to_string(counter) + ".png";
+	}
+
+	if (save_thumb(screenshot_filename))
+		statusline_add_message(STATUSTYPE_OTHER, _T("Screenshot: %s"), extract_filename(screenshot_filename).c_str());
+	else
+		statusline_add_message(STATUSTYPE_OTHER, _T("Screenshot failed"));
 }

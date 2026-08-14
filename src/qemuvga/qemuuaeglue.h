@@ -2,9 +2,12 @@
 #include "uae/likely.h"
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stddef.h>
-#include <stdlib.h>
+#ifndef _MSC_VER
+#include <sys/types.h>
+#endif
 #include "sysconfig.h"
 
 #ifdef DEBUGGER
@@ -23,7 +26,7 @@ extern void write_log (const char *, ...);
 #define tostring(s)	#s
 #endif
 
-#ifndef AMIBERRY
+#ifdef _MSC_VER
 typedef int ssize_t;
 #endif
 

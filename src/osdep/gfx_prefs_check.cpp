@@ -22,9 +22,8 @@
 #include "parallel.h"
 #include "sampler.h"
 
-#include "vkbd/vkbd.h"
-#include "on_screen_joystick.h"
-#include "on_screen_cd32pad.h"
+#include "imgui_overlay.h"
+#include "imgui_osk.h"
 #include "amiberry_input.h"
 
 #ifdef WITH_MIDIEMU
@@ -60,6 +59,14 @@ int check_prefs_changed_gfx()
 {
 	int c = 0;
 	bool monitors[MAX_AMIGAMONITORS]{};
+	const bool auto_crop_enabled = !currprefs.gfx_auto_crop && changed_prefs.gfx_auto_crop;
+
+	const bool native_code_changed = currprefs.native_code != changed_prefs.native_code;
+	if (native_code_changed) {
+		if (currprefs.native_code && !changed_prefs.native_code)
+			uaelib_host_cleanup();
+		currprefs.native_code = changed_prefs.native_code;
+	}
 
 	if (!config_changed && !display_change_requested)
 		return 0;
@@ -171,7 +178,7 @@ int check_prefs_changed_gfx()
 
 		c |= gf->gfx_filter_aspect != gfc->gfx_filter_aspect ? (1) : 0;
 		c |= gf->gfx_filter_rotation != gfc->gfx_filter_rotation ? (1) : 0;
-		c |= gf->gfx_filter_keep_aspect != gfc->gfx_filter_keep_aspect ? (1) : 0;
+		c |= gf->gfx_filter_aspect_type != gfc->gfx_filter_aspect_type ? (1) : 0;
 		c |= gf->gfx_filter_keep_autoscale_aspect != gfc->gfx_filter_keep_autoscale_aspect ? (1) : 0;
 		c |= gf->gfx_filter_luminance != gfc->gfx_filter_luminance ? (1) : 0;
 		c |= gf->gfx_filter_contrast != gfc->gfx_filter_contrast ? (1) : 0;
@@ -188,6 +195,9 @@ int check_prefs_changed_gfx()
 	c |= currprefs.gfx_luminance != changed_prefs.gfx_luminance ? (1 | 256) : 0;
 	c |= currprefs.gfx_contrast != changed_prefs.gfx_contrast ? (1 | 256) : 0;
 	c |= currprefs.gfx_gamma != changed_prefs.gfx_gamma ? (1 | 256) : 0;
+	c |= currprefs.gfx_gamma_ch[0] != changed_prefs.gfx_gamma_ch[0] ? (1 | 256) : 0;
+	c |= currprefs.gfx_gamma_ch[1] != changed_prefs.gfx_gamma_ch[1] ? (1 | 256) : 0;
+	c |= currprefs.gfx_gamma_ch[2] != changed_prefs.gfx_gamma_ch[2] ? (1 | 256) : 0;
 
 	c |= currprefs.gfx_resolution != changed_prefs.gfx_resolution ? (128) : 0;
 	c |= currprefs.gfx_vresolution != changed_prefs.gfx_vresolution ? (128) : 0;
@@ -241,6 +251,11 @@ int check_prefs_changed_gfx()
 	c |= currprefs.rtg_hardwaresprite != changed_prefs.rtg_hardwaresprite ? 32 : 0;
 	c |= currprefs.rtg_multithread != changed_prefs.rtg_multithread ? 32 : 0;
 	c |= currprefs.rtg_zerocopy != changed_prefs.rtg_zerocopy ? 32 : 0;
+	c |= _tcscmp(currprefs.shader, changed_prefs.shader) ? 1 : 0;
+	c |= _tcscmp(currprefs.shader_rtg, changed_prefs.shader_rtg) ? 1 : 0;
+	c |= currprefs.use_bezel != changed_prefs.use_bezel ? 1 : 0;
+	c |= currprefs.use_custom_bezel != changed_prefs.use_custom_bezel ? 1 : 0;
+	c |= _tcscmp(currprefs.custom_bezel, changed_prefs.custom_bezel) ? 1 : 0;
 #endif
 
 	if (display_change_requested || c)
@@ -301,12 +316,20 @@ int check_prefs_changed_gfx()
 		currprefs.gfx_auto_crop = changed_prefs.gfx_auto_crop;
 		currprefs.gfx_manual_crop = changed_prefs.gfx_manual_crop;
 
+		if (auto_crop_enabled)
+			force_auto_crop = true;
+
 		if (currprefs.gfx_auto_crop)
 		{
 			changed_prefs.gfx_xcenter = changed_prefs.gfx_ycenter = 0;
 		}
 		currprefs.gfx_correct_aspect = changed_prefs.gfx_correct_aspect;
 		currprefs.scaling_method = changed_prefs.scaling_method;
+		_tcscpy(currprefs.shader, changed_prefs.shader);
+		_tcscpy(currprefs.shader_rtg, changed_prefs.shader_rtg);
+		currprefs.use_bezel = changed_prefs.use_bezel;
+		currprefs.use_custom_bezel = changed_prefs.use_custom_bezel;
+		_tcscpy(currprefs.custom_bezel, changed_prefs.custom_bezel);
 #endif
 
 		currprefs.rtg_horiz_zoom_mult = changed_prefs.rtg_horiz_zoom_mult;
@@ -315,6 +338,9 @@ int check_prefs_changed_gfx()
 		currprefs.gfx_luminance = changed_prefs.gfx_luminance;
 		currprefs.gfx_contrast = changed_prefs.gfx_contrast;
 		currprefs.gfx_gamma = changed_prefs.gfx_gamma;
+		currprefs.gfx_gamma_ch[0] = changed_prefs.gfx_gamma_ch[0];
+		currprefs.gfx_gamma_ch[1] = changed_prefs.gfx_gamma_ch[1];
+		currprefs.gfx_gamma_ch[2] = changed_prefs.gfx_gamma_ch[2];
 
 		currprefs.gfx_resolution = changed_prefs.gfx_resolution;
 		currprefs.gfx_vresolution = changed_prefs.gfx_vresolution;
@@ -520,7 +546,7 @@ int check_prefs_changed_gfx()
 		currprefs.minimized_pause != changed_prefs.minimized_pause ||
 		currprefs.minimized_input != changed_prefs.minimized_input ||
 		currprefs.capture_always != changed_prefs.capture_always ||
-		currprefs.native_code != changed_prefs.native_code ||
+		native_code_changed ||
 		currprefs.alt_tab_release != changed_prefs.alt_tab_release ||
 		currprefs.ctrl_alt_release != changed_prefs.ctrl_alt_release ||
 		currprefs.use_retroarch_quit != changed_prefs.use_retroarch_quit ||
@@ -533,6 +559,7 @@ int check_prefs_changed_gfx()
 		currprefs.turbo_boot != changed_prefs.turbo_boot ||
 		currprefs.right_control_is_right_win_key != changed_prefs.right_control_is_right_win_key)
 	{
+		const bool capture_policy_enabled = !currprefs.capture_always && changed_prefs.capture_always;
 		currprefs.leds_on_screen = changed_prefs.leds_on_screen;
 		currprefs.keyboard_leds[0] = changed_prefs.keyboard_leds[0];
 		currprefs.keyboard_leds[1] = changed_prefs.keyboard_leds[1];
@@ -553,7 +580,6 @@ int check_prefs_changed_gfx()
 		currprefs.minimized_pause = changed_prefs.minimized_pause;
 		currprefs.minimized_input = changed_prefs.minimized_input;
 		currprefs.capture_always = changed_prefs.capture_always;
-		currprefs.native_code = changed_prefs.native_code;
 		currprefs.alt_tab_release = changed_prefs.alt_tab_release;
 		currprefs.ctrl_alt_release = changed_prefs.ctrl_alt_release;
 		currprefs.use_retroarch_quit = changed_prefs.use_retroarch_quit;
@@ -571,6 +597,10 @@ int check_prefs_changed_gfx()
 		resume_sound();
 		//refreshtitle();
 		inputdevice_acquire(TRUE);
+		if (mouseactive > 0)
+			setmouseactive(mouseactive - 1, 2);
+		else if (capture_policy_enabled)
+			setmouseactive(0, 1);
 #ifndef	_DEBUG
 		setpriority(currprefs.active_capture_priority);
 #endif
@@ -635,121 +665,57 @@ int check_prefs_changed_gfx()
 	}
 
 #ifdef AMIBERRY
-	// Virtual keyboard
+	// On-screen keyboard
 	if (currprefs.vkbd_enabled != changed_prefs.vkbd_enabled ||
-		currprefs.vkbd_hires != changed_prefs.vkbd_hires ||
+		currprefs.vkbd_numpad != changed_prefs.vkbd_numpad ||
 		currprefs.vkbd_transparency != changed_prefs.vkbd_transparency ||
-		currprefs.vkbd_exit != changed_prefs.vkbd_exit ||
 		_tcscmp(currprefs.vkbd_language, changed_prefs.vkbd_language) ||
-		_tcscmp(currprefs.vkbd_style, changed_prefs.vkbd_style) ||
 		_tcscmp(currprefs.vkbd_toggle, changed_prefs.vkbd_toggle))
 	{
 		currprefs.vkbd_enabled = changed_prefs.vkbd_enabled;
-		currprefs.vkbd_hires = changed_prefs.vkbd_hires;
+		currprefs.vkbd_numpad = changed_prefs.vkbd_numpad;
 		currprefs.vkbd_transparency = changed_prefs.vkbd_transparency;
-		currprefs.vkbd_exit = changed_prefs.vkbd_exit;
 		_tcscpy(currprefs.vkbd_language, changed_prefs.vkbd_language);
-		_tcscpy(currprefs.vkbd_style, changed_prefs.vkbd_style);
 		_tcscpy(currprefs.vkbd_toggle, changed_prefs.vkbd_toggle);
 
 		if (currprefs.vkbd_enabled)
 		{
-			vkbd_set_transparency(static_cast<double>(currprefs.vkbd_transparency) / 100.0);
-			vkbd_set_hires(currprefs.vkbd_hires);
-			vkbd_set_keyboard_has_exit_button(currprefs.vkbd_exit);
-			vkbd_set_language(string(currprefs.vkbd_language));
-			vkbd_set_style(string(currprefs.vkbd_style));
+			float alpha = (currprefs.vkbd_transparency > 0)
+				? static_cast<float>(currprefs.vkbd_transparency) / 100.0f
+				: 0.85f;
+			imgui_osk_set_transparency(alpha);
+			imgui_osk_set_language(currprefs.vkbd_language);
+			imgui_osk_set_numpad(currprefs.vkbd_numpad);
 			vkbd_key = get_hotkey_from_config(string(currprefs.vkbd_toggle));
 			vkbd_button = SDL_GetGamepadButtonFromString(currprefs.vkbd_toggle);
-			if (vkbd_allowed(0))
-				vkbd_init();
+			imgui_osk_init();
 		}
 		else
 		{
 			vkbd_key = {};
 			vkbd_button = SDL_GAMEPAD_BUTTON_INVALID;
-			vkbd_quit();
+			imgui_osk_shutdown();
 		}
 	}
 
-	// On-screen joystick
-	if (currprefs.onscreen_joystick != changed_prefs.onscreen_joystick)
+	/* The core no longer draws a pad - the host does - but these prefs are
+	   still the input wiring: flipping one registers the virtual pad device
+	   and reruns the port mapping, and without that the host's pad posts
+	   deltas into a device the ports have never heard of, which both
+	   setjoystickstate and setmousestate drop without a word. */
+	if (currprefs.onscreen_joystick != changed_prefs.onscreen_joystick
+		|| currprefs.onscreen_cd32pad != changed_prefs.onscreen_cd32pad)
 	{
 		currprefs.onscreen_joystick = changed_prefs.onscreen_joystick;
-		// Real controllers are already enumerated once at startup (amiberry.cpp calls
-		// import_joysticks() during input init) - ensure_onscreen_joystick_registered() below
-		// just appends a synthetic entry to the existing di_joystick table, it doesn't need a
-		// fresh scan. Calling import_joysticks() here (as this used to) closes and reopens every
-		// REAL controller (each doing blocking Retroarch-cfg file lookups on disk), stalling the
-		// emulation thread audibly on every single tap of the overlay's controller icon. Worse,
-		// close_joystick() only resets osj_device_index and NOT cd32pad_device_index, so any
-		// reimport triggered while the CD32 pad was already registered left cd32pad_device_index
-		// dangling at a slot number that the freshly rebuilt table could reassign to a real
-		// controller - the on-screen CD32 pad silently stopped responding, or worse, aliased a
-		// physical gamepad. Never re-scanning real hardware here avoids both problems.
-		inputdevice_config_change();
-		joystick_refresh_needed = true;
-
-		if (currprefs.onscreen_joystick)
-		{
-			// Disable cd32 pad when enabling simple joystick
-			if (currprefs.onscreen_cd32pad)
-			{
-				on_screen_cd32pad_set_enabled(false);
-				on_screen_cd32pad_quit();
-				currprefs.onscreen_cd32pad = false;
-				changed_prefs.onscreen_cd32pad = false;
-			}
-
-			ensure_onscreen_joystick_registered();
-			AmigaMonitor* mon = &AMonitors[0];
-			on_screen_joystick_init(mon->amiga_renderer);
-			int sw = 0, sh = 0;
-			if (g_renderer)
-				g_renderer->get_drawable_size(mon->amiga_window, &sw, &sh);
-			on_screen_joystick_update_layout(sw, sh, g_renderer->render_quad);
-			on_screen_joystick_set_enabled(true);
-		}
-		else
-		{
-			on_screen_joystick_set_enabled(false);
-			on_screen_joystick_quit();
-		}
-	}
-
-	// On-screen CD32 pad
-	if (currprefs.onscreen_cd32pad != changed_prefs.onscreen_cd32pad)
-	{
 		currprefs.onscreen_cd32pad = changed_prefs.onscreen_cd32pad;
-		// See the on-screen joystick block above - no need to re-scan real controllers here either.
+		if (currprefs.onscreen_joystick)
+			ensure_onscreen_joystick_registered();
+		if (currprefs.onscreen_cd32pad)
+			ensure_onscreen_cd32pad_registered();
+		write_log("gfx: virtual pad wiring (joystick=%d cd32=%d)\n",
+			currprefs.onscreen_joystick, currprefs.onscreen_cd32pad);
 		inputdevice_config_change();
 		joystick_refresh_needed = true;
-
-		if (currprefs.onscreen_cd32pad)
-		{
-			// Disable simple joystick when enabling CD32 pad
-			if (currprefs.onscreen_joystick)
-			{
-				on_screen_joystick_set_enabled(false);
-				on_screen_joystick_quit();
-				currprefs.onscreen_joystick = false;
-				changed_prefs.onscreen_joystick = false;
-			}
-
-			ensure_onscreen_cd32pad_registered();
-			AmigaMonitor* mon = &AMonitors[0];
-			on_screen_cd32pad_init(mon->amiga_renderer);
-			int sw = 0, sh = 0;
-			if (g_renderer)
-				g_renderer->get_drawable_size(mon->amiga_window, &sw, &sh);
-			on_screen_cd32pad_update_layout(sw, sh, g_renderer->render_quad);
-			on_screen_cd32pad_set_enabled(true);
-		}
-		else
-		{
-			on_screen_cd32pad_set_enabled(false);
-			on_screen_cd32pad_quit();
-		}
 	}
 #endif
 

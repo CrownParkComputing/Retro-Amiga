@@ -60,6 +60,7 @@
 #endif
 #ifdef WITH_X86
 #include "x86.h"
+#include "atonce.h"
 #endif
 #include "filesys.h"
 #include "ethernet.h"
@@ -265,6 +266,7 @@ static bool ks11orolder(void)
 static uae_u8 expamem[65536 + 4];
 static uae_u8 expamem_write_space[65536 + 4];
 #define AUTOMATIC_AUTOCONFIG_MAX_ADDRESS 0x80
+#define EXPAMEM_READ_WARNING_LIMIT 64
 static int expamem_autoconfig_mode;
 static addrbank*(*expamem_map)(struct autoconfig_info*);
 
@@ -279,6 +281,8 @@ static uae_u8 slots_e8[8] = { 0 };
 static uae_u8 slots_20[(8 * 1024 * 1024) / 65536] = { 0 };
 
 static int z3hack_override;
+static int expamem_z2_lget_warning_count;
+static int expamem_z2_wget_warning_count;
 
 void set_expamem_z3_hack_mode(int mode)
 {
@@ -393,6 +397,8 @@ static void expamem_init_clear (void)
 	memset (expamem, 0xff, sizeof expamem);
 	expamem_hi = expamem_lo = 0;
 	expamem_map = NULL;
+	expamem_z2_lget_warning_count = 0;
+	expamem_z2_wget_warning_count = 0;
 }
 /* autoconfig area is "non-existing" after last device */
 static void expamem_init_clear_zero (void)
@@ -704,7 +710,12 @@ static uae_u32 REGPARAM2 expamem_lget (uaecptr addr)
 		}
 		return expamem_bank_current->sub_banks ? expamem_bank_current->sub_banks[0].bank->lget(addr) : expamem_bank_current->lget(addr);
 	}
-	write_log (_T("warning: Z2 READ.L from address $%08x PC=%x\n"), addr, M68K_GETPC);
+	if (expamem_z2_lget_warning_count < EXPAMEM_READ_WARNING_LIMIT) {
+		write_log (_T("warning: Z2 READ.L from address $%08x PC=%x\n"), addr, M68K_GETPC);
+		expamem_z2_lget_warning_count++;
+		if (expamem_z2_lget_warning_count == EXPAMEM_READ_WARNING_LIMIT)
+			write_log (_T("warning: suppressing further Z2 READ.L autoconfig warnings\n"));
+	}
 	return (expamem_wget (addr) << 16) | expamem_wget (addr + 2);
 }
 
@@ -726,7 +737,12 @@ static uae_u32 REGPARAM2 expamem_wget (uaecptr addr)
 		cpuboards[currprefs.cpuboard_type].subtypes[currprefs.cpuboard_subtype].e8(addr, &val, 2, false);
 		v = val;
 	}
-	write_log (_T("warning: READ.W from address $%08x=%04x PC=%x\n"), addr, v & 0xffff, M68K_GETPC);
+	if (expamem_z2_wget_warning_count < EXPAMEM_READ_WARNING_LIMIT) {
+		write_log (_T("warning: READ.W from address $%08x=%04x PC=%x\n"), addr, v & 0xffff, M68K_GETPC);
+		expamem_z2_wget_warning_count++;
+		if (expamem_z2_wget_warning_count == EXPAMEM_READ_WARNING_LIMIT)
+			write_log (_T("warning: suppressing further Z2 READ.W autoconfig warnings\n"));
+	}
 	return v;
 }
 
@@ -3137,7 +3153,7 @@ static void expansion_parse_cards(struct uae_prefs *p, bool log)
 						}
 					}
 				}
-				_stprintf(label, _T("%s (%s)"), aci->cst->name, man);
+				_sntprintf(label, sizeof label / sizeof(TCHAR), _T("%s (%s)"), aci->cst->name, man);
 #endif
 				_tcscpy(label, aci->cst->name);
 			}
@@ -3155,11 +3171,11 @@ static void expansion_parse_cards(struct uae_prefs *p, bool log)
 				} else {
 					_tcscpy(label, _T("<no name>"));
 				}
-			}
-			if (aci->devnum > 0) {
-				TCHAR *s = label + _tcslen(label);
-				_sntprintf(s, sizeof s, _T(" [%d]"), aci->devnum + 1);
-			}
+				}
+				if (aci->devnum > 0) {
+					TCHAR *s = label + _tcslen(label);
+					_sntprintf(s, sizeof label / sizeof(TCHAR) - (s - label), _T(" [%d]"), aci->devnum + 1);
+				}
 
 			if ((aci->zorro == 1 || aci->zorro == 2 || aci->zorro == 3) && aci->addrbank != &expamem_none && (aci->autoconfig_raw[0] != 0xff || aci->autoconfigp)) {
 				uae_u8 ac2[16];
@@ -3243,8 +3259,13 @@ static void expansion_parse_cards(struct uae_prefs *p, bool log)
 			} else {
 				cd->base = aci->start;
 				cd->size = aci->size;
-				if (log)
-					write_log(_T("'%s' no autoconfig %08x - %08x.\n"), aci->label ? aci->label : _T("<no name>"), cd->base, cd->base + cd->size - 1);
+				if (log) {
+					const TCHAR *board_label = aci->label ? aci->label : _T("<no name>");
+					if (cd->base == 0xffffffff || cd->size == 0)
+						write_log(_T("'%s' no autoconfig (unassigned).\n"), board_label);
+					else
+						write_log(_T("'%s' no autoconfig %08x - %08x.\n"), board_label, cd->base, cd->base + cd->size - 1);
+				}
 			}
 			_tcscpy(aci->name, label);
 			if (cd->flags & CARD_FLAG_CHILD)
@@ -3823,14 +3844,20 @@ static void expansion_add_autoconfig(struct uae_prefs *p)
 		struct rtgboardconfig *rbc = &p->rtgboards[i];
 		if (rbc->rtgmem_size && rbc->rtgmem_type >= GFXBOARD_HARDWARE && gfxboard_get_configtype(rbc) == 3) {
 			cards_set[cardno].flags = 4 | CARD_FLAG_CAN_Z3 | (i << 16);
-			cards_set[cardno].name = _T("Z3RTG");
-			cards_set[cardno].zorro = 3;
-			cards_set[cardno++].initnum = gfxboard_init_memory;
-			if (gfxboard_is_registers(rbc)) {
-				cards_set[cardno].flags = 1 | (i << 16) | CARD_FLAG_CHILD;
+			if (gfxboard_get_func(rbc)) {
+				cards_set[cardno].name = _T("Z3RTG");
 				cards_set[cardno].zorro = 3;
-				cards_set[cardno].name = _T("Gfxboard Registers");
-				cards_set[cardno++].initnum = gfxboard_init_registers;
+				cards_set[cardno++].initnum = gfxboard_init_board;
+			} else {
+				cards_set[cardno].name = _T("Z3RTG");
+				cards_set[cardno].zorro = 3;
+				cards_set[cardno++].initnum = gfxboard_init_memory;
+				if (gfxboard_is_registers(rbc)) {
+					cards_set[cardno].flags = 1 | (i << 16) | CARD_FLAG_CHILD;
+					cards_set[cardno].zorro = 3;
+					cards_set[cardno].name = _T("Gfxboard Registers");
+					cards_set[cardno++].initnum = gfxboard_init_registers;
+				}
 			}
 		}
 	}
@@ -4567,6 +4594,23 @@ static const struct expansionboardsettings x86vga_settings[] = {
 		_T("Chipset\0") _T("CL-GD5426\0") _T("CL-GD5429\0"),
 		_T("chipset\0") _T("cl-gd5426\0") _T("cl-gd5429\0"),
 		true
+	},
+	{
+		NULL
+	}
+};
+
+static const struct expansionboardsettings atonce_bridge_settings[] = {
+	{
+		// 0
+		_T("Automount first MBR hardfile"),
+		_T("automounthdf"),
+	},
+	{
+		// 19 (not yet implemented)
+		_T("FPU"),
+		_T("fpu"),
+		false, false, 19
 	},
 	{
 		NULL
@@ -6138,6 +6182,14 @@ const struct expansionromtype expansionroms[] = {
 		false, 2, NULL,
 		{ 0xd2, 0x07, 0x00, 0x00, 0x14, 0x4A, 0x00, 0x00, 0x00, 0x01, 0x00, 0x08 }
 	},
+	{
+		_T("aide"), _T("AIDE"), _T("Matthias Heinrichs"),
+		NULL, aide_init, NULL, aide_add_ide_unit, ROMTYPE_AIDE | ROMTYPE_NOT, 0, 0, BOARD_NONAUTOCONFIG_BEFORE, true,
+		NULL, 0,
+		false, EXPANSIONTYPE_IDE,
+		0, 0, 0, false, NULL,
+		false, 0, NULL
+	},
 
 	/* PC Bridgeboards */
 #ifdef WITH_X86
@@ -6181,6 +6233,17 @@ const struct expansionromtype expansionroms[] = {
 		false, EXPANSIONTYPE_X86_BRIDGE,
 		0, 0, 0, false, NULL,
 		false, 0, x86at386_bridge_settings
+	},
+	{
+		// Vortex ATonce Plus: 286 board in the A500 68000 socket. Not a Zorro
+		// bridgeboard: no autoconfig, no BIOS ROM file (the x86 BIOS is loaded
+		// from the floppy .dsg into Amiga chip RAM by the 68k driver).
+		_T("atonceplus"), _T("ATonce Plus"), _T("Vortex"),
+		NULL, atonce_init, NULL, NULL, ROMTYPE_ATONCE | ROMTYPE_NOT, 0, 0, BOARD_NONAUTOCONFIG_BEFORE, true,
+		NULL, 0,
+		false, EXPANSIONTYPE_X86_BRIDGE,
+		0, 0, 0, false, NULL,
+		false, 0, atonce_bridge_settings
 	},
 #endif
 
@@ -6342,6 +6405,7 @@ const struct expansionromtype expansionroms[] = {
 #endif
 
 		/* Network */
+#ifdef A2065
 	{
 		_T("a2065"), _T("A2065"), _T("Commodore"),
 		NULL, a2065_init, NULL, NULL, ROMTYPE_A2065 | ROMTYPE_NOT, 0, 0, BOARD_AUTOCONFIG_Z2, true,
@@ -6360,6 +6424,7 @@ const struct expansionromtype expansionroms[] = {
 		false, 0, ethernet_settings,
 		{ 0xc1, 0xc9, 0x00, 0x00, 2167 >> 8, 2167 & 255, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }
 	},
+#endif
 #ifdef WITH_QEMU_CPU
 	{
 		_T("ariadne2"), _T("Ariadne II"), _T("Village Tronic"),

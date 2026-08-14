@@ -9,21 +9,13 @@
 #include <vector>
 #include <string>
 
-#ifdef USE_IMGUI
-#include "imgui.h"
-#include "imgui_impl_sdl3.h"
-#include "imgui_impl_sdlrenderer3.h"
-#endif
-
 #include "sysdeps.h"
 #include "uae.h"
 #include "options.h"
 #include "keybuf.h"
 #include "zfile.h"
 #include "gui.h"
-#ifdef USE_IMGUI
 #include "gui/gui_handling.h"
-#endif
 #include "rommgr.h"
 #include "custom.h"
 #include "inputdevice.h"
@@ -59,7 +51,11 @@
 #endif
 #endif
 
-#include "android_keyboard_bridge.h"
+#include "uae4arm_host.h"
+#if defined(__linux__)
+extern bool amiberry_led_console_get_leds(unsigned char* leds);
+extern bool amiberry_led_console_set_leds(unsigned char leds);
+#endif
 
 int emulating = 0;
 bool config_loaded = false;
@@ -165,7 +161,7 @@ static int addrom(UAEREG* fkey, struct romdata* rd, const TCHAR* name)
 	_sntprintf(tmp1, sizeof tmp1, _T("ROM_%03d"), rd->id);
 	if (rd->group) {
 		TCHAR* p = tmp1 + _tcslen(tmp1);
-		_sntprintf(p, sizeof p, _T("_%02d_%02d"), rd->group >> 16, rd->group & 65535);
+		_sntprintf(p, sizeof tmp1 / sizeof(TCHAR) - (p - tmp1), _T("_%02d_%02d"), rd->group >> 16, rd->group & 65535);
 	}
 	getromname(rd, tmp2);
 	pathname[0] = 0;
@@ -218,9 +214,12 @@ static int isromext(const std::string& path, bool deepscan)
 		return 0;
 	const std::string ext = path.substr(ext_pos + 1);
 
-	static const std::vector<std::string> extensions = { "rom", "ROM", "roz", "ROZ", "bin", "BIN",  "a500", "A500", "a600", "A600", "a1200", "A1200", "a3000", "A3000", "a4000", "A4000", "cdtv", "CDTV", "cd32", "CD32" };
-	if (std::find(extensions.begin(), extensions.end(), ext) != extensions.end())
-		return 1;
+	static const std::vector<std::string> extensions = { "rom", "bin", "a500", "a600", "a1200", "a3000", "a4000", "cdtv", "cd32", "roz" };
+	for (const auto& extension : extensions)
+	{
+		if (strcasecmp(ext.c_str(), extension.c_str()) == 0)
+			return 1;
+	}
 
 	if (ext.size() >= 2 && std::toupper(ext[0]) == 'U' && std::isdigit(ext[1]))
 		return 1;
@@ -610,7 +609,7 @@ void ReadConfigFileList()
 		{
 			auto p = cfgfile_open(tmp->FullPath, nullptr);
 			if (p) {
-				cfgfile_get_description(p, nullptr, tmp->Description, nullptr, nullptr, nullptr, nullptr, nullptr);
+				cfgfile_get_description(p, nullptr, tmp->Description, tmp->Category, nullptr, nullptr, nullptr, nullptr);
 				cfgfile_close(p);
 			}
 		}
@@ -646,6 +645,7 @@ void disk_selection(const int shortcut, uae_prefs* prefs)
 				strncpy(prefs->floppyslots[shortcut].df, tmp.c_str(), MAX_DPATH);
 				disk_insert(shortcut, tmp.c_str());
 				add_file_to_mru_list(lstMRUDiskList, tmp);
+				set_last_active_config_from_media(tmp.c_str());
 			}
 		}
 	}
@@ -709,7 +709,7 @@ void disk_selection(const int shortcut, uae_prefs* prefs)
 		if (prefs->cdslots[0].inuse && strlen(prefs->cdslots[0].name) > 0)
 			tmp = std::string(prefs->cdslots[0].name);
 		else
-			tmp = get_cdrom_path();
+			tmp = get_cdrom_browse_path();
 
 		if (!tmp.empty())
 		{
@@ -719,6 +719,7 @@ void disk_selection(const int shortcut, uae_prefs* prefs)
 				changed_prefs.cdslots[0].inuse = true;
 				changed_prefs.cdslots[0].type = SCSI_UNIT_DEFAULT;
 				add_file_to_mru_list(lstMRUCDList, tmp);
+				set_last_active_config_from_media(tmp.c_str());
 			}
 		}
 	}
@@ -782,11 +783,34 @@ static void gui_to_prefs(void)
 
 	fixup_prefs(&changed_prefs, true);
 	updatewinfsmode(0, &changed_prefs);
+
+#ifdef AMIBERRY
+	// Screen-mode changes must survive the async config-check round trip: if
+	// anything re-syncs changed_prefs from currprefs before the check runs
+	// (e.g. a GUI re-entry via prefs_to_gui), the pending switch would be
+	// silently dropped. Apply the mode to currprefs now and force a display
+	// change so the window is recreated either way.
+	if (changed_prefs.gfx_apmode[APMODE_NATIVE].gfx_fullscreen != currprefs.gfx_apmode[APMODE_NATIVE].gfx_fullscreen ||
+		changed_prefs.gfx_apmode[APMODE_RTG].gfx_fullscreen != currprefs.gfx_apmode[APMODE_RTG].gfx_fullscreen) {
+		currprefs.gfx_apmode[APMODE_NATIVE].gfx_fullscreen = changed_prefs.gfx_apmode[APMODE_NATIVE].gfx_fullscreen;
+		currprefs.gfx_apmode[APMODE_RTG].gfx_fullscreen = changed_prefs.gfx_apmode[APMODE_RTG].gfx_fullscreen;
+		currprefs.gfx_monitor[0].gfx_size_win = changed_prefs.gfx_monitor[0].gfx_size_win;
+		currprefs.gfx_monitor[0].gfx_size_fs = changed_prefs.gfx_monitor[0].gfx_size_fs;
+		updatewinfsmode(0, &currprefs);
+		gfx_DisplayChangeRequested(2);
+	}
+#endif
 }
 
 static void after_leave_gui()
 {
+	// Capture the active multi-mouse mode before copyconfig overwrites it so
+	// we can detect user toggles made via "load config" (not just the Input
+	// panel checkbox) and re-enumerate mouse devices accordingly.
+	const bool prev_multi_mouse = currprefs.input_multi_mouse;
 	inputdevice_copyconfig(&changed_prefs, &currprefs);
+	if (prev_multi_mouse != currprefs.input_multi_mouse)
+		inputdevice_mouse_reinit(&currprefs);
 	inputdevice_config_change_test();
 }
 
@@ -800,12 +824,6 @@ int gui_init()
 	auto ret = 0;
 
 	read_rom_list(false);
-
-#ifdef USE_IMGUI
-	prefs_to_gui();
-	run_gui();
-	gui_to_prefs();
-#endif
 
 	if (quit_program < 0)
 		quit_program = -quit_program;
@@ -828,9 +846,6 @@ void gui_exit()
 	save_amiberry_settings();
 	macos_bookmarks_shutdown();
 	ClearConfigFileList();
-#ifdef USE_IMGUI
-	configurations_panel_reset();
-#endif
 }
 
 void gui_purge_events()
@@ -866,93 +881,12 @@ void gui_update()
 	screenshot_filename.append(suffix + ".png");
 }
 
-/* if drive is -1, show the full GUI, otherwise file-requester for DF[drive] */
+/* Request the host UI. drive == -1 means the full menu, otherwise a file
+   requester for DF[drive]. The core has no GUI of its own: the Flutter host
+   presents the menu and drives the core back through the host command API. */
 void gui_display(int shortcut)
 {
-#ifdef __ANDROID__
-	if (shortcut == -1)
-	{
-		android_show_pause_menu();
-		return;
-	}
-#endif
-#ifdef USE_IMGUI
-	static int here;
-
-	if (here)
-		return;
-	here++;
-	gui_active++;
-
-	if (setpaused(7)) {
-		inputdevice_unacquire();
-		//rawinput_release();
-		wait_keyrelease();
-		clearallkeys();
-		setmouseactive(0, 0);
-	}
-
-	if (shortcut == -1)
-	{
-		prefs_to_gui();
-		run_gui();
-		gui_to_prefs();
-
-		gui_update();
-		gui_purge_events();
-		gui_active--;
-	}
-	else if (shortcut >= 0 && shortcut <= 6)
-	{
-		amiberry_gui_init();
-		disk_selection(shortcut, &changed_prefs);
-		amiberry_gui_halt();
-	}
-
-	reset_sound();
-	inputdevice_copyconfig(&changed_prefs, &currprefs);
-	inputdevice_config_change_test();
-	clearallkeys ();
-
-	// Raise the emulation window before acquiring input so that
-	// iswindowfocus() succeeds inside setmouseactive2 (see #1895).
-	struct AmigaMonitor* mon = &AMonitors[0];
-	if (mon->amiga_window) {
-		SDL_RaiseWindow(mon->amiga_window);
-	}
-
-	if (resumepaused(7)) {
-		inputdevice_acquire(TRUE);
-		setmouseactive(0, 1);
-	}
-	//rawinput_alloc();
-	if (mon->amiga_window) {
-		SDL_SetWindowMouseGrab(mon->amiga_window, true);
-		SDL_SetWindowKeyboardGrab(mon->amiga_window, !currprefs.alt_tab_release);
-	}
-	// Drain any mouse events generated by re-enabling grabs / relative mode.
-	// The clickthrough hint (reset in amiberry_gui_halt) only helps windowed
-	// mode; on KMSDRM there is no WM to absorb stale events (see #1871).
-	SDL_PumpEvents();
-	SDL_FlushEvents(SDL_EVENT_MOUSE_MOTION, SDL_EVENT_MOUSE_WHEEL);
-	if (kmsdrm_detected && amiga_surface != nullptr)
-	{
-		target_graphics_buffer_update(mon->monitor_id, true);
-	}
-#if defined(_WIN32)
-	// After GUI close on Windows+OpenGL, the emulation shaders were destroyed
-	// to let ImGui use the GL context. Force shader recreation now.
-	if (g_renderer && g_renderer->has_context() && amiga_surface != nullptr)
-	{
-		target_graphics_buffer_update(mon->monitor_id, true);
-	}
-#endif
-	fpscounter_reset();
-	//screenshot_free();
-	//write_disk_history();
-	gui_active--;
-	here--;
-#endif
+	uae4arm_host_show_menu(shortcut);
 }
 
 static void gui_flicker_led2(int led, int unitnum, int status)
@@ -1011,8 +945,10 @@ static void gui_flicker_led2(int led, int unitnum, int status)
 void gui_flicker_led(int led, int unitnum, int status)
 {
 	if (led < 0) {
-		gui_flicker_led2(LED_HD, 0, 0);
-		gui_flicker_led2(LED_CD, 0, 0);
+		if (gui_data.hd >= 0)
+			gui_flicker_led2(LED_HD, 0, 0);
+		if (gui_data.cd >= 0)
+			gui_flicker_led2(LED_CD, 0, 0);
 		if (gui_data.net >= 0)
 			gui_flicker_led2(LED_NET, 0, 0);
 		if (gui_data.md >= 0)
@@ -1042,7 +978,7 @@ static int want_temp = 1; // Make this a negative number to disable Temperature 
 
 void gui_led(int led, int on, int brightness)
 {
-	unsigned char kbd_led_status;
+	unsigned char kbd_led_status = 0;
 
 	// Check current prefs/ update if changed
 	if (currprefs.kbd_led_num != changed_prefs.kbd_led_num) currprefs.kbd_led_num = changed_prefs.kbd_led_num;
@@ -1061,23 +997,23 @@ void gui_led(int led, int on, int brightness)
 		}
 	}
 
-	ioctl(0, KDGETLED, &kbd_led_status);
+	const bool have_keyboard_leds = amiberry_led_console_get_leds(&kbd_led_status);
 
 	// Handle floppy led status
 	if (led >= LED_DF0 && led <= LED_DF3)
 	{
-		if (currprefs.kbd_led_num == led)
+		if (have_keyboard_leds && currprefs.kbd_led_num == led)
 		{
 			if (on) kbd_led_status |= LED_NUM;
 			
 			else kbd_led_status &= ~LED_NUM;
 		}
-		if (currprefs.kbd_led_scr == led)
+		if (have_keyboard_leds && currprefs.kbd_led_scr == led)
 		{
 			if (on) kbd_led_status |= LED_SCR;
 			else kbd_led_status &= ~LED_SCR;
 		}
-		if (currprefs.kbd_led_cap == led)
+		if (have_keyboard_leds && currprefs.kbd_led_cap == led)
 		{
 			if (on) kbd_led_status |= LED_CAP;
 			else kbd_led_status &= ~LED_CAP;
@@ -1096,17 +1032,17 @@ void gui_led(int led, int on, int brightness)
 	// Handle power, hd/cd led status
 	if (led == LED_POWER || led == LED_HD || led == LED_CD)
 	{
-		if (currprefs.kbd_led_num == led)
+		if (have_keyboard_leds && currprefs.kbd_led_num == led)
 		{
 			if (on) kbd_led_status |= LED_NUM;
 			else kbd_led_status &= ~LED_NUM;
 		}
-		if (currprefs.kbd_led_scr == led)
+		if (have_keyboard_leds && currprefs.kbd_led_scr == led)
 		{
 			if (on) kbd_led_status |= LED_SCR;
 			else kbd_led_status &= ~LED_SCR;
 		}
-		if (currprefs.kbd_led_cap == led)
+		if (have_keyboard_leds && currprefs.kbd_led_cap == led)
 		{
 			if (on) kbd_led_status |= LED_CAP;
 			else kbd_led_status &= ~LED_CAP;
@@ -1128,7 +1064,8 @@ void gui_led(int led, int on, int brightness)
 #endif
 	}
 
-	ioctl(0, KDSETLED, kbd_led_status);
+	if (have_keyboard_leds)
+		amiberry_led_console_set_leds(kbd_led_status);
 
 	// Temperature reading
 	if (static unsigned int temp_count = 0; temp_fd >= 0 && ++temp_count % 25 == 0) {
@@ -1159,10 +1096,6 @@ void gui_message(const char* format, ...)
 	va_end(parms);
 
 	write_log("GUI_MESSAGE: %s\n", msg);
-
-#ifdef USE_IMGUI
-	ShowMessageBox("Message", msg);
-#endif
 }
 
 void notify_user(int msg)
@@ -1248,7 +1181,7 @@ void FilterFiles(vector<string>* files, const char* filter[])
 
 bool DevicenameExists(const char* name)
 {
-	for (auto i = 0; i < MAX_HD_DEVICES; ++i)
+	for (auto i = 0; i < changed_prefs.mountitems; ++i)
 	{
 		auto* uci = &changed_prefs.mountconfig[i];
 		auto* const ci = &uci->ci;
@@ -1270,12 +1203,14 @@ void CreateDefaultDevicename(char* name)
 	auto freeNum = 0;
 	auto foundFree = false;
 
-	while (!foundFree && freeNum < 10)
+	while (!foundFree && freeNum < MOUNT_CONFIG_SIZE)
 	{
-		_sntprintf(name, sizeof name, "DH%d", freeNum);
+		snprintf(name, 256, "DH%d", freeNum);
 		foundFree = !DevicenameExists(name);
 		++freeNum;
 	}
+	if (!foundFree)
+		name[0] = 0;
 }
 
 int tweakbootpri(int bp, int ab, int dnm)
@@ -1499,6 +1434,7 @@ void new_cddrive(int entry)
 	struct uaedev_config_info ci{};
 	ci.device_emu_unit = 0;
 	ci.controller_type = current_cddlg.ci.controller_type;
+	ci.controller_type_unit = current_cddlg.ci.controller_type_unit;
 	ci.controller_unit = current_cddlg.ci.controller_unit;
 #ifdef AMIBERRY
 	_tcscpy(ci.rootdir, current_cddlg.ci.rootdir);
@@ -1514,6 +1450,7 @@ void new_tapedrive(int entry)
 	struct uaedev_config_data* uci;
 	struct uaedev_config_info ci{};
 	ci.controller_type = current_tapedlg.ci.controller_type;
+	ci.controller_type_unit = current_tapedlg.ci.controller_type_unit;
 	ci.controller_unit = current_tapedlg.ci.controller_unit;
 	ci.readonly = current_tapedlg.ci.readonly;
 	_tcscpy(ci.rootdir, current_tapedlg.ci.rootdir);
@@ -1586,7 +1523,12 @@ void addhdcontroller(const struct expansionromtype* erc, int firstid, int flags)
 void inithdcontroller(int ctype, int ctype_unit, int devtype, bool media)
 {
 	controller.clear();
-	controller.push_back({ HD_CONTROLLER_TYPE_UAE, _T("UAE (uaehf.device)") });
+	// A CD-ROM cannot be attached to the UAE (uaehf.device) controller as a
+	// mountconfig entry: add_filesys_config() rejects it (UAE CDs are handled
+	// via the uaescsi.device/cdslot mechanism instead). Offering it here would
+	// let the user pick a controller that silently fails to apply.
+	if (devtype != UAEDEV_CD)
+		controller.push_back({ HD_CONTROLLER_TYPE_UAE, _T("UAE (uaehf.device)") });
 	controller.push_back({ HD_CONTROLLER_TYPE_IDE_AUTO, _T("IDE (Auto)") });
 
 	for (auto i = 0; expansionroms[i].name; i++) {
@@ -1772,14 +1714,13 @@ void DisplayDiskInfo(int num)
 	struct diskinfo di {};
 	char tmp1[MAX_DPATH];
 	std::vector<std::string> infotext;
-	char title[MAX_DPATH];
 	char nameonly[MAX_DPATH];
 	char linebuffer[512];
 
-	DISK_examine_image(&changed_prefs, num, &di, true, nullptr);
+	DISK_examine_image(&changed_prefs, num, &di, true, nullptr, 0);
 	DISK_validate_filename(&changed_prefs, changed_prefs.floppyslots[num].df, num, tmp1, 0, nullptr, nullptr, nullptr);
 	extract_filename(tmp1, nameonly);
-	snprintf(title, MAX_DPATH - 1, "Info for %s", nameonly);
+	const std::string title = std::string("Info for ") + nameonly;
 
 	snprintf(linebuffer, sizeof(linebuffer) - 1, "Disk readable: %s", di.unreadable ? _T("No") : _T("Yes"));
 	infotext.emplace_back(linebuffer);
@@ -1822,7 +1763,7 @@ void DisplayDiskInfo(int num)
 		linebuffer[w * 3 + 1 + w] = 0;
 		infotext.emplace_back(linebuffer);
 	}
-	ShowDiskInfo(title, infotext);
+	ShowDiskInfo(title.c_str(), infotext);
 }
 
 void save_mapping_to_file(const std::string& mapping)
@@ -1912,7 +1853,7 @@ std::string get_system_fonts_path()
 	return path;
 }
 
-void save_theme(const std::string& theme_filename)
+bool save_theme(const std::string& theme_filename)
 {
 	std::string filename = get_themes_path();
 	filename.append(theme_filename);
@@ -1941,14 +1882,22 @@ void save_theme(const std::string& theme_filename)
 		write_color("background_color", gui_theme.background_color);
 		write_color("foreground_color", gui_theme.foreground_color);
 		file_output.close();
+		return !file_output.fail();
 	}
+	return false;
 }
 
 void load_theme(const std::string& theme_filename)
 {
-	// Pre-fill all fields with light-theme defaults so that old theme files
-	// missing the new color fields get sensible values instead of black.
-	load_default_theme();
+	// Pre-fill all fields with sensible defaults so that old theme files
+	// missing the new color fields get usable values instead of black.
+	// For the built-in "Dark.theme" preset, fall back to the dark defaults:
+	// it has no file on disk by default, so without this the saved dark
+	// theme would silently revert to the light preset on startup.
+	if (theme_filename == "Dark.theme")
+		load_default_dark_theme();
+	else
+		load_default_theme();
 
 	std::string filename = get_themes_path();
 	filename.append(theme_filename);

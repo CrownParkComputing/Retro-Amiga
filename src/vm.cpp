@@ -229,6 +229,18 @@ static void *uae_vm_alloc_with_flags(size_t size, int flags, int protect)
 	}
 
 	if (address == NULL) {
+#ifdef _WIN32
+		const DWORD win_err = GetLastError();
+		write_log("VM: uae_vm_alloc(%zu, %d, %d) VirtualAlloc failed (GetLastError=%lu)\n",
+			size, flags, protect, (unsigned long)win_err);
+#if defined(CPU_AARCH64)
+		if (protect == UAE_VM_READ_WRITE_EXECUTE) {
+			write_log("VM: Windows ARM64 RWX allocation denied — likely blocked by "
+				"Virtualization-based Security (VBS) / Hypervisor-protected Code "
+				"Integrity (HVCI) or Arbitrary Code Guard in this VM/host.\n");
+		}
+#endif
+#else
 		const int err = errno;
 		if (flags & UAE_VM_JIT) {
 #if defined(__APPLE__) && defined(CPU_AARCH64)
@@ -251,6 +263,7 @@ static void *uae_vm_alloc_with_flags(size_t size, int flags, int protect)
 			}
 #endif
 		}
+#endif
 	    return NULL;
 	}
 #ifdef TRACK_ALLOCATIONS
@@ -276,7 +289,7 @@ static bool do_protect(void *address, size_t size, int protect)
 #ifdef _WIN32
 	DWORD old;
 	if (VirtualProtect(address, size, protect_to_native(protect), &old) == 0) {
-		write_log("VM: uae_vm_protect(%p, %zu, %d) VirtualProtect failed (%d)\n",
+		write_log("VM: uae_vm_protect(%p, %zu, %d) VirtualProtect failed (%lu)\n",
 				address, size, protect, GetLastError());
 		return false;
 	}
@@ -321,7 +334,10 @@ bool uae_vm_free(void *address, size_t size)
 
 void uae_vm_jit_write_protect(bool enable_execute_mode)
 {
-#if defined(__APPLE__) && defined(CPU_AARCH64)
+// macOS on Apple silicon needs the W^X toggle around JIT writes. iOS has no
+// JIT at all (sysconfig.h leaves it undefined for AMIBERRY_IOS) and marks
+// pthread_jit_write_protect_np unavailable, so there is nothing to protect.
+#if defined(__APPLE__) && defined(CPU_AARCH64) && !defined(AMIBERRY_IOS)
 	pthread_jit_write_protect_np(enable_execute_mode ? 1 : 0);
 #else
 	(void)enable_execute_mode;
@@ -396,7 +412,24 @@ void *uae_vm_reserve(size_t size, int flags)
 {
 	void *address = NULL;
 #ifdef _WIN32
+#if defined(CPU_AARCH64)
+	/* Windows ARM64: prefer an above-4GB natmem base so the low 32 bits of
+	 * every natmem-derived host pointer have bit 31 clear.  Mixing natmem
+	 * at 0x80000000 with ARM64 SXTW (sign-extend word) used in JIT branch
+	 * displacement handling turns a 32-bit value with bit 31 set (e.g.
+	 * 0x80F81EC8) into a 0xFFFFFFFF-prefixed kernel-space address.  macOS
+	 * ARM64 already benefits from this because the kernel allocates
+	 * natmem above 4GB; match that layout explicitly on WoA so the JIT
+	 * has the same pointer shape on both platforms. */
+	if ((flags & UAE_VM_32BIT) == 0) {
+		address = try_reserve(0x100000000ULL, size, flags);
+	}
+	if (address == NULL) {
+		address = try_reserve(0x80000000, size, flags);
+	}
+#else
 	address = try_reserve(0x80000000, size, flags);
+#endif
 	if (address == NULL && (flags & UAE_VM_32BIT)) {
 		if (size <= 768 * 1024 * 1024) {
 			address = try_reserve(0x78000000 - size, size, flags);

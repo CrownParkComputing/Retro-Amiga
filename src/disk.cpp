@@ -327,18 +327,7 @@ static void disk_date (uae_u8 *p)
 	struct mytimeval mtv;
 
 	gettimeofday (&tv, NULL);
-#ifndef __PSP2__
-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
-    struct tm *lt = localtime(&tv.tv_sec);
-    tv.tv_sec -= lt->tm_gmtoff;
-#elif defined(__linux__)
-    extern long timezone;
-    tv.tv_sec -= timezone;
-#else
-    // fallback or no adjustment
-#endif
-
-#endif
+	tv.tv_sec = getlocaltime();
 	mtv.tv_sec = tv.tv_sec;
 	mtv.tv_usec = tv.tv_usec;
 	timeval_to_amiga (&mtv, &days, &mins, &ticks, 50);
@@ -1370,7 +1359,7 @@ static int drive_insert (drive *drv, struct uae_prefs *p, int dnum, const TCHAR 
 #else
 	if (!fake) {
 #endif
-		DISK_examine_image(p, dnum, &disk_info_data, false, NULL);
+		DISK_examine_image(p, dnum, &disk_info_data, false, NULL, 0);
 	}
 	drive_image_free(drv);
 	DISK_validate_filename (p, fname_in, dnum, outname, 1, &drv->wrprot, &drv->crc32, &drv->diskfile);
@@ -1413,9 +1402,11 @@ static int drive_insert (drive *drv, struct uae_prefs *p, int dnum, const TCHAR 
 			_tcsncpy (currprefs.floppyslots[dnum].df, fname_in, 255);
 			currprefs.floppyslots[dnum].df[255] = 0;
 		}
+		if (changed_prefs.floppyslots[dnum].df != fname_in) {
+			_tcsncpy (changed_prefs.floppyslots[dnum].df, fname_in, 255);
+			changed_prefs.floppyslots[dnum].df[255] = 0;
+		}
 		currprefs.floppyslots[dnum].forcedwriteprotect = forcedwriteprotect;
-		_tcsncpy (changed_prefs.floppyslots[dnum].df, fname_in, 255);
-		changed_prefs.floppyslots[dnum].df[255] = 0;
 		changed_prefs.floppyslots[dnum].forcedwriteprotect = forcedwriteprotect;
 		if (drv->newname != fname_in) {
 			_tcsncpy(drv->newname, fname_in, MAX_DPATH - 1);
@@ -2849,26 +2840,33 @@ static int drive_write_adf_amigados (drive *drv)
 }
 
 /* write raw track to disk file */
-static int drive_write_ext2 (uae_u16 *bigmfmbuf, struct zfile *diskfile, trackid *ti, int tracklen)
+static int drive_write_ext2(uae_u16 *bigmfmbuf, struct zfile *diskfile, trackid *ti, int tracklen)
 {
-	int len, i, offset;
-
-	offset = 0;
-	len = (tracklen + 7) / 8;
-	if (len > ti->len) {
-		write_log (_T("disk raw write: image file's track %d is too small (%d < %d)!\n"), ti->track, ti->len, len);
-		offset = (len - ti->len) / 2;
-		len = ti->len;
+	int len;
+	if (floppy_writemode <= 0) {
+		len = FLOPPY_WRITE_LEN * 2;
+		tracklen = len * 8;
+	} else {
+		len = (tracklen + 7) / 8;
+		if (len > ti->len) {
+			write_log(_T("disk raw write: image file's track %d is too small (%d < %d)!\n"), ti->track, ti->len, len);
+		}
 	}
-	diskfile_update (diskfile, ti, tracklen, TRACK_RAW);
-	for (i = 0; i < ti->len / 2; i++) {
-		uae_u16 *mfm = bigmfmbuf + ((i + offset) % MAXMFMBUF);
-		uae_u16 *mfmw = bigmfmbufw + ((i + offset) % MAXMFMBUF);
-		uae_u8 *data = (uae_u8 *) mfm;
-		*mfmw = 256 * *data + *(data + 1);
+	if (len > 0) {
+		if (len > ti->len) {
+			len = ti->len;
+		}
+		int maxlen = len > MAXMFMBUF ? MAXMFMBUF : len;
+		for (int i = 0; i < ti->len / 2; i++) {
+			uae_u16 *mfm = bigmfmbuf + (i % maxlen);
+			uae_u16 *mfmw = bigmfmbufw + (i % maxlen);
+			uae_u8 *data = (uae_u8*)mfm;
+			*mfmw = 256 * *data + *(data + 1);
+		}
+		diskfile_update(diskfile, ti, tracklen, TRACK_RAW);
+		zfile_fseek(diskfile, ti->offs, SEEK_SET);
+		zfile_fwrite(bigmfmbufw, 1, maxlen, diskfile);
 	}
-	zfile_fseek (diskfile, ti->offs, SEEK_SET);
-	zfile_fwrite (bigmfmbufw, 1, len, diskfile);
 	return 1;
 }
 
@@ -2926,7 +2924,7 @@ static bool convert_adf_to_ext2 (drive *drv, int mode)
 	return true;
 }
 
-static void drive_write_data (drive * drv)
+static void drive_write_data (drive *drv)
 {
 	int ret = -1;
 	int tr = drv->cyl * 2 + side;
@@ -3370,6 +3368,9 @@ void disk_insert (int num, const TCHAR *name, bool forcedwriteprotect)
 {
 	set_config_changed ();
 	target_addtorecent (name, 0);
+#ifdef AMIBERRY
+	set_last_active_config_from_media(name);
+#endif
 	disk_insert_2 (num, name, 0, forcedwriteprotect);
 }
 
@@ -3377,6 +3378,9 @@ void disk_insert (int num, const TCHAR *name)
 {
 	set_config_changed ();
 	target_addtorecent (name, 0);
+#ifdef AMIBERRY
+	set_last_active_config_from_media(name);
+#endif
 	disk_insert_2 (num, name, 0, false);
 }
 void disk_insert_force (int num, const TCHAR *name, bool forcedwriteprotect)
@@ -4063,9 +4067,12 @@ static int disk_doupdate_write(int floppybits, int trackspeed)
 					for (dr = 0; dr < MAX_FLOPPY_DRIVES; dr++) {
 						drive *drv2 = &floppy[dr];
 						if (drives[dr]) {
+							if (!drv2->writtento) {
+								drv2->bigmfmbuf[((drv2->mfmpos >> 4) - 1) % drv2->tracklen] = 0x5555;
+								drv2->writtento = 1;
+							}
 							drv2->bigmfmbuf[drv2->mfmpos >> 4] = w;
-							drv2->bigmfmbuf[(drv2->mfmpos >> 4) + 1] = 0x5555;
-							drv2->writtento = 1;
+							drv2->bigmfmbuf[((drv2->mfmpos >> 4) + 1) % drv2->tracklen] = 0x5555;
 #ifdef FLOPPYBRIDGE
 							if (drv2->bridge) {
 								wasBridge = true;
@@ -4096,10 +4103,10 @@ static int disk_doupdate_write(int floppybits, int trackspeed)
 							if ((selected | disabled) & (1 << dr))
 								continue;
 							drive_write_data(drv);
+							}
 						}
 					}
 				}
-			}
 			if (canloaddskbytr()) {
 				dskbytr_val = 0x8000;
 			}
@@ -5654,43 +5661,61 @@ static void abrcheck(struct diskinfo *di)
 }
 
 #ifdef FLOPPYBRIDGE
-static void get_floppybridgeinfo(struct uae_prefs *prefs, TCHAR *infotext, int num)
+static void append_floppybridgeinfo(TCHAR *infotext, size_t infotext_size, const TCHAR *text)
 {
-	if (!infotext) {
+	size_t len = _tcslen(infotext);
+	if (len >= infotext_size)
 		return;
-	}
+
+	_tcsncpy(infotext + len, text, infotext_size - len);
+	infotext[infotext_size - 1] = 0;
+}
+
+static void append_floppybridgeinfof(TCHAR *infotext, size_t infotext_size, const TCHAR *format, ...)
+{
+	size_t len = _tcslen(infotext);
+	if (len >= infotext_size)
+		return;
+
+	va_list parms;
+	va_start(parms, format);
+	_vsntprintf(infotext + len, infotext_size - len, format, parms);
+	va_end(parms);
+	infotext[infotext_size - 1] = 0;
+}
+
+static void get_floppybridgeinfo(struct uae_prefs *prefs, TCHAR *infotext, size_t infotext_size, int num)
+{
+	if (!infotext || !infotext_size)
+		return;
+
 	floppybridge_init(prefs);
 	if (bridgeinfoloaded <= 1) {
 		FloppyBridgeAPI::getBridgeDriverInformation(true, bridgeinfo);
 		bridgeinfoloaded = 2;
 	}
-	TCHAR *p = infotext;
-	_tcscat(p, bridgeinfo.about);
-	p += _tcslen(p);
+	append_floppybridgeinfo(infotext, infotext_size, bridgeinfo.about);
 	if (bridgeinfo.isUpdateAvailable) {
-		_sntprintf(p, sizeof p, _T(" v%u.%u (v%u.%u) "), bridgeinfo.majorVersion, bridgeinfo.minorVersion, bridgeinfo.updateMajorVersion, bridgeinfo.updateMinorVersion);
+		append_floppybridgeinfof(infotext, infotext_size, _T(" v%u.%u (v%u.%u) "), bridgeinfo.majorVersion, bridgeinfo.minorVersion, bridgeinfo.updateMajorVersion, bridgeinfo.updateMinorVersion);
 	} else {
-		_sntprintf(p, sizeof p, _T(" v%u.%u "), bridgeinfo.majorVersion, bridgeinfo.minorVersion);
+		append_floppybridgeinfof(infotext, infotext_size, _T(" v%u.%u "), bridgeinfo.majorVersion, bridgeinfo.minorVersion);
 	}
-	p += _tcslen(p);
-	_sntprintf(p, sizeof p, _T("(%s)"), bridgeinfo.url);
-	_tcscat(p, _T("\r\n\r\n"));
-	p += _tcslen(p);
+	append_floppybridgeinfof(infotext, infotext_size, _T("(%s)"), bridgeinfo.url);
+	append_floppybridgeinfo(infotext, infotext_size, _T("\r\n\r\n"));
 	if (bridge_driver[num]) {
 		const FloppyDiskBridge::BridgeDriver *bd = bridge_driver[num];
 		TCHAR *name = au(bd->name);
 		TCHAR *man = au(bd->manufacturer);
 		TCHAR *url = au(bd->url);
-		_sntprintf(p, sizeof p, _T("%s, %s (%s)\r\n"), name, man, url);
+		append_floppybridgeinfof(infotext, infotext_size, _T("%s, %s (%s)\r\n"), name, man, url);
 		xfree(url);
 		xfree(man);
 		xfree(name);
-		p += _tcslen(p);
 	}
 }
 #endif
 
-int DISK_examine_image(struct uae_prefs *p, int num, struct diskinfo *di, bool deepcheck, TCHAR *infotext)
+int DISK_examine_image(struct uae_prefs *p, int num, struct diskinfo *di, bool deepcheck, TCHAR *infotext, size_t infotext_size)
 {
 	int drvsec;
 	int ret, i;
@@ -5714,7 +5739,7 @@ int DISK_examine_image(struct uae_prefs *p, int num, struct diskinfo *di, bool d
 
 #ifdef FLOPPYBRIDGE
 	if (fb) {
-		get_floppybridgeinfo(p, infotext, num);
+		get_floppybridgeinfo(p, infotext, infotext_size, num);
 	}
 #endif
 

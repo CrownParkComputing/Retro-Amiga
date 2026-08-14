@@ -24,6 +24,10 @@
 
 static struct romlist *rl;
 static int romlist_cnt;
+// Bumped on every change to the rom list contents (add/clear). Lets callers that
+// cache derived data detect a rebuild even when the entry count is unchanged
+// (e.g. a rescan that swaps ROMs for a different set of the same size).
+static int romlist_gen;
 
 struct romlist *romlist_getit (void)
 {
@@ -33,6 +37,11 @@ struct romlist *romlist_getit (void)
 int romlist_count (void)
 {
 	return romlist_cnt;
+}
+
+int romlist_get_generation (void)
+{
+	return romlist_gen;
 }
 
 TCHAR *romlist_get (const struct romdata *rd)
@@ -71,6 +80,7 @@ void romlist_add (const TCHAR *path, struct romdata *rd)
 		return;
 	}
 	romlist_cnt++;
+	romlist_gen++;
 	rl = xrealloc (struct romlist, rl, romlist_cnt);
 	rl2 = rl + romlist_cnt - 1;
 	rl2->path = my_strdup (path);
@@ -97,7 +107,7 @@ struct romdata *getromdatabypath (const TCHAR *path)
 	return NULL;
 }
 
-#define NEXT_ROM_ID 341
+#define NEXT_ROM_ID 342
 
 #if NEXT_ROM_ID >= MAX_ROMMGR_ROMS
 #error Increase MAX_ROMMGR_ROMS!
@@ -867,6 +877,8 @@ static struct romdata roms[] = {
 	0xf5384f6a, 0xa3bab2ad,0xd9555353,0x64d6e5fc,0x5bedac05,0xe35fad0b, NULL, NULL },
 	{ _T("A1060 BIOS 2.06"), 2, 6, 2, 6, _T("A1060\0"), 16384, 147, 0, 0, ROMTYPE_A1060, 0, 0, _T("380619-03"),
 	0x185f2bbd, 0xeba74ad1,0x000a5351,0xa5d99179,0xbf75f831,0xac2d2402, NULL, NULL },
+	{ _T("A1060 BIOS 2.07"), 2, 7, 2, 7, _T("A1060\0"), 16384, 341, 0, 0, ROMTYPE_A1060, 0, 0, _T("380619-04"),
+	0xe44ac214, 0x0990ea8c,0x509ead36,0x7391741d,0xf2d4542c,0xcb9d8fb7, NULL, NULL },
 	{ _T("A2088 BIOS 3.4"), 3, 4, 3, 4, _T("A2088\0"), 16384, 148, 0, 0, ROMTYPE_A2088, 0, 0, _T("380788-04"),
 	0x05552160, 0xd1defdee, 0x1c0eae41, 0x07d81e26, 0x74915cd2, 0x9d352f2e, NULL, NULL },
 	{ _T("A2088 BIOS 3.5"), 3, 5, 3, 5, _T("A2088\0"), 16384, 158, 0, 0, ROMTYPE_A2088, 0, 0, _T("380788-04"),
@@ -1119,6 +1131,7 @@ void romlist_clear (void)
 	xfree (rl);
 	rl = 0;
 	romlist_cnt = 0;
+	romlist_gen++;
 	parent = 0;
 	pn = NULL;
 	for (i = 0; roms[i].name; i++) {
@@ -1174,6 +1187,7 @@ static void romlist_cleanup(void)
 					if (cnt > 0)
 						memmove(rl2, rl2 + 1, cnt * sizeof (struct romlist));
 					romlist_cnt--;
+					romlist_gen++;
 				}
 				i++;
 			}
@@ -2508,13 +2522,13 @@ int configure_rom (struct uae_prefs *p, const int *rom, int msg)
 
 	if (rd->type & (ROMTYPE_ARCADIAGAME | ROMTYPE_ALG)) {
 		get_nvram_path(p->flashfile, sizeof(p->flashfile) / sizeof(TCHAR));
-		_sntprintf(p->flashfile + _tcslen(p->flashfile), sizeof p->flashfile + _tcslen(p->flashfile), _T("%s.nvr"), rd->name);
+		_sntprintf(p->flashfile + _tcslen(p->flashfile), sizeof p->flashfile / sizeof(TCHAR) - _tcslen(p->flashfile), _T("%s.nvr"), rd->name);
 		clean_path(p->flashfile);
 	}
 #ifdef ARCADIA
 	if (rd->type & ROMTYPE_ALG) {
 		get_video_path(p->genlock_video_file, sizeof(p->genlock_video_file) / sizeof(TCHAR));
-		_sntprintf(p->genlock_video_file + _tcslen(p->genlock_video_file), sizeof p->genlock_video_file + _tcslen(p->genlock_video_file), _T("%s.avi"), rd->name);
+		_sntprintf(p->genlock_video_file + _tcslen(p->genlock_video_file), sizeof p->genlock_video_file / sizeof(TCHAR) - _tcslen(p->genlock_video_file), _T("%s.avi"), rd->name);
 		clean_path(p->genlock_video_file);
 	}
 #endif
@@ -2653,6 +2667,23 @@ struct boardromconfig *get_device_rom(struct uae_prefs *p, int romtype, int devn
 			continue;
 		if ((brc->device_type & ROMTYPE_MASK) == (parentrom & ROMTYPE_MASK) && brc->device_num == devnum)
 			return brc;
+	}
+	return NULL;
+}
+
+const struct cpuboardsubtype *get_cpuboard_rom(struct uae_prefs *p, int romtype)
+{
+	if (!p->cpuboard_type) {
+		return NULL;
+	}
+	for (int i = 0; cpuboards[i].name; i++) {
+		const struct cpuboardsubtype *sub = cpuboards[i].subtypes;
+		while (sub && sub->name) {
+			if ((sub->romtype & ROMTYPE_MASK) == romtype) {
+				return sub;
+			}
+			sub++;
+		}
 	}
 	return NULL;
 }
@@ -2959,6 +2990,136 @@ struct zfile *flashromfile_open(const TCHAR *name)
 	if (f) {
 		write_log(_T("Flash file '%s' loaded, %s.\n"), name, rw ? _T("RW") : _T("RO"));
 	}
+	return f;
+}
+
+static const TCHAR *get_path_basename(const TCHAR *name)
+{
+	const TCHAR *sep1 = _tcsrchr(name, '\\');
+	const TCHAR *sep2 = _tcsrchr(name, '/');
+	const TCHAR *sep = sep1;
+	if (!sep || (sep2 && sep2 > sep))
+		sep = sep2;
+	return sep ? sep + 1 : name;
+}
+
+static bool accelerator_flash_path(const TCHAR *name, TCHAR *path, int size)
+{
+	if (name == NULL || !name[0])
+		return false;
+
+	get_nvram_path(path, size);
+	const TCHAR *base = get_path_basename(name);
+	if (!base[0])
+		return false;
+
+	if (_tcslen(path) + _tcslen(base) + 4 >= static_cast<size_t>(size))
+		return false;
+
+	_tcsncat(path, base, size - _tcslen(path) - 1);
+	path[size - 1] = 0;
+
+	TCHAR *ext = _tcsrchr(path, '.');
+	const TCHAR *slash1 = _tcsrchr(path, '\\');
+	const TCHAR *slash2 = _tcsrchr(path, '/');
+	const TCHAR *slash = slash1;
+	if (!slash || (slash2 && slash2 > slash))
+		slash = slash2;
+	if (ext && (!slash || ext > slash)) {
+		_tcsncpy(ext, _T(".nvr"), size - (ext - path) - 1);
+		path[size - 1] = 0;
+	} else {
+		_tcsncat(path, _T(".nvr"), size - _tcslen(path) - 1);
+		path[size - 1] = 0;
+	}
+	return true;
+}
+
+static struct zfile *flashromfile_open_source(const TCHAR *name)
+{
+	struct zfile *f = zfile_fopen(name, _T("rb"), ZFD_NORMAL);
+	if (f)
+		return f;
+
+	TCHAR path[MAX_DPATH];
+	get_rom_path(path, sizeof path / sizeof(TCHAR));
+	_tcscat(path, name);
+	return zfile_fopen(path, _T("rb"), ZFD_NORMAL);
+}
+
+static bool copy_flashrom_source_to_nvram(struct zfile *source, const TCHAR *path)
+{
+	const uae_s64 source_size = zfile_size(source);
+	if (source_size <= 0)
+		return false;
+
+	struct zfile *out = zfile_fopen(path, _T("wb"), 0);
+	if (!out)
+		return false;
+
+	zfile_fseek(source, 0, SEEK_SET);
+	uae_u8 buffer[8192];
+	uae_s64 copied = 0;
+	for (;;) {
+		const size_t got = zfile_fread(buffer, 1, sizeof buffer, source);
+		if (got == 0)
+			break;
+		if (zfile_fwrite(buffer, 1, got, out) != got) {
+			zfile_fclose(out);
+			my_unlink(path);
+			zfile_fseek(source, 0, SEEK_SET);
+			return false;
+		}
+		copied += got;
+	}
+	zfile_fclose(out);
+	zfile_fseek(source, 0, SEEK_SET);
+	if (copied != source_size) {
+		my_unlink(path);
+		return false;
+	}
+	return true;
+}
+
+static bool accelerator_flash_shadow_valid(struct zfile *shadow, struct zfile *source)
+{
+	const uae_s64 shadow_size = zfile_size(shadow);
+	if (shadow_size <= 0)
+		return false;
+	return source == NULL || shadow_size == zfile_size(source);
+}
+
+struct zfile *flashromfile_open_accelerator(const TCHAR *name)
+{
+	TCHAR path[MAX_DPATH];
+	if (!accelerator_flash_path(name, path, sizeof path / sizeof(TCHAR)))
+		return NULL;
+
+	struct zfile *source = flashromfile_open_source(name);
+	struct zfile *f = zfile_fopen(path, _T("rb+"), ZFD_NONE);
+	if (f) {
+		if (accelerator_flash_shadow_valid(f, source)) {
+			zfile_fclose(source);
+			write_log(_T("Accelerator flash file '%s' loaded from NVRAM, RW.\n"), path);
+			return f;
+		}
+		write_log(_T("Accelerator flash file '%s' invalid size, recreating from source.\n"), path);
+		zfile_fclose(f);
+		my_unlink(path);
+	}
+
+	if (!source)
+		return NULL;
+
+	if (!copy_flashrom_source_to_nvram(source, path)) {
+		write_log(_T("Accelerator flash file '%s' could not be created, using source read-only.\n"), path);
+		return source;
+	}
+	zfile_fclose(source);
+
+	f = zfile_fopen(path, _T("rb+"), ZFD_NONE);
+	if (f)
+		write_log(_T("Accelerator flash file '%s' initialized in NVRAM, RW.\n"), path);
 	return f;
 }
 

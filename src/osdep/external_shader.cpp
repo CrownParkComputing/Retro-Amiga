@@ -1,12 +1,14 @@
 #ifdef USE_OPENGL
-#include "external_shader.h"
-#include "sysdeps.h"
-#include "uae.h"
-#include "zfile.h"
 #include <fstream>
 #include <sstream>
 #include <regex>
 #include <cstring>
+
+#include "external_shader.h"
+#include "shader_preset.h"
+#include "sysdeps.h"
+#include "uae.h"
+#include "zfile.h"
 
 // Constructor
 ExternalShader::ExternalShader()
@@ -98,6 +100,30 @@ bool ExternalShader::load_from_file(const char* filepath)
 	return true;
 }
 
+bool ExternalShader::load_parameter_metadata_from_file(const char* filepath,
+	std::vector<ShaderParameter>& parameters, std::string* error_message)
+{
+	parameters.clear();
+
+	if (!filepath || !zfile_exists(filepath)) {
+		if (error_message)
+			*error_message = std::string("Shader file not found: ") + (filepath ? filepath : "");
+		return false;
+	}
+
+	std::ifstream file(filepath);
+	if (!file.is_open()) {
+		if (error_message)
+			*error_message = std::string("Failed to open shader file: ") + filepath;
+		return false;
+	}
+
+	std::stringstream buffer;
+	buffer << file.rdbuf();
+	parse_pragma_parameters(buffer.str(), parameters);
+	return true;
+}
+
 // Reload shader (for hot-reload)
 bool ExternalShader::reload()
 {
@@ -115,7 +141,7 @@ bool ExternalShader::reload()
 bool ExternalShader::parse_shader_file(const std::string& source)
 {
 	// Parse #pragma parameters first
-	parse_pragma_parameters(source);
+	parse_pragma_parameters(source, parameters_);
 	
 	// Extract vertex and fragment shaders
 	std::string vs_source = extract_vertex_shader(source);
@@ -216,9 +242,10 @@ std::string ExternalShader::extract_fragment_shader(const std::string& source)
 }
 
 // Parse #pragma parameter directives
-void ExternalShader::parse_pragma_parameters(const std::string& source)
+void ExternalShader::parse_pragma_parameters(const std::string& source,
+	std::vector<ShaderParameter>& parameters)
 {
-	parameters_.clear();
+	parameters.clear();
 	
 	// Regex to match: #pragma parameter NAME "Description" default min max step
 	std::regex param_regex(R"(#pragma\s+parameter\s+(\w+)\s+\"([^\"]+)\"\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+))");
@@ -237,7 +264,7 @@ void ExternalShader::parse_pragma_parameters(const std::string& source)
 		param.step = std::stof(match[6].str());
 		param.current_value = param.default_value;
 		
-		parameters_.push_back(param);
+		parameters.push_back(param);
 		++iter;
 	}
 }
@@ -438,6 +465,36 @@ void ExternalShader::apply_parameter_uniforms()
 			glUniform1f(loc, param.current_value);
 		}
 	}
+}
+
+bool load_shader_parameter_metadata(const char* shader_name,
+	std::vector<ShaderParameter>& parameters, std::string* error_message)
+{
+	parameters.clear();
+	if (!shader_name) {
+		if (error_message)
+			*error_message = "No shader selected";
+		return false;
+	}
+
+	const char* extension = strrchr(shader_name, '.');
+	if (!extension) {
+		if (error_message)
+			*error_message = "Built-in shaders do not expose adjustable parameters";
+		return false;
+	}
+
+	const std::string shader_path = get_shaders_path() + shader_name;
+	if (!strcasecmp(extension, ".glsl"))
+		return ExternalShader::load_parameter_metadata_from_file(
+			shader_path.c_str(), parameters, error_message);
+	if (!strcasecmp(extension, ".glslp"))
+		return ShaderPreset::load_parameter_metadata_from_file(
+			shader_path.c_str(), parameters, error_message);
+
+	if (error_message)
+		*error_message = std::string("Unsupported shader type: ") + extension;
+	return false;
 }
 
 // Global shader management functions

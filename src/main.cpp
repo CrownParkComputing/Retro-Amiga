@@ -77,6 +77,7 @@
 #ifndef LIBRETRO
 #include "amiberry_update.h"
 #endif
+#include "amiberry_rp9.h"
 
 
 // Special version string so that AmigaOS can detect it
@@ -301,6 +302,19 @@ void fixup_cpu (struct uae_prefs *p)
 		break;
 	}
 
+#ifndef WITH_PPC
+	if (cpuboard_is_ppc_accelerator(p)) {
+		p->cpuboard_type = 0;
+		p->cpuboard_subtype = 0;
+		p->cpuboard_settings = 0;
+	}
+	p->ppc_mode = 0;
+	p->ppc_model[0] = 0;
+	// PPC_IMPLEMENTATION_AUTO is only visible when WITH_PPC includes uae/ppc.h.
+	p->ppc_implementation = 0;
+	p->ppc_cpu_idle = 0;
+#endif
+
 	if (p->cpu_thread && (p->cpu_compatible || p->ppc_mode || p->cpu_memory_cycle_exact || p->cpu_model < 68020)) {
 		p->cpu_thread = false;
 		error_log(_T("Threaded CPU mode is not compatible with PPC emulation, More compatible or Cycle Exact modes. CPU type must be 68020 or higher."));
@@ -426,7 +440,21 @@ void fixup_cpu (struct uae_prefs *p)
 
 void fixup_prefs (struct uae_prefs *p, bool userconfig)
 {
-	built_in_chipset_prefs (p);
+#ifdef AMIBERRY
+	p->gfx_apmode[APMODE_NATIVE].gfx_fullscreen = amiberry_normalize_gfx_fullscreen_mode(
+		p->gfx_apmode[APMODE_NATIVE].gfx_fullscreen);
+	p->gfx_apmode[APMODE_RTG].gfx_fullscreen = amiberry_normalize_gfx_fullscreen_mode(
+		p->gfx_apmode[APMODE_RTG].gfx_fullscreen);
+#endif
+
+	const int saved_cs_ide = p->cs_ide;
+	const int saved_cs_mbdmac = p->cs_mbdmac;
+	built_in_chipset_prefs(p);
+	if (saved_cs_ide != p->cs_ide)
+		p->cs_ide = saved_cs_ide;
+	if (saved_cs_mbdmac != p->cs_mbdmac)
+		p->cs_mbdmac = saved_cs_mbdmac;
+
 	fixup_cpu (p);
 	cfgfile_compatibility_rtg(p);
 #ifdef AMIBERRY
@@ -879,12 +907,39 @@ static inline uae_u32 arm64_mov_w0_imm16(uae_u16 imm)
 	return 0x52800000u | (static_cast<uae_u32>(imm) << 5);
 }
 
-int run_jit_selftest_cli(void)
+#if defined(CPU_AARCH64) || defined(CPU_x86_64)
+// Emit a "return imm32" stub for the host architecture. Returns the number
+// of bytes written. The stub is the smallest function we can call from C++:
+//   ARM64:   MOV w0, #imm16 ; RET            (8 bytes, low 16 bits used)
+//   x86_64:  MOV EAX, imm32 ; RET            (6 bytes, full 32 bits used)
+// EAX/W0 is the integer return register on both ABIs.
+static size_t jit_selftest_emit_return_imm(uae_u8* dst, uae_u32 imm)
 {
 #if defined(CPU_AARCH64)
-	constexpr uae_u16 first_result = 0x1234;
-	constexpr uae_u16 patched_result = 0x4B1D;
 	constexpr uae_u32 arm64_ret = 0xD65F03C0u;
+	auto* code = reinterpret_cast<uae_u32*>(dst);
+	code[0] = arm64_mov_w0_imm16(static_cast<uae_u16>(imm));
+	code[1] = arm64_ret;
+	return 8;
+#else // CPU_x86_64
+	dst[0] = 0xB8; // MOV EAX, imm32
+	dst[1] = static_cast<uae_u8>(imm & 0xff);
+	dst[2] = static_cast<uae_u8>((imm >> 8) & 0xff);
+	dst[3] = static_cast<uae_u8>((imm >> 16) & 0xff);
+	dst[4] = static_cast<uae_u8>((imm >> 24) & 0xff);
+	dst[5] = 0xC3; // RET
+	return 6;
+#endif
+}
+#endif
+
+int run_jit_selftest_cli(void)
+{
+#if defined(CPU_AARCH64) || defined(CPU_x86_64)
+	// Use 16-bit-friendly values so the same constants work for the ARM64
+	// MOV w0, #imm16 path and the x86_64 MOV EAX, imm32 path.
+	constexpr uae_u32 first_result = 0x1234u;
+	constexpr uae_u32 patched_result = 0x4B1Du;
 	const int page_size = uae_vm_page_size();
 	if (page_size <= 0) {
 		write_log("JIT selftest: invalid VM page size (%d)\n", page_size);
@@ -900,14 +955,12 @@ int run_jit_selftest_cli(void)
 		return 3;
 	}
 
-	auto* code = reinterpret_cast<uae_u32*>(page);
 	using jit_fn_t = uae_u32 (*)();
 	auto* fn = reinterpret_cast<jit_fn_t>(page);
 
 	uae_vm_jit_write_protect(false);
-	code[0] = arm64_mov_w0_imm16(first_result);
-	code[1] = arm64_ret;
-	__builtin___clear_cache(reinterpret_cast<char*>(code), reinterpret_cast<char*>(code + 2));
+	const size_t code_size = jit_selftest_emit_return_imm(page, first_result);
+	__builtin___clear_cache(reinterpret_cast<char*>(page), reinterpret_cast<char*>(page + code_size));
 	uae_vm_jit_write_protect(true);
 
 	const uae_u32 first_value = fn();
@@ -918,8 +971,8 @@ int run_jit_selftest_cli(void)
 	}
 
 	uae_vm_jit_write_protect(false);
-	code[0] = arm64_mov_w0_imm16(patched_result);
-	__builtin___clear_cache(reinterpret_cast<char*>(code), reinterpret_cast<char*>(code + 2));
+	const size_t patched_size = jit_selftest_emit_return_imm(page, patched_result);
+	__builtin___clear_cache(reinterpret_cast<char*>(page), reinterpret_cast<char*>(page + patched_size));
 	uae_vm_jit_write_protect(true);
 
 	const uae_u32 patched_value = fn();
@@ -956,7 +1009,7 @@ void usage()
 	std::cout << " -h                         Show this help." << '\n';
 	std::cout << " --help                     \n" << '\n';
 	std::cout << " --log                      Show log output to console." << '\n';
-	std::cout << " --jit-selftest             Run ARM64 JIT VM/write/execute selftest and exit." << '\n';
+	std::cout << " --jit-selftest             Run JIT VM/write/execute selftest (ARM64 or x86_64) and exit." << '\n';
 	std::cout << " --dump-paths               Resolve startup paths, print them, and exit." << '\n';
 	std::cout << " --download-whdboot         Download/update WHDBooter files and exit." << '\n';
 	std::cout << " -f <file>                  Load a configuration file." << '\n';
@@ -964,7 +1017,7 @@ void usage()
 	std::cout << " --model <Amiga Model>      Amiga model to emulate, from the QuickStart options." << '\n';
 	std::cout << "                            Available options are: A1000, A500, A500P, A600, A2000, A3000, A1200, A4000, CD32 and CDTV.\n" <<
 		'\n';
-	std::cout << " --autoload <file>          Load an .lha WHDLoad game or a CD32 CD image, using the WHDBooter." << '\n';
+	std::cout << " --autoload <file>          Load an RP9 package, an .lha WHDLoad game, or a CD image." << '\n';
 	std::cout << " --cdimage <file>           Load the CD image provided when starting emulation." << '\n';
 	std::cout << " --statefile <file>         Load a save state file." << '\n';
 	std::cout << " -s <option>=<value>        Set one or more configuration options directly, without loading a file." <<
@@ -973,7 +1026,7 @@ void usage()
 		'\n';
 	std::cout << "\nAdditional options:" << '\n';
 	std::cout << "amiberry <file>             Auto-detect the type of file and use the default action for it." << '\n';
-	std::cout << "                            Supported file types are: .uae config, .lha WHDLoad, CD images and disk images." << '\n';
+	std::cout << "                            Supported file types are: .uae configs, .rp9 packages, .lha WHDLoad, CD and disk images." << '\n';
 	std::cout << " -0 <disk.adf>              Insert specified ADF image into emulated floppy drive 0-3." << '\n';
 	std::cout << " -1 <disk.adf>              " << '\n';
 	std::cout << " -2 <disk.adf>              " << '\n';
@@ -987,7 +1040,7 @@ void usage()
 	std::cout << " -S <value>                 Sound parameter specification." << '\n';
 	std::cout << " -R <value>                 Output framerate in frames per second." << '\n';
 	std::cout << " -i                         Enable illegal memory." << '\n';
-	std::cout << " -J <xy>                    Specify joystick 0 (x) and 1 (y). Possible values: 0/1 for joystick, M for mouse, and a/b/c." <<
+	std::cout << " -J <xy>                    Specify joystick 0 (x) and 1 (y). Possible values: 0/1 for joystick, M for mouse, and a/b/c/d." <<
 		'\n';
 	std::cout << " -w <value>                 CPU emulation speed. Possible values: 0 (Cycle Exact), -1 (Max)." << '\n';
 	std::cout << " -G                         Don't show the GUI, start emulation directly." << '\n';
@@ -1120,6 +1173,78 @@ static TCHAR *parsetextpath (const TCHAR *s)
 	return s3;
 }
 
+#ifdef AMIBERRY
+static void register_cmdline_rp9_rom_sources(const int argc, TCHAR** argv)
+{
+	for (auto index = 1; index < argc; ++index) {
+		if (argv[index][0] != '-')
+			continue;
+
+		if (argv[index][1] == 'r' || argv[index][1] == 'K') {
+			const auto extended = argv[index][1] == 'K';
+			const TCHAR* argument = argv[index] + 2;
+			if (!argument[0]) {
+				if (index + 1 >= argc)
+					continue;
+				argument = argv[++index];
+			}
+
+			auto* const path = parsetextpath(argument);
+			if (path[0] && !rp9_register_rom_override(path)) {
+				write_log(_T("%sKickstart override could not be registered for RP9 validation: %s\n"),
+					extended ? _T("Extended ") : _T(""), path);
+			}
+			xfree(path);
+			continue;
+		}
+
+		if (argv[index][1] == 's') {
+			const TCHAR* argument = argv[index] + 2;
+			if (!argument[0]) {
+				if (index + 1 >= argc)
+					continue;
+				argument = argv[++index];
+			}
+			constexpr auto rom_path_prefix = _T("rom_path=");
+			constexpr auto rom_path_prefix_length = 9;
+			constexpr auto qualified_rom_path_prefix = TARGET_NAME _T(".rom_path=");
+			constexpr auto qualified_rom_path_prefix_length = sizeof(TARGET_NAME _T(".rom_path=")) / sizeof(TCHAR) - 1;
+			constexpr auto rom_file_prefix = _T("kickstart_rom_file=");
+			constexpr auto rom_file_prefix_length = 19;
+			constexpr auto rom_ext_file_prefix = _T("kickstart_ext_rom_file=");
+			constexpr auto rom_ext_file_prefix_length = 23;
+
+			const TCHAR* path_argument = nullptr;
+			bool directory = false;
+			if (_tcsnicmp(argument, rom_path_prefix, rom_path_prefix_length) == 0) {
+				path_argument = argument + rom_path_prefix_length;
+				directory = true;
+			} else if (_tcsnicmp(argument, qualified_rom_path_prefix, qualified_rom_path_prefix_length) == 0) {
+				path_argument = argument + qualified_rom_path_prefix_length;
+				directory = true;
+			} else if (_tcsnicmp(argument, rom_file_prefix, rom_file_prefix_length) == 0) {
+				path_argument = argument + rom_file_prefix_length;
+			} else if (_tcsnicmp(argument, rom_ext_file_prefix, rom_ext_file_prefix_length) == 0) {
+				path_argument = argument + rom_ext_file_prefix_length;
+			} else {
+				continue;
+			}
+
+			auto* const path = parsetextpath(path_argument);
+			if (directory) {
+				const auto registered = rp9_register_rom_directory(path);
+				if (registered > 0) {
+					write_log(_T("RP9: registered %d ROM(s) from command-line ROM path '%s'\n"), registered, path);
+				}
+			} else if (path[0] && !rp9_register_rom_override(path)) {
+				write_log(_T("Kickstart configuration override could not be registered for RP9 validation: %s\n"), path);
+			}
+			xfree(path);
+		}
+	}
+}
+#endif
+
 std::string get_filename_extension(const TCHAR* filename)
 {
 	const std::string fName(filename);
@@ -1132,15 +1257,19 @@ std::string get_filename_extension(const TCHAR* filename)
 }
 
 extern void set_last_active_config(const char* filename);
+extern void set_last_active_config_from_media(const char* filename);
 
 static bool cmdline_started;
 
-#ifdef LIBRETRO
+/* Lets the command line be parsed again by a host that runs the core more than
+   once in a process. Amiberry's own binary runs it once and exits, so the guard
+   below was never a problem there; a phone launcher starts a second game in the
+   same process, and without this that game's --config and --autoload are both
+   silently dropped. */
 void reset_parse_cmdline()
 {
 	cmdline_started = false;
 }
-#endif
 
 static void parse_cmdline (int argc, TCHAR **argv)
 {
@@ -1151,6 +1280,12 @@ static void parse_cmdline (int argc, TCHAR **argv)
 	if (cmdline_started)
 		return;
 	cmdline_started = true;
+
+#ifdef AMIBERRY
+	// RP9 validates required ROMs as soon as --autoload is parsed, so publish
+	// every explicit override and ROM path before processing options in order.
+	register_cmdline_rp9_rom_sources(argc, argv);
+#endif
 
 	for (auto i = 1; i < argc; i++) {
 		if (_tcsncmp(argv[i], _T("-cli="), 5) == 0 || _tcsncmp(argv[i], _T("--cli="), 6) == 0) {
@@ -1274,7 +1409,7 @@ static void parse_cmdline (int argc, TCHAR **argv)
 			}
 			loaded = true;
 		}
-		// Auto-load .cue / .lha  
+		// Auto-load RP9, WHDLoad or CD content.
 		else if (_tcscmp(argv[i], _T("--autoload")) == 0)
 		{
 			if (i + 1 == argc)
@@ -1283,29 +1418,39 @@ static void parse_cmdline (int argc, TCHAR **argv)
 			{
 				auto* const txt = parsetextpath(argv[++i]);
 				const auto txt2 = get_filename_extension(txt); // Extract the extension from the string  (incl '.')
-				if (_tcscmp(txt2.c_str(), ".lha") == 0)
+				if (_tcsicmp(txt2.c_str(), ".rp9") == 0)
+				{
+					write_log("RP9... %s\n", txt);
+					if (target_cfgfile_load(&currprefs, txt, CONFIG_TYPE_ALL, 0))
+						config_loaded = true;
+				}
+				else if (_tcsicmp(txt2.c_str(), ".lha") == 0)
 				{
 					write_log("WHDLoad... %s\n", txt);
 					add_file_to_mru_list(lstMRUWhdloadList, std::string(txt));
 					whdload_prefs.whdload_filename = std::string(txt);
 					whdload_auto_prefs(&currprefs, txt);
-					xfree(txt);
 				}
-				else if (_tcscmp(txt2.c_str(), ".cue") == 0
-					|| _tcscmp(txt2.c_str(), ".iso") == 0
-					|| _tcscmp(txt2.c_str(), ".chd") == 0)
+				else if (_tcsicmp(txt2.c_str(), ".cue") == 0
+					|| _tcsicmp(txt2.c_str(), ".iso") == 0
+					|| _tcsicmp(txt2.c_str(), ".chd") == 0)
 				{
 					write_log("CDTV/CD32... %s\n", txt);
 					add_file_to_mru_list(lstMRUCDList, std::string(txt));
 					cd_auto_prefs(&currprefs, txt);
-					xfree(txt);
 				}
 				else
 					write_log("Unknown extension for autoload... %s\n", txt);
+				xfree(txt);
+				loaded = true;
 			}
 		}
 		else if (_tcscmp(argv[i], _T("--log")) == 0)
 			console_logging = 1;
+		else if (_tcscmp(argv[i], _T("--rescan-roms")) == 0)
+		{
+			// already handled during the early platform startup scan
+		}
 		else if (_tcscmp(argv[i], _T("-s")) == 0)
 		{
 			if (i + 1 == argc)
@@ -1323,6 +1468,7 @@ static void parse_cmdline (int argc, TCHAR **argv)
 				if (_tcsrchr(txt2, ',') == nullptr)
 					_tcscat(txt2, _T(",image"));
 				cfgfile_parse_option(&currprefs, _T("cdimage0"), txt2, 0);
+				set_last_active_config_from_media(txt);
 				xfree(txt2);
 				xfree(txt);
 			}
@@ -1343,13 +1489,20 @@ static void parse_cmdline (int argc, TCHAR **argv)
 			auto* const txt = parsetextpath(argv[i]);
 			const auto txt2 = get_filename_extension(txt); // Extract the extension from the string  (incl '.')
 #ifdef AMIBERRY
-			if (_tcscmp(txt2.c_str(), ".lha") == 0)
+			if (_tcsicmp(txt2.c_str(), ".rp9") == 0)
+			{
+				write_log("RP9... %s\n", txt);
+				if (target_cfgfile_load(&currprefs, txt, CONFIG_TYPE_ALL, 0)) {
+					config_loaded = true;
+					currprefs.start_gui = false;
+				}
+			}
+			else if (_tcsicmp(txt2.c_str(), ".lha") == 0)
 			{
 				write_log("WHDLoad... %s\n", txt);
 				add_file_to_mru_list(lstMRUWhdloadList, std::string(txt));
 				whdload_prefs.whdload_filename = std::string(txt);
 				whdload_auto_prefs(&currprefs, txt);
-				set_last_active_config(txt);
 			}
 			else if (_tcscmp(txt2.c_str(), ".uss") == 0)
 			{
@@ -1376,13 +1529,13 @@ static void parse_cmdline (int argc, TCHAR **argv)
 				write_log("CDTV/CD32... %s\n", txt);
 				add_file_to_mru_list(lstMRUCDList, std::string(txt));
 				cd_auto_prefs(&currprefs, txt);
-				set_last_active_config(txt);
 			}
 			else if (_tcscmp(txt2.c_str(), ".adf") == 0
 				|| _tcscmp(txt2.c_str(), ".adz") == 0
 				|| _tcscmp(txt2.c_str(), ".dms") == 0
 				|| _tcscmp(txt2.c_str(), ".ipf") == 0
 				|| _tcscmp(txt2.c_str(), ".zip") == 0
+				|| _tcscmp(txt2.c_str(), ".7z") == 0
 				)
 			{
 				write_log("Floppy... %s\n", txt);
@@ -1418,7 +1571,7 @@ static void parse_cmdline (int argc, TCHAR **argv)
 				{
 					write_log("No configuration file found for %s, inserting disk in DF0: with default settings\n", txt);
 					disk_insert(0, txt);
-					set_last_active_config(txt);
+					set_last_active_config_from_media(txt);
 					currprefs.start_gui = false;
 				}
 			}
@@ -1543,17 +1696,23 @@ void check_error_sdl(const bool check, const char* message)
 static int real_main2 (int argc, TCHAR **argv)
 {
 	set_config_changed();
+	write_log(_T("startup: prefs reset\n"));
 	if (restart_config[0]) {
 		default_prefs (&currprefs, true, 0);
+		write_log(_T("startup: defaults applied\n"));
 		fixup_prefs (&currprefs, true);
+		write_log(_T("startup: defaults fixed up\n"));
 	}
+	write_log(_T("startup: graphics setup\n"));
 
 	if (!graphics_setup()) {
 		abort();
 	}
 
+	write_log(_T("startup: events\n"));
 	event_init();
 
+	write_log(_T("startup: command line\n"));
 	if (restart_config[0]) {
 		parse_cmdline_and_init_file(argc, argv);
 	} else {
@@ -1575,6 +1734,7 @@ static int real_main2 (int argc, TCHAR **argv)
 		currprefs.produce_sound = 0;
 	}
 	inputdevice_init ();
+	write_log(_T("startup: input ready\n"));
 
 	copy_prefs(&currprefs, &changed_prefs);
 	inputdevice_updateconfig(&currprefs, &changed_prefs);
@@ -1586,17 +1746,6 @@ static int real_main2 (int argc, TCHAR **argv)
 	else if (restart_program == 3)
 		no_gui = false;
 	restart_program = 0;
-#ifdef USE_IMGUI
-		const auto err = gui_init ();
-		copy_prefs(&changed_prefs, &currprefs);
-		set_config_changed ();
-		if (err == -1) {
-			write_log (_T("Failed to initialize the GUI\n"));
-			return -1;
-		} else if (err == -2) {
-			return 1;
-		}
-#endif
 
 #ifndef LIBRETRO
 	if (amiberry_options.update_check && get_update_method() != UpdateMethod::DISABLED) {
@@ -1615,8 +1764,11 @@ static int real_main2 (int argc, TCHAR **argv)
 #ifdef JIT
 	compiler_init();
 #endif
+	write_log(_T("startup: compiler ready\n"));
 #ifdef NATMEM_OFFSET
+	write_log(_T("startup: reserving emulated memory\n"));
 	if (!init_shm ()) {
+		write_log(_T("startup: init_shm failed\n"));
 		if (currprefs.start_gui)
 			uae_restart(&currprefs, -1, nullptr);
 		return 0;
@@ -1632,7 +1784,9 @@ static int real_main2 (int argc, TCHAR **argv)
 #endif
 	uaerandomizeseed();
 	copy_prefs(&currprefs, &changed_prefs);
+	write_log(_T("startup: entering target_run\n"));
 	target_run ();
+	write_log(_T("startup: target_run returned\n"));
 	/* force sound settings change */
 	currprefs.produce_sound = 0;
 
@@ -1644,8 +1798,10 @@ static int real_main2 (int argc, TCHAR **argv)
 #ifdef DEBUGGER
 	disasm_init();
 #endif
+	write_log(_T("startup: resetting memory\n"));
 	memory_hardreset (2);
 	memory_reset ();
+	write_log(_T("startup: memory ready\n"));
 
 #ifdef AUTOCONFIG
 	native2amiga_install ();
@@ -1690,6 +1846,7 @@ void real_main (int argc, TCHAR **argv)
 	default_config = 1;
 
 	while (restart_program) {
+		write_log(_T("startup: pass begins (restart_program=%d)\n"), restart_program);
 		copy_prefs(&currprefs, &changed_prefs);
 		const auto ret = real_main2 (argc, argv);
 		if (ret == 0 && quit_to_gui)

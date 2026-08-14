@@ -646,7 +646,7 @@ static inline void voodoo_tmu_fetch_and_blend(voodoo_t *voodoo, voodoo_params_t 
                 state->tex_a[0] ^= 0xff;
 }
 
-#if (defined i386 || defined __i386 || defined __i386__ || defined _X86_ || defined WIN32 || defined _WIN32 || defined _WIN32) && !(defined __amd64__)
+#if (defined i386 || defined __i386 || defined __i386__ || defined _X86_ || defined WIN32 || defined _WIN32 || defined _WIN32) && !(defined __amd64__) && !(defined __aarch64__) && !(defined _M_ARM64)
 #include "vid_voodoo_codegen_x86.h"
 #elif (defined __amd64__ && defined WIN64)
 #include "vid_voodoo_codegen_x86-64.h"
@@ -778,7 +778,7 @@ static void voodoo_half_triangle(voodoo_t *voodoo, voodoo_params_t *params, vood
         }
 #ifndef NO_CODEGEN
         typedef uint8_t(__cdecl *VOODOO_DRAW)(voodoo_state_t*,voodoo_params_t*, int,int);
-#if (defined WIN32 || defined WIN64)
+#if (defined WIN32 || defined WIN64) && !(defined __aarch64__) && !(defined _M_ARM64)
         if (voodoo->use_recompiler)
                 voodoo_draw = (VOODOO_DRAW)voodoo_get_block(voodoo, params, state, odd_even);
         else
@@ -1578,11 +1578,13 @@ static int render_thread(void *param, int odd_even)
 {
         voodoo_t *voodoo = (voodoo_t *)param;
 
-        while (1)
+        while (voodoo->thread_run)
         {
                 thread_set_event(voodoo->render_not_full_event[odd_even]);
                 thread_wait_event(voodoo->wake_render_thread[odd_even], -1);
                 thread_reset_event(voodoo->wake_render_thread[odd_even]);
+                if (!voodoo->thread_run)
+                        break;
                 voodoo->render_voodoo_busy[odd_even] = 1;
 
                 while (!PARAM_EMPTY(odd_even))
@@ -1604,6 +1606,7 @@ static int render_thread(void *param, int odd_even)
 
                 voodoo->render_voodoo_busy[odd_even] = 0;
         }
+        voodoo->render_voodoo_busy[odd_even] = 0;
         return 0;
 }
 
@@ -1628,8 +1631,8 @@ void voodoo_queue_triangle(voodoo_t *voodoo, voodoo_params_t *params)
 {
         voodoo_params_t *params_new = &voodoo->params_buffer[voodoo->params_write_idx & PARAM_MASK];
 
-        while (PARAM_FULL(0) || (voodoo->render_threads >= 2 && PARAM_FULL(1)) ||
-                (voodoo->render_threads == 4 && (PARAM_FULL(2) || PARAM_FULL(3))))
+        while (voodoo->thread_run && (PARAM_FULL(0) || (voodoo->render_threads >= 2 && PARAM_FULL(1)) ||
+                (voodoo->render_threads == 4 && (PARAM_FULL(2) || PARAM_FULL(3)))))
         {
                 thread_reset_event(voodoo->render_not_full_event[0]);
                 if (voodoo->render_threads >= 2)
@@ -1648,6 +1651,8 @@ void voodoo_queue_triangle(voodoo_t *voodoo, voodoo_params_t *params)
                 if (voodoo->render_threads == 4 && PARAM_FULL(3))
                         thread_wait_event(voodoo->render_not_full_event[3], -1); /*Wait for room in ringbuffer*/
         }
+        if (!voodoo->thread_run)
+                return;
 
         voodoo_use_texture(voodoo, params, 0);
         if (voodoo->dual_tmus)

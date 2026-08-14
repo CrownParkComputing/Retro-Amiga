@@ -1,0 +1,58 @@
+name: uae4arm2026
+description: "Amiga emulator for iPhone and iPad, built on Amiberry."
+publish_to: 'none'
+version: 1.0.0+2
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  archive: ^4.0.9
+  file_picker: ^8.1.7
+  flutter:
+    sdk: flutter
+  shared_preferences: ^2.5.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    # WHDLoad's own boot files and per-game database, shipped with the app.
+    # Amiberry's booter mounts these as DH3 while a game runs; without them a
+    # WHDLoad game boots to Workbench and stops on a requester about DH3, and
+    # on iOS there is nowhere to go and find them.
+    - assets/whdboot/boot-data.zip
+    - assets/whdboot/whdload_db.xml
+    # The loaders themselves. boot-data.zip is only the shell around them: it
+    # holds C/List, C/Copy and the rest, and the booter copies WHDLoad in
+    # beside them at boot. Without this file the game boots and AmigaDOS says
+    # "whdload: unknown command".
+    - assets/whdboot/WHDLoad
+    - assets/whdboot/JST
+    - assets/whdboot/AmiQuit
+    # Relocation tables from skick (freely distributable, unlike the ROMs
+    # they patch). WHDLoad's kick-emulation needs kickNNNNN.XNNN.RTB next to
+    # the matching ROM in Devs/Kickstarts, and without one the game stops on
+    # a requester about a file most people have never heard of.
+    - assets/whdboot/kick33180.A500.RTB
+    - assets/whdboot/kick33192.A500.RTB
+    - assets/whdboot/kick34005.A500.RTB
+    - assets/whdboot/kick40063.A600.RTB
+    - assets/whdboot/kick40068.A1200.RTB
+    - assets/whdboot/kick40068.A4000.RTB
+    # The AROS m68k ROM: an open reimplementation of AmigaOS, and what the
+    # core falls back to when the user has supplied no Kickstart ("Could not
+    # load system ROM, trying AROS ROM replacement"). It is what makes a clean
+    # install boot to a desktop instead of nothing at all. AROS Public
+    # License; the About panel carries the attribution and source pointer the
+    # licence requires. NOT a Kickstart substitute for games -- most WHDLoad
+    # titles still need a real one.
+    - assets/roms/aros-rom.bin
+    - assets/roms/aros-ext.bin
+    - assets/images/retro_recomp_logo.png
+    - assets/machines/

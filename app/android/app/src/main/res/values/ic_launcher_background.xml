@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The icon's own ground, so the adaptive layers meet without a seam:
+         the foreground is drawn over this, and a mismatched colour shows as a
+         ring around the artwork on any launcher that zooms the layers. -->
+    <color name="ic_launcher_background">#120A20</color>
+</resources>

@@ -11,6 +11,7 @@
 #define UAE_FSDB_H
 
 #include "uae/types.h"
+#include <cstddef>		/* size_t (used by my_save_file_atomic) */
 
 #ifndef FSDB_FILE
 #define FSDB_FILE _T("_UAEFSDB.___")
@@ -165,6 +166,10 @@ extern int my_rmdir(const TCHAR* path) noexcept;
 extern int my_mkdir (const TCHAR*);
 extern int my_unlink(const TCHAR* path) noexcept;
 extern int my_rename(const TCHAR* oldname, const TCHAR* newname) noexcept;
+/* Atomically replace `filename` with `len` bytes from `data`, preserving the
+   previous file's permissions/attributes. On success the data is durable; on
+   any failure `filename` is left untouched. Returns true on success. */
+[[nodiscard]] extern bool my_save_file_atomic(const TCHAR* filename, const void* data, size_t len) noexcept;
 extern int my_setcurrentdir (const TCHAR *curdir, TCHAR *oldcur);
 bool my_isfilehidden(const char* path) noexcept;
 bool my_setfilehidden(const TCHAR* path, bool hidden) noexcept;
@@ -175,6 +180,7 @@ extern uae_s64 my_lseek(struct my_openfile_s* mos, uae_s64 offset, int whence) n
 extern uae_s64 my_fsize (struct my_openfile_s*);
 extern unsigned int my_read (struct my_openfile_s*, void*, unsigned int);
 extern unsigned int my_write (struct my_openfile_s*, void*, unsigned int);
+extern void my_set_time_explicit(struct my_openfile_s*) noexcept;
 extern int my_truncate (const TCHAR *name, uae_u64 len);
 extern int dos_errno (void);
 extern bool my_existslink(const char* name);
@@ -210,6 +216,7 @@ extern std::string my_get_sha1_of_file(const char* filepath);
 char* fsdb_native_path(const char* root_dir, const char* amiga_path);
 void fsdb_get_file_time(a_inode* node, int* days, int* mins, int* ticks);
 int fsdb_set_file_time(a_inode* node, int days, int mins, int ticks);
+void fsdb_sync_file_time_from_host(const TCHAR* nname);
 int host_errno_to_dos_errno(int err);
 bool copyfile(const char* target, const char* source, bool replace);
 #endif

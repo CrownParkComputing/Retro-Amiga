@@ -397,6 +397,8 @@ void sorecvfrom(struct socket *so)
 	    u_char code=ICMP_UNREACH_PORT;
 
 		int error = WSAGetLastError();
+	    if(len == -1 && IS_EAGAIN(error))
+	      return;
 	    if(error  == WSAEHOSTUNREACH) code=ICMP_UNREACH_HOST;
 	    else if(error  == WSAENETUNREACH) code=ICMP_UNREACH_NET;
 	    
@@ -440,6 +442,10 @@ void sorecvfrom(struct socket *so)
 	    u_char code=ICMP_UNREACH_PORT;
 		int error = WSAGetLastError();
 
+	    if (IS_EAGAIN(error)) {
+	      m_free(m);
+	      return;
+	    }
 	    if(error == WSAEHOSTUNREACH) code=ICMP_UNREACH_HOST;
 	    else if(error == WSAENETUNREACH) code=ICMP_UNREACH_NET;
 	    
@@ -492,6 +498,8 @@ int sosendto(struct socket *so, struct mbuf *m)
 	  /* It's an alias */
 	  switch(ntohl(so->so_faddr.s_addr) & 0xff) {
 	  case CTL_DNS:
+	    if (!dns_addr_valid)
+	      return -1;
 	    addr.sin_addr = dns_addr;
 	    break;
 	  case CTL_ALIAS:

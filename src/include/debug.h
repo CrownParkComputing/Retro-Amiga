@@ -45,6 +45,15 @@ extern void activate_debugger(void);
 extern void activate_debugger_new(void);
 extern void activate_debugger_new_pc(uaecptr pc, int len);
 extern void deactivate_debugger (void);
+#ifdef AMIBERRY
+extern bool debugger_is_stopped(void);
+extern bool debugger_external_control_available(void);
+extern bool debugger_poll_external_control(void);
+extern bool debugger_request_step(int count);
+extern bool debugger_request_step_over(void);
+extern bool debugger_request_continue(void);
+extern void debugger_breakpoints_changed(void);
+#endif
 extern const TCHAR *debuginfo (int);
 extern void record_copper (uaecptr addr, uaecptr nextaddr, uae_u16 word1, uae_u16 word2, int hpos, int vpos);
 extern void record_copper_blitwait (uaecptr addr, int hpos, int vpos);
@@ -109,16 +118,17 @@ extern void debug_smc_clear(uaecptr addr, int size);
 #define BREAKPOINT_REG_FPIAR 34
 #define BREAKPOINT_REG_FPCR 35
 #define BREAKPOINT_REG_FPSR 36
-#define BREAKPOINT_REG_END 37
+#define BREAKPOINT_REG_FPx 37
+#define BREAKPOINT_REG_END 45
 
 #define BREAKPOINT_CMP_EQUAL 0
 #define BREAKPOINT_CMP_NEQUAL 1
 #define BREAKPOINT_CMP_SMALLER_EQUAL 2
 #define BREAKPOINT_CMP_LARGER_EQUAL 3
-#define BREAKPOINT_CMP_SMALLER 2
-#define BREAKPOINT_CMP_LARGER 3
-#define BREAKPOINT_CMP_RANGE 4
-#define BREAKPOINT_CMP_NRANGE 5
+#define BREAKPOINT_CMP_SMALLER 4
+#define BREAKPOINT_CMP_LARGER 5
+#define BREAKPOINT_CMP_RANGE 6
+#define BREAKPOINT_CMP_NRANGE 7
 
 struct breakpoint_node {
 	uae_u32 value1;
@@ -228,7 +238,7 @@ struct dma_rec
 {
 	int hpos, vpos[2];
 	int frame;
-	uae_u32 tick;
+	evt_t tick;
 	int dhpos[2];
     uae_u16 reg;
     uae_u64 dat;
@@ -352,6 +362,7 @@ extern int get_dma_debug_color(struct dma_rec *dr, int line, uae_u32 *cp);
 #define TRACE_RANGE_PC 4
 #define TRACE_SKIP_LINE 5
 #define TRACE_RAM_PC 6
+#define TRACE_IMMEDIATE 7
 #define TRACE_CHECKONLY 10
 
 #else

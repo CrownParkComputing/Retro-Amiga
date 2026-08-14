@@ -19,6 +19,9 @@
 #include "custom.h"
 #include "newcpu.h"
 #include "cia.h"
+#ifdef WITH_X86
+#include "atonce.h"
+#endif
 #ifdef SERIAL_PORT
 #include "serial.h"
 #endif
@@ -183,6 +186,8 @@ static int internaleclockphase;
 static bool cia_cycle_accurate;
 
 int cia_timer_hack_adjust = 1;
+
+static void check_keyboard(void);
 
 static bool acc_mode(void)
 {
@@ -584,9 +589,7 @@ static void CIA_update_check(void)
 				ovfl[0] = 2;
 			}
 		}
-#ifndef AMIBERRY
 		assert(c->t[0].timer < 0x10000);
-#endif
 
 		// Timer B
 		cc = 0;
@@ -606,9 +609,7 @@ static void CIA_update_check(void)
 				}
 			}
 		}
-#ifndef AMIBERRY
 		assert(c->t[1].timer < 0x10000);
-#endif
 
 		// B INMODE=10 or 11 (B counting A underflows)
 		if (ovfl[0] && ((c->t[1].cr & (CR_INMODE | CR_INMODE1 | CR_START)) == (CR_INMODE1 | CR_START) || (c->t[1].cr & (CR_INMODE | CR_INMODE1 | CR_START)) == (CR_INMODE | CR_INMODE1 | CR_START))) {
@@ -983,12 +984,51 @@ static void setcode(uae_u8 keycode)
 	kbcode = ~((keycode << 1) | (keycode >> 7));
 }
 
+static int keyboard_cia_num(void)
+{
+	return currprefs.cs_compatible == CP_VELVET ? 1 : 0;
+}
+
+static void keyboard_handshake_write(struct CIA *c, uae_u8 val)
+{
+	// keyboard handshake handling
+	bool handshake_start = (val & CR_INMODE1) != 0 && (c->t[0].cr & CR_INMODE1) == 0;
+	bool handshake_end = (val & CR_INMODE1) == 0 && (c->t[0].cr & CR_INMODE1) != 0;
+
+	if (currprefs.cpuboard_type != 0 && (handshake_start || handshake_end)) {
+		/* bleh, Phase5 CPU timed early boot key check fix.. */
+		if (m68k_getpc() >= 0xf00000 && m68k_getpc() < 0xf80000)
+			check_keyboard();
+	}
+	if (handshake_start) {
+		if (kblostsynccnt > 0 && currprefs.cs_kbhandshake) {
+			kbhandshakestart = get_cycles();
+		}
+#if KB_DEBUG
+		write_log(_T("KB_ACK_START %02x->%02x %08x\n"), c->t[0].cr, val, M68K_GETPC);
+#endif
+	} else if (handshake_end) {
+		/* todo: check if low to high or high to low only */
+		if (kblostsynccnt > 0 && currprefs.cs_kbhandshake) {
+			evt_t len = get_cycles() - kbhandshakestart;
+			if (len < currprefs.cs_kbhandshake * CYCLE_UNIT) {
+				write_log(_T("Keyboard handshake pulse length %d < %d (CCKs)\n"), len / CYCLE_UNIT, currprefs.cs_kbhandshake);
+			}
+		}
+		kblostsynccnt = 0;
+#if KB_DEBUG
+		write_log(_T("KB_ACK_END %02x->%02x %08x\n"), c->t[0].cr, val, M68K_GETPC);
+#endif
+	}
+}
+
 static void sendrw(void)
 {
+	int num = keyboard_cia_num();
 	setcode(AK_RESETWARNING);
-	cia[0].sdr = kbcode;
+	cia[num].sdr = kbcode;
 	kblostsynccnt = 8 * maxvpos * 8; // 8 frames * 8 bits.
-	CIA_sync_interrupt(0, ICR_SP);
+	CIA_sync_interrupt(num, ICR_SP);
 	write_log(_T("KB: sent reset warning code (phase=%d)\n"), resetwarning_phase);
 }
 
@@ -1013,6 +1053,8 @@ int resetwarning_do(int canreset)
 
 static void resetwarning_check(void)
 {
+	int num = keyboard_cia_num();
+
 	if (resetwarning_timer > 0) {
 		resetwarning_timer--;
 		if (resetwarning_timer <= 0) {
@@ -1030,14 +1072,14 @@ static void resetwarning_check(void)
 			sendrw();
 		}
 	} else if (resetwarning_phase == 2) {
-		if (cia[0].t[0].cr & CR_SPMODE) { /* second AK_RESETWARNING handshake active */
+		if (cia[num].t[0].cr & CR_SPMODE) { /* second AK_RESETWARNING handshake active */
 			resetwarning_phase = 3;
 			write_log(_T("KB: reset warning SP = output\n"));
 			/* System won't reset until handshake signal becomes inactive or 10s has passed */
 			resetwarning_timer = (int)(10 * maxvpos_nom * vblank_hz);
 		}
 	} else if (resetwarning_phase == 3) {
-		if (!(cia[0].t[0].cr & CR_SPMODE)) { /* second AK_RESETWARNING handshake disabled */
+		if (!(cia[num].t[0].cr & CR_SPMODE)) { /* second AK_RESETWARNING handshake disabled */
 			write_log(_T("KB: reset warning end by software. reset.\n"));
 			resetwarning_phase = -1;
 			kblostsynccnt = 0;
@@ -1048,14 +1090,17 @@ static void resetwarning_check(void)
 
 void cia_keyreq(uae_u8 code)
 {
+	int num = keyboard_cia_num();
+
 #if KB_DEBUG
 	write_log(_T("code=%02x (%02x)\n"), kbcode, (uae_u8)(~((kbcode >> 1) | (kbcode << 7))));
 #endif
-	cia[0].sdr = code;
+
+	cia[num].sdr = code;
 	if (currprefs.keyboard_mode == 0) {
 		kblostsynccnt = 8 * maxvpos * 8; // 8 frames * 8 bits.
 	}
-	CIA_sync_interrupt(0, ICR_SP);
+	CIA_sync_interrupt(num, ICR_SP);
 }
 
 /* All this complexity to lazy evaluate CIA-B TOD increase.
@@ -2153,7 +2198,7 @@ static void WriteCIAA(uae_u16 addr, uae_u8 val, uae_u32 *flags)
 	case 13:
 	case 15:
 		CIA_update();
-		if (currprefs.keyboard_mode > 0 && reg == 12) {
+		if (currprefs.keyboard_mode > 0 && reg == 12 && currprefs.cs_compatible != CP_VELVET) {
 			keymcu_do();
 		}
 		WriteCIAReg(0, reg, val);
@@ -2163,39 +2208,12 @@ static void WriteCIAA(uae_u16 addr, uae_u8 val, uae_u32 *flags)
 		{
 			CIA_update();
 			bool handshake = (val & CR_INMODE1) != (c->t[0].cr & CR_INMODE1);
-			if (currprefs.keyboard_mode == 0) {
-				// keyboard handshake handling
-				if (currprefs.cpuboard_type != 0 && handshake) {
-					/* bleh, Phase5 CPU timed early boot key check fix.. */
-					if (m68k_getpc() >= 0xf00000 && m68k_getpc() < 0xf80000)
-						check_keyboard();
-				}
-				if ((val & CR_INMODE1) != 0 && (c->t[0].cr & CR_INMODE1) == 0) {
-					// handshake start
-					if (kblostsynccnt > 0 && currprefs.cs_kbhandshake) {
-						kbhandshakestart = get_cycles();
-					}
-#if KB_DEBUG
-					write_log(_T("KB_ACK_START %02x->%02x %08x\n"), c->t[0].cr, val, M68K_GETPC);
-#endif
-				} else if ((val & CR_INMODE1) == 0 && (c->t[0].cr & CR_INMODE1) != 0) {
-					// handshake end
-					/* todo: check if low to high or high to low only */
-					if (kblostsynccnt > 0 && currprefs.cs_kbhandshake) {
-						evt_t len = get_cycles() - kbhandshakestart;
-						if (len < currprefs.cs_kbhandshake * CYCLE_UNIT) {
-							write_log(_T("Keyboard handshake pulse length %d < %d (CCKs)\n"), len / CYCLE_UNIT, currprefs.cs_kbhandshake);
-						}
-					}
-					kblostsynccnt = 0;
-#if KB_DEBUG
-					write_log(_T("KB_ACK_END %02x->%02x %08x\n"), c->t[0].cr, val, M68K_GETPC);
-#endif
-				}
+			if (currprefs.keyboard_mode == 0 && currprefs.cs_compatible != CP_VELVET) {
+				keyboard_handshake_write(c, val);
 			}
 			WriteCIAReg(0, reg, val);
 			CIA_calctimers();
-			if (currprefs.keyboard_mode > 0 && handshake) {
+			if (currprefs.keyboard_mode > 0 && handshake && currprefs.cs_compatible != CP_VELVET) {
 				keymcu_do();
 			}
 		}
@@ -2295,6 +2313,20 @@ static void WriteCIAB(uae_u16 addr, uae_u8 val, uae_u32 *flags)
 		dongle_cia_write(1, reg, c->prb, val);
 		c->drb = val;
 		break;
+	case 14:
+		{
+			CIA_update();
+			bool handshake = (val & CR_INMODE1) != (c->t[0].cr & CR_INMODE1);
+			if (currprefs.keyboard_mode == 0 && currprefs.cs_compatible == CP_VELVET) {
+				keyboard_handshake_write(c, val);
+			}
+			WriteCIAReg(1, reg, val);
+			CIA_calctimers();
+			if (currprefs.keyboard_mode > 0 && handshake && currprefs.cs_compatible == CP_VELVET) {
+				keymcu_do();
+			}
+		}
+		break;
 	case 4:
 	case 5:
 	case 6:
@@ -2305,9 +2337,11 @@ static void WriteCIAB(uae_u16 addr, uae_u8 val, uae_u32 *flags)
 	case 11:
 	case 12:
 	case 13:
-	case 14:
 	case 15:
 		CIA_update();
+		if (currprefs.keyboard_mode > 0 && reg == 12 && currprefs.cs_compatible == CP_VELVET) {
+			keymcu_do();
+		}
 		WriteCIAReg(1, reg, val);
 		CIA_calctimers();
 		break;
@@ -2612,6 +2646,16 @@ static uae_u32 REGPARAM2 cia_bget(uaecptr addr)
 	uae_u8 v = 0;
 	uae_u32 flags = 0;
 
+#ifdef WITH_X86
+	// ATonce sits in the 68000 socket: it decodes before Gary
+	{
+		uae_u32 av;
+		if (atonce_cia_access(addr, &av, 1, 0)) {
+			return (uae_u8)av;
+		}
+	}
+#endif
+
 	if (isgarynocia(addr))
 		return dummy_get(addr, 1, false, 0);
 
@@ -2675,6 +2719,15 @@ static uae_u32 REGPARAM2 cia_wget(uaecptr addr)
 	int r = (addr & 0xf00) >> 8;
 	uae_u16 v = 0;
 	uae_u32 flags = 0;
+
+#ifdef WITH_X86
+	{
+		uae_u32 av;
+		if (atonce_cia_access(addr, &av, 2, 0)) {
+			return (uae_u16)av;
+		}
+	}
+#endif
 
 	if (isgarynocia(addr))
 		return dummy_get(addr, 2, false, 0);
@@ -2775,6 +2828,14 @@ static void REGPARAM2 cia_bput(uaecptr addr, uae_u32 value)
 	if (cia_debug(addr, value, sz_byte))
 		return;
 
+#ifdef WITH_X86
+	{
+		uae_u32 av = value;
+		if (atonce_cia_access(addr, &av, 1, 1))
+			return;
+	}
+#endif
+
 	if (isgarynocia(addr)) {
 		dummy_put(addr, 1, false);
 		return;
@@ -2817,6 +2878,14 @@ static void REGPARAM2 cia_wput(uaecptr addr, uae_u32 v)
 
 	if (cia_debug(addr, v, sz_word))
 		return;
+
+#ifdef WITH_X86
+	{
+		uae_u32 av = v;
+		if (atonce_cia_access(addr, &av, 2, 1))
+			return;
+	}
+#endif
 
 	if (isgarynocia(addr)) {
 		dummy_put(addr, 2, false);

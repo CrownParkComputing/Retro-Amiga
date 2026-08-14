@@ -136,6 +136,32 @@ extern PFNGLGENERATEMIPMAPPROC glp_GenerateMipmap;
 #define GL_FRAMEBUFFER 0x8D40
 #endif
 
+#ifdef AMIBERRY_IOS
+/*
+ * On iOS the window is not framebuffer 0.
+ *
+ * UIKit renders GL through a CAEAGLLayer that SDL wraps in its own framebuffer
+ * object, so framebuffer 0 exists but has no attachments. Every "unbind, draw
+ * to the screen" in the renderer therefore draws into an incomplete
+ * framebuffer, which is silent apart from GL_INVALID_FRAMEBUFFER_OPERATION
+ * (0x0506) per frame and a black screen.
+ *
+ * Rather than find every such call site, framebuffer 0 is translated here to
+ * whatever SDL says the window's framebuffer is. Nothing else on any platform
+ * changes: 0 still means 0 everywhere else.
+ */
+void gl_platform_bind_framebuffer(unsigned int target, unsigned int framebuffer);
+/* Re-reads the window framebuffer from SDL; call after the GL context or the
+   window changes. */
+void gl_platform_refresh_default_framebuffer();
+
+/* Drops the cached id when the context it belongs to is going away, so the
+   next run cannot draw into a framebuffer from the last one. */
+void gl_platform_forget_default_framebuffer();
+#undef glBindFramebuffer
+#define glBindFramebuffer gl_platform_bind_framebuffer
+#endif
+
 // Initialize OpenGL function pointers (call after creating GL context)
 // Returns true on success, false if critical functions failed to load
 bool gl_platform_init();

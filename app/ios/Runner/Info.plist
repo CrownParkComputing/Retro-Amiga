@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Amiga-Retro</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIconFiles</key>
+	<array>
+		<string>AppIcon60x60</string>
+		<string>AppIcon76x76</string>
+		<string>AppIcon83.5x83.5</string>
+		<string>AppIcon1024x1024</string>
+	</array>
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>AppIcon60x60</string>
+				<string>AppIcon76x76</string>
+				<string>AppIcon83.5x83.5</string>
+			</array>
+		</dict>
+	</dict>
+	<key>CFBundleIcons~ipad</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>AppIcon60x60</string>
+				<string>AppIcon76x76</string>
+				<string>AppIcon83.5x83.5</string>
+			</array>
+		</dict>
+	</dict>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Amiga-Retro</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(FLUTTER_BUILD_NAME)</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleVersion</key>
+	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneClassName</key>
+					<string>UIWindowScene</string>
+					<key>UISceneConfigurationName</key>
+					<string>flutter</string>
+					<key>UISceneDelegateClassName</key>
+					<string>Runner.SceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
+	<!-- iPad only for the first release, matching TARGETED_DEVICE_FAMILY = "2".
+	     Xcode injects this key from that build setting, but the Linux iosbox
+	     build does not read the project file, and an app with no UIDeviceFamily
+	     is treated as iPhone-only: on iPad it runs letterboxed in compatibility
+	     mode instead of filling the screen.
+
+	     Apple demands a screenshot set for every family the binary claims, and
+	     the app has only ever been tested on an iPad. Widening to "1,2" in a
+	     later update is allowed and costs only the iPhone screenshots and a
+	     build; narrowing after release is what strands existing users, so
+	     starting narrow is the safe direction. -->
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>2</integer>
+	</array>
+	<!-- The app only ever opens files you pick yourself (ADFs, Kickstart
+	     ROMs, WHDLoad archives) through the system file picker. It has no
+	     camera, photo or location feature. These three strings exist because
+	     file_picker links against those frameworks, and App Store validation
+	     rejects the upload without them (warning 90683). A linked framework
+	     is enough; whether the app uses it is irrelevant. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Amiga-Retro does not use the camera. This permission is only requested if you choose to import a file from a source that offers the camera.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Amiga-Retro only reads a file you select yourself when importing disk images, Kickstart ROMs or WHDLoad archives. Nothing is read from your library without you picking it.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Amiga-Retro does not use your location and never requests it. This entry is required because a bundled file-picker component links against the location framework.</string>
+	<!-- ITMS-90683 on the first upload named this key specifically. SDL, which
+	     the Amiberry core is built on, links CoreBluetooth to discover game
+	     controllers. As with the three above, a linked framework is enough:
+	     Apple's scanner does not care whether the API is ever called. iOS
+	     pairs controllers in Settings rather than in the app, so in practice
+	     the prompt should never appear; the string is required regardless. -->
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Amiga-Retro uses Bluetooth only to detect game controllers you have already paired with your iPad. It never scans for, connects to, or collects data from any other device.</string>
+	<!-- Declared so testers are not gated on answering the encryption
+	     question by hand on every build. The app uses no encryption beyond
+	     the platform's own HTTPS. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UIRequiresFullScreen</key>
+	<true/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+</dict>
+</plist>

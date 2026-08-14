@@ -210,6 +210,21 @@ set(SOURCE_FILES
         src/osdep/dpi_handler.cpp
         src/osdep/fsdb_host.cpp
         src/osdep/clipboard.cpp
+        src/osdep/uae4arm_host.cpp
+        src/osdep/protracker.cpp
+        src/osdep/music_player.cpp
+        src/atonce.cpp
+        src/zz9000.cpp
+        src/fpp_softfloat.cpp
+        src/softfloat/softfloat.cpp
+        src/softfloat/softfloat_decimal.cpp
+        src/softfloat/softfloat_fpsp.cpp
+        src/osdep/host_detect.cpp
+        src/osdep/perf_monitor.cpp
+        src/osdep/amiberry_adpf.cpp
+        src/osdep/mhi_host.cpp
+        src/osdep/amiberry_rp9.cpp
+        src/osdep/rp9_manifest.cpp
         src/osdep/android_keyboard_bridge.cpp
         src/uae4arm/upstream_overrides.cpp
         src/osdep/amiberry_hardfile.cpp
@@ -220,7 +235,6 @@ set(SOURCE_FILES
         src/osdep/writelog.cpp
         src/osdep/amiberry.cpp
         src/osdep/main.cpp
-        src/osdep/ahi_v2.cpp
         src/osdep/amiberry_filesys.cpp
         src/osdep/amiberry_input.cpp
         src/osdep/input_platform.cpp
@@ -251,8 +265,6 @@ set(SOURCE_FILES
         src/osdep/registry.cpp
         src/osdep/retroarch.cpp
         src/osdep/vpar.cpp
-        src/ppc/ppc.cpp
-        src/ppc/ppcd.cpp
         src/qemuvga/cirrus_vga.cpp
         src/qemuvga/es1370.cpp
         src/qemuvga/esp.cpp
@@ -264,11 +276,6 @@ set(SOURCE_FILES
         src/qemuvga/vga.cpp
         src/sounddep/sound.cpp
         src/threaddep/threading.cpp
-        src/osdep/vkbd/vkbd.cpp
-        src/osdep/vkbd/vkbd_gl.cpp
-        src/osdep/on_screen_joystick.cpp
-        src/osdep/on_screen_joystick_gl.cpp
-        src/osdep/on_screen_cd32pad.cpp
         src/newcpu.cpp
         src/newcpu_common.cpp
         src/readcpu.cpp
@@ -325,36 +332,6 @@ endif()
 
 list(APPEND SOURCE_FILES ${SLIRP_SOURCES})
 
-set(IMGUI_GUI_FILES
-		src/osdep/imgui/about.cpp
-		src/osdep/imgui/chipset.cpp
-		src/osdep/imgui/adv_chipset.cpp
-		src/osdep/imgui/controller_map.cpp
-		src/osdep/imgui/configurations.cpp
-		src/osdep/imgui/cpu.cpp
-		src/osdep/imgui/custom.cpp
-		src/osdep/imgui/diskswapper.cpp
-		src/osdep/imgui/display.cpp
-		src/osdep/imgui/filter.cpp
-		src/osdep/imgui/expansions.cpp
-		src/osdep/imgui/floppy.cpp
-		src/osdep/imgui/hd.cpp
-		src/osdep/imgui/hwinfo.cpp
-		src/osdep/imgui/input.cpp
-		src/osdep/imgui/io.cpp
-		src/osdep/imgui/misc.cpp
-		src/osdep/imgui/paths.cpp
-		src/osdep/imgui/prio.cpp
-		src/osdep/imgui/quickstart.cpp
-		src/osdep/imgui/ram.cpp
-		src/osdep/imgui/rom.cpp
-		src/osdep/imgui/rtg.cpp
-		src/osdep/imgui/savestates.cpp
-		src/osdep/imgui/sound.cpp
-		src/osdep/imgui/themes.cpp
-		src/osdep/imgui/virtualkeyboard.cpp
-		src/osdep/imgui/whdload.cpp
-)
 
 set(PCEM_SOURCE_FILES
         src/pcem/386.cpp
@@ -416,16 +393,11 @@ set(PCEM_SOURCE_FILES
         src/pcem/x87_timings.cpp
 )
 
-# ImGui GUI (Manual control for UAE4ARM 2026)
-option(USE_IMGUI "Enable native Amiberry ImGui GUI" OFF)
-if (USE_IMGUI)
-    message(STATUS "Using ImGui for GUI")
-    list(APPEND SOURCE_FILES external/ImGuiFileDialog/ImGuiFileDialog.cpp)
-    list(APPEND SOURCE_FILES src/osdep/gui/main_window.cpp)
-    list(APPEND SOURCE_FILES src/osdep/file_dialog.cpp)
-    list(APPEND SOURCE_FILES ${IMGUI_GUI_FILES})
+if (USE_PPC)
+    message(STATUS "PowerPC accelerator board support enabled")
+    list(APPEND SOURCE_FILES src/ppc/ppc.cpp src/ppc/ppcd.cpp)
 else()
-    message(STATUS "Native Amiberry GUI disabled for UAE4Arm 2026")
+    message(STATUS "PowerPC accelerator board support disabled")
 endif()
 
 if (USE_PCEM)
@@ -438,10 +410,28 @@ endif()
 # FloppyBridge plugin source
 list(APPEND SOURCE_FILES external/floppybridge/src/floppybridge_lib.cpp)
 
-add_library(${PROJECT_NAME} SHARED ${SOURCE_FILES})
-
-if (USE_IMGUI)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE USE_IMGUI)
+if(ANDROID OR IOS OR UAE4ARM_CORE_LIBRARY)
+    # Mobile hosts load the core as a library rather than launching a binary:
+    # the Flutter app owns the process, and the emulator runs inside it.
+    #
+    # UAE4ARM_CORE_LIBRARY builds the same shape on a desktop. That is how the
+    # embedded core can be exercised where a debugger can be attached - a host
+    # that runs the core in its own process behaves differently from one that
+    # launches a binary, and those differences are otherwise only reproducible
+    # on a phone.
+    add_library(${PROJECT_NAME} SHARED ${SOURCE_FILES})
+    if(IOS)
+        # Without this the install name is the absolute build path, which does
+        # not exist on the device: the loader has to find the dylib next to the
+        # app binary in Frameworks/ instead.
+        set_target_properties(${PROJECT_NAME} PROPERTIES
+            INSTALL_NAME_DIR "@rpath"
+            BUILD_WITH_INSTALL_NAME_DIR TRUE)
+    endif()
+elseif(APPLE)
+    add_executable(${PROJECT_NAME} MACOSX_BUNDLE ${SOURCE_FILES})
+else()
+    add_executable(${PROJECT_NAME} ${SOURCE_FILES})
 endif()
 
 # Pre-release flag (integer, usable in C if statements)
@@ -500,6 +490,3 @@ target_include_directories(${PROJECT_NAME} PRIVATE
         src/ppc/pearpc
         external/floppybridge/src
 )
-
-# ImGui include dirs (always enabled)
-target_include_directories(${PROJECT_NAME} PRIVATE external/imgui external/ImGuiFileDialog)

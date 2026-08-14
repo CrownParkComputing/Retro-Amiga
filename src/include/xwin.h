@@ -12,6 +12,10 @@
 #include "uae/types.h"
 #include "machdep/rpt.h"
 
+#ifdef AMIBERRY
+#include <cstdint>
+#endif
+
 typedef uae_u32 xcolnr;
 
 typedef int (*allocfunc_type)(int, int, int, xcolnr*);
@@ -26,6 +30,13 @@ extern void graphics_leave(void);
 extern void graphics_reset(bool);
 extern bool handle_events(void);
 extern int handle_msgpump(bool);
+#if defined(AMIBERRY) && defined(USE_IPC_SOCKET)
+extern bool amiberry_send_mouse_abs(int x, int y);
+extern bool amiberry_send_mouse_abs_to_monitor(int monid, int x, int y);
+#endif
+#ifdef AMIBERRY_MACOS
+extern void flush_macos_synthetic_mouse_releases();
+#endif
 extern void setup_brkhandler(void);
 extern int isfullscreen(void);
 extern void toggle_fullscreen(int monid, int);
@@ -46,6 +57,21 @@ extern int isvsync_chipset(void);
 extern int isvsync_rtg(void);
 extern int isvsync(void);
 
+#ifdef AMIBERRY
+// Display/refresh queries used by the hardware VSync pacing decision in
+// isvsync_chipset(). Defined in osdep/amiberry_gfx.cpp.
+extern uint32_t amiberry_get_active_display_id(int monid);
+extern float amiberry_get_refreshrate_for_display_id(uint32_t display_id);
+
+// Forces the hardware VSync pacing cache to re-probe on the next call. Called
+// from the SDL event loop on display mode / window-display changes.
+extern void amiberry_hw_vsync_pacing_invalidate(void);
+
+// Publishes whether the active renderer has successfully configured blocking
+// presentation. Called on the presentation thread and read by frame pacing.
+extern void amiberry_hw_vsync_pacing_set_blocking(bool blocking);
+#endif
+
 extern void flush_line(struct vidbuffer*, int);
 extern void flush_block(struct vidbuffer*, int, int);
 extern void flush_screen(struct vidbuffer*, int, int);
@@ -62,6 +88,7 @@ extern int target_get_display_scanline(int displayindex);
 extern void target_spin(int);
 
 void getgfxoffset(int monid, float *dxp, float *dyp, float *mxp, float *myp);
+bool getgfxsourceorigin(int monid, int *xp, int *yp);
 float target_getcurrentvblankrate(int monid);
 
 extern int debuggable(void);
@@ -102,9 +129,6 @@ struct vidbuffer
 	/* nominal size of image for centering */
 	int inwidth;
 	int inheight;
-	/* same but doublescan multiplier included */
-	int inwidth2;
-	int inheight2;
 	/* static, hardwired screen position and size (A2024) */
 	bool hardwiredpositioning;
 	/* extra width, chipset hpos extra in right border */
@@ -123,6 +147,7 @@ struct vidbuffer
 extern bool isnativevidbuf(int monid);
 extern int max_uae_width, max_uae_height;
 extern bool gfx_hdr;
+extern float p96vblank;
 
 struct vidbuf_description
 {

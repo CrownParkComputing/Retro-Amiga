@@ -34,8 +34,8 @@ uaecptr EXPANSION_bootcode, EXPANSION_nullfunc;
 /* ROM tag area memory access */
 
 uaecptr rtarea_base = RTAREA_DEFAULT;
-uae_sem_t hardware_trap_event[RTAREA_TRAP_DATA_SIZE / RTAREA_TRAP_DATA_SLOT_SIZE];
-uae_sem_t hardware_trap_event2[RTAREA_TRAP_DATA_SIZE / RTAREA_TRAP_DATA_SLOT_SIZE];
+uae_sem_t hardware_trap_event[RTAREA_TRAP_DATA_NUM + RTAREA_TRAP_DATA_SEND_NUM];
+uae_sem_t hardware_trap_event2[RTAREA_TRAP_DATA_NUM + RTAREA_TRAP_DATA_SEND_NUM];
 
 static uaecptr rt_trampoline_ptr, trap_entry;
 static bool rtarea_write_enabled;
@@ -582,7 +582,7 @@ static uae_u32 REGPARAM2 getchipmemsize (TrapContext *ctx)
 static uae_u32 REGPARAM2 uae_puts (TrapContext *ctx)
 {
 	uae_char buf[MAX_DPATH];
-	trap_get_string(ctx, buf, trap_get_areg(ctx, 0), sizeof(uae_char));
+	trap_get_string(ctx, buf, trap_get_areg(ctx, 0), sizeof(buf));
 	TCHAR *s = au(buf);
 	write_log(_T("%s"), s);
 	xfree(s);
@@ -645,7 +645,7 @@ void rtarea_init(void)
 	trap_entry = filesys_get_entry(10);
 	write_log(_T("TRAP_ENTRY = %08x\n"), trap_entry);
 
-	for (int i = 0; i < RTAREA_TRAP_DATA_SIZE / RTAREA_TRAP_DATA_SLOT_SIZE; i++) {
+	for (int i = 0; i < RTAREA_TRAP_DATA_NUM + RTAREA_TRAP_DATA_SEND_NUM; i++) {
 		uae_sem_init(&hardware_trap_event[i], 0, 0);
 		uae_sem_init(&hardware_trap_event2[i], 0, 0);
 	}
@@ -726,4 +726,3 @@ uaecptr makedatatable (uaecptr resid, uaecptr resname, uae_u8 type, uae_s8 prior
 	dw (0x0000);		/* end of table */
 	return datatable;
 }
-

@@ -70,21 +70,25 @@ extern int mouse_monid;
 extern int minimized;
 extern int monitor_off;
 extern bool joystick_refresh_needed;
-extern void handle_joy_device_event(unsigned int which, bool removed, struct uae_prefs* prefs);
+extern void handle_joy_device_event(unsigned int which, bool removed);
 extern std::string screenshot_filename;
 
 extern void logging_init();
 
 extern bool my_kbd_handler(int, int, int, bool);
+extern bool my_kbd_host_hotkey_handler(int, int, bool, bool, bool, bool);
 extern void clearallkeys();
 extern int getcapslock();
 
 extern void releasecapture(const struct AmigaMonitor*);
 extern void enablecapture(int monid);
 extern void disablecapture();
+extern void suppresscapture();
 extern void activationtoggle(int monid, bool inactiveonly);
 extern bool create_screenshot();
 extern int save_thumb(const std::string& path);
+extern int amiberry_get_active_input_monitor();
+extern int amiberry_resolve_active_input_monitor();
 
 extern amiberry_hotkey get_hotkey_from_config(const std::string& config_option);
 extern amiberry_hotkey enter_gui_key;
@@ -96,6 +100,8 @@ extern amiberry_hotkey minimize_key;
 extern amiberry_hotkey left_amiga_key;
 extern amiberry_hotkey right_amiga_key;
 extern amiberry_hotkey vkbd_key;
+extern amiberry_hotkey screenshot_key;
+extern amiberry_hotkey debugger_key;
 
 extern int emulating;
 extern bool config_loaded;
@@ -121,8 +127,10 @@ extern int net_enumerated;
 extern struct netdriverdata** target_ethernet_enumerate();
 extern void target_startup_msg(const TCHAR* title, const TCHAR* msg);
 extern int multithread_enabled;
+extern bool host_detect_slow_sbc(void);
 
 void save_amiberry_settings();
+bool save_amiberry_settings_with_result();
 void update_display(struct uae_prefs*);
 void clearscreen();
 void graphics_subshutdown();
@@ -142,15 +150,29 @@ extern bool can_have_1gb();
 string prefix_with_application_directory_path(string currentpath);
 #endif
 
+extern std::string get_configuration_path();
 extern void get_configuration_path(char* out, int size);
 extern std::string get_base_content_path();
 extern std::vector<std::string> get_base_content_missing_directories(const std::string& newpath);
 extern void set_base_content_path(const std::string& newpath);
 extern void create_missing_directories_for_base_content_path(const std::string& newpath);
 extern void set_configuration_path(const std::string& newpath);
+extern std::string get_nvram_path();
 extern void set_nvram_path(const std::string& newpath);
+extern std::string get_plugins_path();
 extern void set_plugins_path(const std::string& newpath);
+extern std::string get_floppy_sounds_path();
+extern void set_floppy_sounds_path(const std::string& newpath);
+extern std::string get_saveimage_path();
+extern void set_saveimage_path(const std::string& newpath);
+extern std::string get_ripper_path();
+extern void set_ripper_path(const std::string& newpath);
+extern std::string get_inputrecordings_path();
+extern void set_inputrecordings_path(const std::string& newpath);
+extern std::string get_video_path();
+extern void set_video_path(const std::string& newpath);
 extern void set_screenshot_path(const std::string& newpath);
+extern std::string get_savestate_path();
 extern void set_savestate_path(const std::string& newpath);
 extern void set_themes_path(const std::string& newpath);
 extern void set_shaders_path(const std::string& newpath);
@@ -170,6 +192,8 @@ extern void set_floppy_path(const std::string& newpath);
 extern std::string get_harddrive_path();
 extern void set_harddrive_path(const std::string& newpath);
 extern std::string get_cdrom_path();
+extern std::string get_cdrom_browse_path();
+extern std::string get_cdrom_browse_path(const std::string& currentPath);
 extern void set_cdrom_path(const std::string& newpath);
 extern std::string get_themes_path();
 extern std::string get_shaders_path();
@@ -181,7 +205,10 @@ extern void set_logfile_enabled(bool enabled);
 extern std::string get_logfile_path();
 extern void set_logfile_path(const std::string& newpath);
 
+extern std::string get_rom_path();
 extern void set_rom_path(const std::string& newpath);
+extern std::string get_rp9_path();
+extern void set_rp9_path(const std::string& newpath);
 extern void get_rp9_path(char* out, int size);
 extern std::string get_screenshot_path();
 
@@ -205,12 +232,14 @@ extern void extract_path(const char* str, char* buffer);
 extern std::string extract_path(const std::string& filename);
 extern void remove_file_extension(char* filename);
 extern std::string remove_file_extension(const std::string& filename);
+extern void set_last_active_config_from_media(const char* filename);
 extern void ReadConfigFileList();
 extern void configurations_panel_reset();
 extern void read_rom_list(bool);
 extern int scan_roms(int show);
 
 extern bool resumepaused(int priority);
+extern bool resumepaused_without_mouse_capture(int priority);
 extern bool setpaused(int priority);
 extern void unsetminimized(int monid);
 extern void setminimized(int monid);

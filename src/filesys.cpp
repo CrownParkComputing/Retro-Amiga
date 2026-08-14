@@ -126,7 +126,7 @@ static volatile int shellexecute2_queued;
 static uae_u32 filesys_shellexecute2_process(int mode, TrapContext *ctx);
 static void filesys_shellexecute2_run_queue(void);
 static void shellexecute2_free(struct ShellExecute2 *se2);
-
+static bool exter_added;
 static int bootrom_header;
 
 static uae_u32 dlg (uae_u32 a)
@@ -359,6 +359,10 @@ static struct uaedev_mount_info mountinfo;
 
 /* OS4 64-bit filesize packets */
 #define ACTION_FILESYSTEM_ATTR         3005
+#define ACTION_EXAMINEDATA             3030
+#define ACTION_EXAMINEDATA_FH          3031
+#define ACTION_EXAMINEDATA_OBJ         3032
+#define ACTION_EXAMINEDATA_DIR         3040
 #define ACTION_CHANGE_FILE_POSITION64  8001
 #define ACTION_GET_FILE_POSITION64     8002
 #define ACTION_CHANGE_FILE_SIZE64      8003
@@ -1939,6 +1943,7 @@ int filesys_eject(int nr)
 
 static uae_u32 heartbeat;
 static int heartbeat_count_cont;
+static bool clock_sync_pending;
 
 bool filesys_heartbeat(void)
 {
@@ -1947,9 +1952,20 @@ bool filesys_heartbeat(void)
 
 void setsystime (void)
 {
-	if (!currprefs.tod_hack || !rtarea_bank.baseaddr)
+	if (!currprefs.tod_hack || !rtarea_bank.baseaddr) {
 		return;
-	uae_ClockSync();
+	}
+	if (!exter_added) {
+		return;
+	}
+	/*
+	 * Clock sync is handled by the UAE external interrupt server. Wait for
+	 * the heartbeat to advance before raising its level-2 PORTS interrupt:
+	 * WHDLoad and similar software can temporarily replace the OS interrupt
+	 * handlers and cannot safely service UAE's external interrupt then.
+	 */
+	heartbeat = get_long_host(rtarea_bank.baseaddr + RTAREA_HEARTBEAT);
+	clock_sync_pending = true;
 }
 
 static uae_u32 REGPARAM2 debugger_helper(TrapContext *ctx)
@@ -2535,6 +2551,8 @@ static void recycle_aino (Unit *unit, a_inode *new_aino)
 		|| new_aino->elock || new_aino == &unit->rootnode)
 		/* Still in use */
 		return;
+	if (new_aino->next != 0)
+		return;
 
 	TRACE3((_T("Recycling; cache size %u, total_locked %d\n"),
 		unit->aino_cache_size, unit->total_locked_ainos));
@@ -2560,6 +2578,21 @@ static void recycle_aino (Unit *unit, a_inode *new_aino)
 	aino_test (new_aino->prev);
 
 	unit->aino_cache_size++;
+}
+
+static bool release_aino_lock(a_inode *aino, const TCHAR *action)
+{
+	if (aino->elock) {
+		aino->elock = 0;
+		return true;
+	}
+	if (aino->shlock > 0) {
+		aino->shlock--;
+		return true;
+	}
+	write_log(_T("FILESYS: %s attempted to release unlocked a_inode %08x '%s'\n"),
+		action, aino->uniq, aino->nname ? aino->nname : _T("<unnamed>"));
+	return false;
 }
 
 void filesys_flush_cache (void)
@@ -4130,10 +4163,11 @@ static void action_free_lock(TrapContext *ctx, Unit *unit, dpacket *packet)
 		PUT_PCK_RES2 (packet, ERROR_OBJECT_NOT_AROUND);
 		return;
 	}
-	if (a->elock)
-		a->elock = 0;
-	else
-		a->shlock--;
+	if (!release_aino_lock(a, _T("ACTION_FREE_LOCK"))) {
+		PUT_PCK_RES1 (packet, DOS_FALSE);
+		PUT_PCK_RES2 (packet, ERROR_INVALID_LOCK);
+		return;
+	}
 	recycle_aino (unit, a);
 	free_lock(ctx, unit, lock);
 
@@ -4191,10 +4225,24 @@ static void action_lock_from_fh(TrapContext *ctx, Unit *unit, dpacket *packet)
 
 static void free_exkey (Unit *unit, a_inode *aino)
 {
+	if (!aino)
+		return;
+	if (aino->exnext_count == 0) {
+		write_log(_T("FILESYS: attempted to release inactive ExNext a_inode %08x '%s'\n"),
+			aino->uniq, aino->nname ? aino->nname : _T("<unnamed>"));
+		return;
+	}
 	if (--aino->exnext_count == 0) {
 		TRACE ((_T("Freeing ExKey and reducing total_locked from %d by %d\n"),
 			unit->total_locked_ainos, aino->locked_children));
-		unit->total_locked_ainos -= aino->locked_children;
+		if (unit->total_locked_ainos >= aino->locked_children) {
+			unit->total_locked_ainos -= aino->locked_children;
+		} else {
+			write_log(_T("FILESYS: ExNext locked child count underflow for a_inode %08x '%s' (%u < %u)\n"),
+				aino->uniq, aino->nname ? aino->nname : _T("<unnamed>"),
+				unit->total_locked_ainos, aino->locked_children);
+			unit->total_locked_ainos = 0;
+		}
 		aino->locked_children = 0;
 	}
 }
@@ -5269,7 +5317,7 @@ static void do_find(TrapContext *ctx, Unit *unit, dpacket *packet, int mode, int
 		return;
 	} else {
 		/* Object does not exist. aino points to containing directory. */
-		aino = create_child_aino(unit, aino, my_strdup (bstr_cut(ctx, unit, name)), 0);
+		aino = create_child_aino(unit, aino, bstr_cut(ctx, unit, name), 0);
 		if (aino == 0) {
 			PUT_PCK_RES1 (packet, DOS_FALSE);
 			PUT_PCK_RES2 (packet, ERROR_DISK_IS_FULL); /* best we can do */
@@ -5438,11 +5486,8 @@ static void	action_end(TrapContext *ctx, Unit *unit, dpacket *packet)
 			notify_check(ctx, unit, k->aino);
 			updatedirtime (k->aino, 1);
 		}
-		if (k->aino->elock)
-			k->aino->elock = 0;
-		else
-			k->aino->shlock--;
-		recycle_aino (unit, k->aino);
+		if (release_aino_lock(k->aino, _T("ACTION_END")))
+			recycle_aino (unit, k->aino);
 		free_key (unit, k);
 	}
 	PUT_PCK_RES1 (packet, DOS_TRUE);
@@ -5981,7 +6026,7 @@ static void	action_create_dir(TrapContext *ctx, Unit *unit, dpacket *packet)
 		return;
 	}
 	/* Object does not exist. aino points to containing directory. */
-	aino = create_child_aino(unit, aino, my_strdup (bstr_cut(ctx, unit, name)), 1);
+	aino = create_child_aino(unit, aino, bstr_cut(ctx, unit, name), 1);
 	if (aino == 0) {
 		PUT_PCK_RES1 (packet, DOS_FALSE);
 		PUT_PCK_RES2 (packet, ERROR_DISK_IS_FULL); /* best we can do */
@@ -5989,8 +6034,10 @@ static void	action_create_dir(TrapContext *ctx, Unit *unit, dpacket *packet)
 	}
 
 	if (my_mkdir (aino->nname) == -1) {
+		const int err = dos_errno ();
+		delete_aino (unit, aino);
 		PUT_PCK_RES1 (packet, DOS_FALSE);
-		PUT_PCK_RES2 (packet, dos_errno ());
+		PUT_PCK_RES2 (packet, err);
 		return;
 	}
 	aino->shlock = 1;
@@ -6236,6 +6283,15 @@ static void	action_set_date(TrapContext *ctx, Unit *unit, dpacket *packet)
 		//write_log (_T("%llu.%u (%d,%d,%d) %s\n"), tv.tv_sec, tv.tv_usec, trap_get_long(ctx, date), trap_get_long(ctx, date + 4), trap_get_long(ctx, date + 8), a->nname);
 		if (!my_utime (a->nname, &tv))
 			err = dos_errno ();
+		else {
+			for (Key *k = unit->keys; k; k = k->next) {
+				if (!k->fd || k->fd->fstype != FS_DIRECTORY || !k->fd->of
+					|| !k->aino || !k->aino->nname || _tcscmp(k->aino->nname, a->nname) != 0) {
+					continue;
+				}
+				my_set_time_explicit(k->fd->of);
+			}
+		}
 	}
 	if (err != 0) {
 		PUT_PCK_RES1 (packet, DOS_FALSE);
@@ -7153,6 +7209,13 @@ static int handle_packet(TrapContext *ctx, Unit *unit, dpacket *pck, uae_u32 msg
 	case ACTION_GET_FILE_POSITION64: action_get_file_position64 (ctx, unit, pck); break;
 	case ACTION_CHANGE_FILE_SIZE64: action_change_file_size64 (ctx, unit, pck); break;
 	case ACTION_GET_FILE_SIZE64: action_get_file_size64 (ctx, unit, pck); break;
+	case ACTION_EXAMINEDATA:
+	case ACTION_EXAMINEDATA_FH:
+	case ACTION_EXAMINEDATA_OBJ:
+	case ACTION_EXAMINEDATA_DIR:
+		PUT_PCK_RES1(pck, DOS_FALSE);
+		PUT_PCK_RES2(pck, ERROR_ACTION_NOT_KNOWN);
+		break;
 
 		/* MOS packet types */
 	case ACTION_SEEK64: action_seek64(ctx, unit, pck); break;
@@ -7192,7 +7255,8 @@ static int filesys_iteration(UnitInfo *ui)
 	morelocks = (uae_u32)read_comm_pipe_int_blocking(ui->unit_pipe);
 
 	if (ui->reset_state == FS_GO_DOWN) {
-		trap_background_set_complete(ctx);
+		if (ctx)
+			trap_background_set_complete(ctx);
 		if (pck != 0)
 		   return 1;
 		/* Death message received. */
@@ -7442,12 +7506,18 @@ static void filesys_reset2 (void)
 
 void filesys_reset (void)
 {
+	exter_added = false;
+	clock_sync_pending = false;
 	if (isrestore ())
 		return;
 	load_injected_icons();
+	write_log(_T("filesys_reset: freeing old units\n"));
 	filesys_reset2 ();
+	write_log(_T("filesys_reset: rebuilding mountinfo\n"));
 	initialize_mountinfo ();
+	write_log(_T("filesys_reset: shellexecute\n"));
 	free_shellexecute();
+	write_log(_T("filesys_reset: done\n"));
 }
 
 static void filesys_prepare_reset2 (void)
@@ -7459,6 +7529,7 @@ static void filesys_prepare_reset2 (void)
 #ifdef UAE_FILESYS_THREADS
 	for (i = 0; i < MAX_FILESYSTEM_UNITS; i++) {
 		if (uip[i].open > 0 && uip[i].unit_pipe != 0) {
+			write_log(_T("filesys: unit %d going down (open=%d pipe=%p)\n"), i, uip[i].open, uip[i].unit_pipe);
 			uae_sem_init (&uip[i].reset_sync_sem, 0, 0);
 			uip[i].reset_state = FS_GO_DOWN;
 			/* send death message */
@@ -7466,8 +7537,10 @@ static void filesys_prepare_reset2 (void)
 			write_comm_pipe_int(uip[i].unit_pipe, 0, 0);
 			write_comm_pipe_int(uip[i].unit_pipe, 0, 0);
 			write_comm_pipe_int(uip[i].unit_pipe, 0, 1);
+			write_log(_T("filesys: unit %d death message sent, waiting\n"), i);
 			uae_sem_wait (&uip[i].reset_sync_sem);
 			uae_end_thread (&uip[i].tid);
+			write_log(_T("filesys: unit %d down\n"), i);
 		}
 	}
 #endif
@@ -8362,7 +8435,7 @@ static void dumprdbblock(const uae_u8 *buf, int block)
 		TCHAR outbuf[81];
 		for (int j = 0; j < w; j++) {
 			uae_u8 v = buf[i + j];
-			_sntprintf(outbuf + 2 * j, sizeof outbuf + 2 * j, _T("%02X"), v);
+			_sntprintf(outbuf + 2 * j, sizeof outbuf / sizeof(TCHAR) - 2 * j, _T("%02X"), v);
 			outbuf[2 * w + 1 + j] = (v >= 32 && v <= 126) ? v : '.';
 		}
 		outbuf[2 * w] = ' ';
@@ -9179,6 +9252,7 @@ static uae_u32 REGPARAM2 mousehack_done (TrapContext *ctx)
 		uaecptr diminfo = trap_get_areg(ctx, 2);
 		uaecptr dispinfo = trap_get_areg(ctx, 3);
 		uaecptr vp = trap_get_areg(ctx, 4);
+		exter_added = true;
 		return input_mousehack_status(ctx, mode, diminfo, dispinfo, vp, trap_get_dreg(ctx, 2));
 	} else if (mode == 10) {
 		amiga_clipboard_die(ctx);
@@ -9395,6 +9469,11 @@ void filesys_vsync (void)
 	}
 	heartbeat = get_long_host(rtarea_bank.baseaddr + RTAREA_HEARTBEAT);
 	heartbeat_count_cont = 10;
+	if (clock_sync_pending) {
+		clock_sync_pending = false;
+		if (currprefs.tod_hack)
+			uae_ClockSync();
+	}
 	cia_heartbeat ();
 
 	for (u = units; u; u = u->next) {
@@ -9431,6 +9510,7 @@ void filesys_vsync (void)
 
 void filesys_cleanup(void)
 {
+	write_log(_T("filesys: cleanup begins\n"));
 	filesys_prepare_reset();
 	filesys_reset2();
 	filesys_free_handles();
@@ -9440,6 +9520,7 @@ void filesys_cleanup(void)
 	uae_sem_destroy(&shellexec_sem);
 	shell_execute_data = 0;
 	free_shellexecute();
+	write_log(_T("filesys: cleanup done\n"));
 }
 
 void filesys_install (void)
@@ -9448,8 +9529,15 @@ void filesys_install (void)
 
 	TRACEI ((_T("Installing filesystem\n")));
 
-	uae_sem_init(&singlethread_int_sem, 0, 1);
-	uae_sem_init(&shellexec_sem, 0, 1);
+	// Create exactly once: uae_sem_init() on an already-created semaphore
+	// SIGNALS it (count++) instead of resetting. filesys_install() runs again on
+	// every hardreset (via memory_init/virtualdevice_init), so re-initializing
+	// would inflate these mutexes above 1 and break mutual exclusion with the
+	// filesys threads. Mirrors the thread_sema guard in virtualdevice_init().
+	if (!singlethread_int_sem)
+		uae_sem_init(&singlethread_int_sem, 0, 1);
+	if (!shellexec_sem)
+		uae_sem_init(&shellexec_sem, 0, 1);
 	init_comm_pipe(&shellexecute_pipe, 100, 1);
 
 	ROM_filesys_resname = ds_ansi ("UAEfs.resource");
@@ -9488,6 +9576,7 @@ void filesys_install (void)
 	org (rtarea_base + RTAREA_HEARTBEAT);
 	dl (0);
 	heartbeat = 0;
+	clock_sync_pending = false;
 
 	org (rtarea_base + 0xFF18);
 	calltrap (deftrap2 (filesys_dev_bootfilesys, 0, _T("filesys_dev_bootfilesys")));

@@ -617,19 +617,22 @@ static bool blitter_proc(ncr_t *ncr)
     if (ncr->blt_stage == 1) {
 
         uint8_t srcdata = ncr->blt_srcdata;
+        bool bitset = false;
         ncr->blt_dstdata = blitter_read(ncr, ncr->blt_dst, ncr->blt_bppoffset);
         ncr->blt_patdata = blitter_read(ncr, ncr->blt_pat, ncr->blt_patx_cnt);
         if (ncr->blt_color_expand) {
             int8_t offset = ncr->blt_expand_bit;
             if (srcdata & (1 << offset)) {
                 srcdata = ncr->blt_c0 >> (ncr->blt_bpp_cnt * 8);
-            } else if (ncr->blt_transparent) {
-                srcdata = ncr->blt_dstdata;
+                bitset = true;
             } else {
                 srcdata = ncr->blt_c1 >> (ncr->blt_bpp_cnt * 8);
             }
         }
         uint8_t out = blitter_rop(ncr->blt_rop, srcdata, ncr->blt_patdata, ncr->blt_dstdata);
+        if (ncr->blt_color_expand && ncr->blt_transparent && !bitset) {
+            out = ncr->blt_dstdata;
+        }
         blitter_write(ncr, ncr->blt_dst, out);
 
         ncr->blt_patx_cnt++;
@@ -811,11 +814,12 @@ static void blitter_start(ncr_t *ncr)
     ncr->blt_status = 0;
 
 #if 0
-    pclog("C=%04x ROP=%02x W=%03d H=%03d S=%08x/%d P=%08x/%d D=%08x/%d MW%d LP%d TR%d DX%d DY%d CF%d CE%d DM%d SM%d DL%d SL%d\n",
+    pclog("C=%04x ROP=%02x W=%03d H=%03d S=%08x/%d P=%08x/%d D=%08x/%d C0=%08x C1=%08x MW%d LP%d TR%d DX%d DY%d CF%d CE%d DM%d SM%d DL%d SL%d\n",
         ncr->blt_control, ncr->blt_rop, ncr->blt_width, ncr->blt_height,
         ncr->blt_src >> 3, ncr->blt_src & 7,
         ncr->blt_pat >> 3, ncr->blt_pat & 7,
         ncr->blt_dst >> 3, ncr->blt_dst & 7,
+		ncr->blt_c0, ncr->blt_c1,
         (ncr->blt_control & (1 << 3)) != 0,
         (ncr->blt_control & (1 << 4)) != 0,
         (ncr->blt_control & (1 << 5)) != 0,

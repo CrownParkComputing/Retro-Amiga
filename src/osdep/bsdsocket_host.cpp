@@ -43,6 +43,12 @@
 #include "native2amiga.h"
 #include "bsdsocket.h"
 
+// Verbose per-call tracing. Gated behind the shared bsdsocket log flag
+// (log_bsd, off by default; see ISBSDTRACE/BSDTRACE in bsdsocket.h). Genuine
+// errors and warnings keep using write_log() directly. Without this gate the
+// host bsdsocket layer floods the log on every socket operation (issue #2122).
+#define BSDLOG(...) do { if (log_bsd) { write_log(__VA_ARGS__); } } while (0)
+
 #ifdef _WIN32
 /*
  * WinUAE-derived native Windows bsdsocket implementation
@@ -691,7 +697,7 @@ static unsigned int sock_thread2(void *blah)
 			}
 		}
 	}
-	write_log(_T("BSDSOCK: We have exited our sock_thread()\n"));
+	BSDLOG(_T("BSDSOCK: We have exited our sock_thread()\n"));
 	THREADEND(result);
 	return result;
 }
@@ -2893,6 +2899,21 @@ struct event_monitor {
 
 static struct event_monitor* g_event_monitor = nullptr;
 
+static bool valid_amiga_socket_descriptor(struct socketbase* sb, int sd)
+{
+	return sb && sd >= 0 && sd < sb->dtablesize;
+}
+
+static bool valid_amiga_socket_descriptor_u32(struct socketbase* sb, uae_u32 sd)
+{
+	return sb && sd < (uae_u32)sb->dtablesize;
+}
+
+static bool socket_fd_usable_for_select(SOCKET_TYPE s)
+{
+	return s != INVALID_SOCKET && s >= 0 && s < FD_SETSIZE;
+}
+
 /**
  ** Helper functions
  **/
@@ -3122,7 +3143,7 @@ static void mapsockoptreturn(int level, int optname, uae_u32 optval, void *buf)
 			break;
 
 		case SO_ERROR:
-			write_log("New errno is %d\n", mapErrno(*(int *)buf));
+			BSDLOG("New errno is %d\n", mapErrno(*(int *)buf));
 			put_long (optval, mapErrno(*(int *)buf));
 			break;
 		default:
@@ -3244,6 +3265,83 @@ static void mapsockoptvalue(int level, int optname, uae_u32 optval, void *buf)
 	}
 }
 
+static int sockopt_amiga_scalar_size(int level, int optname)
+{
+	switch (level) {
+	case SOL_SOCKET:
+		switch (optname) {
+		case SO_DEBUG:
+		case SO_ACCEPTCONN:
+		case SO_REUSEADDR:
+		case SO_KEEPALIVE:
+		case SO_DONTROUTE:
+		case SO_BROADCAST:
+#ifdef SO_USELOOPBACK
+		case SO_USELOOPBACK:
+#endif
+		case SO_OOBINLINE:
+#ifdef SO_REUSEPORT
+		case SO_REUSEPORT:
+#endif
+		case SO_SNDBUF:
+		case SO_RCVBUF:
+		case SO_SNDLOWAT:
+		case SO_RCVLOWAT:
+		case SO_ERROR:
+		case SO_TYPE:
+			return sizeof(uae_u32);
+		default:
+			return -1;
+		}
+
+	case IPPROTO_IP:
+		switch (optname) {
+		case IP_OPTIONS:
+		case IP_HDRINCL:
+		case IP_TOS:
+		case IP_TTL:
+		case IP_RECVOPTS:
+		case IP_MULTICAST_IF:
+		case IP_MULTICAST_TTL:
+		case IP_MULTICAST_LOOP:
+		case IP_ADD_MEMBERSHIP:
+			return sizeof(uae_u32);
+		default:
+			return -1;
+		}
+
+	case IPPROTO_TCP:
+		switch (optname) {
+		case TCP_NODELAY:
+		case TCP_MAXSEG:
+			return sizeof(uae_u32);
+		default:
+			return -1;
+		}
+
+	default:
+		return -1;
+	}
+}
+
+static int setsockopt_argument_size(int level, int optname)
+{
+	if (level == SOL_SOCKET && optname == SO_LINGER)
+		return 8;
+	if (level == SOL_SOCKET && (optname == SO_RCVTIMEO || optname == SO_SNDTIMEO))
+		return 8;
+	return sockopt_amiga_scalar_size(level, optname);
+}
+
+static int getsockopt_result_size(int level, int optname)
+{
+	if (level == SOL_SOCKET && optname == SO_LINGER)
+		return 8;
+	if (level == SOL_SOCKET && (optname == SO_RCVTIMEO || optname == SO_SNDTIMEO))
+		return 8;
+	return sockopt_amiga_scalar_size(level, optname);
+}
+
 STATIC_INLINE int bsd_amigaside_FD_ISSET (int n, uae_u32 set)
 {
 	uae_u32 foo = get_long (set + (n / 32));
@@ -3267,9 +3365,9 @@ STATIC_INLINE void bsd_amigaside_FD_SET (int n, uae_u32 set)
 
 static void printSockAddr(struct sockaddr_in* in)
 {
-	write_log("Family %d, ", in->sin_family);
-	write_log("Port %d,", ntohs(in->sin_port));
-	write_log("Address %s,", inet_ntoa(in->sin_addr));
+	BSDLOG("Family %d, ", in->sin_family);
+	BSDLOG("Port %d,", ntohs(in->sin_port));
+	BSDLOG("Address %s,", inet_ntoa(in->sin_addr));
 }
 
 /**
@@ -3279,7 +3377,7 @@ static void printSockAddr(struct sockaddr_in* in)
 // Post an Amiga signal when a socket event occurs
 static void post_socket_event(struct socketbase* sb, int sd, int event_type)
 {
-	if (!sb || sd < 0) return;
+	if (!sb || sd < 0 || sd >= sb->dtablesize) return;
 
 	// Verify socket still has an active event mask — race with SO_EVENTMASK=0
 	if (!(sb->ftable[sd] & REP_ALL)) return;
@@ -3307,7 +3405,7 @@ static int event_monitor_thread(void* data)
 {
 	struct event_monitor* monitor = (struct event_monitor*)data;
 	
-	write_log("BSDSOCK: Event monitor thread started\n");
+	BSDLOG("BSDSOCK: Event monitor thread started\n");
 	
 	while (monitor->running) {
 		fd_set readfds, writefds, exceptfds;
@@ -3330,6 +3428,7 @@ static int event_monitor_thread(void* data)
 		
 		for (const auto& entry : monitor->socket_list) {
 			if (entry.s == INVALID_SOCKET) continue;
+			if (!socket_fd_usable_for_select(entry.s)) continue;
 			
 			// Skip sockets with no events to monitor
 			if (entry.eventmask == 0) continue;
@@ -3421,6 +3520,7 @@ static int event_monitor_thread(void* data)
 		
 		for (auto& entry : monitor->socket_list) {
 			if (entry.s == INVALID_SOCKET) continue;
+			if (!socket_fd_usable_for_select(entry.s)) continue;
 			
 			int events = 0;
             // Add slight delay if we are spinning on Level Triggered events to prevent CPU hog
@@ -3524,7 +3624,7 @@ static int event_monitor_thread(void* data)
 		SDL_Delay(10);
 	}
 	
-	write_log("BSDSOCK: Event monitor thread exiting\n");
+	BSDLOG("BSDSOCK: Event monitor thread exiting\n");
 	return 0;
 }
 
@@ -3544,6 +3644,15 @@ static bool start_event_monitor()
 	// Create wake pipe
 	if (pipe(g_event_monitor->wake_pipe) < 0) {
 		write_log("BSDSOCK: Failed to create wake pipe: %d\n", errno);
+		delete g_event_monitor;
+		g_event_monitor = nullptr;
+		return false;
+	}
+	if (!socket_fd_usable_for_select(g_event_monitor->wake_pipe[0])) {
+		write_log("BSDSOCK: Event wake pipe fd %d exceeds select() limit %d\n",
+			g_event_monitor->wake_pipe[0], FD_SETSIZE);
+		close_pipe(g_event_monitor->wake_pipe[0]);
+		close_pipe(g_event_monitor->wake_pipe[1]);
 		delete g_event_monitor;
 		g_event_monitor = nullptr;
 		return false;
@@ -3575,7 +3684,7 @@ static bool start_event_monitor()
 		return false;
 	}
 	
-	write_log("BSDSOCK: Event monitor started\n");
+	BSDLOG("BSDSOCK: Event monitor started\n");
 	return true;
 }
 
@@ -3586,7 +3695,7 @@ static void stop_event_monitor()
 		return;
 	}
 	
-	write_log("BSDSOCK: Stopping event monitor\n");
+	BSDLOG("BSDSOCK: Stopping event monitor\n");
 	
 	// Signal thread to stop
 	g_event_monitor->running = false;
@@ -3605,16 +3714,28 @@ static void stop_event_monitor()
 	delete g_event_monitor;
 	g_event_monitor = nullptr;
 	
-	write_log("BSDSOCK: Event monitor stopped\n");
+	BSDLOG("BSDSOCK: Event monitor stopped\n");
 }
 
 // Register a socket for event monitoring
-static void register_socket_events(struct socketbase* sb, int sd, SOCKET_TYPE s, int eventmask)
+static bool register_socket_events(struct socketbase* sb, int sd, SOCKET_TYPE s, int eventmask)
 {
+	if (!valid_amiga_socket_descriptor(sb, sd)) {
+		errno = EBADF;
+		return false;
+	}
+	if (!socket_fd_usable_for_select(s)) {
+		write_log("BSDSOCK: Cannot monitor socket %d (native fd %d) with select() limit %d\n",
+			sd, s, FD_SETSIZE);
+		errno = EINVAL;
+		return false;
+	}
+
 	if (!g_event_monitor) {
 		if (!start_event_monitor()) {
 			write_log("BSDSOCK: Failed to start event monitor for socket %d\n", sd);
-			return;
+			errno = ENOMEM;
+			return false;
 		}
 	}
 	
@@ -3655,12 +3776,13 @@ static void register_socket_events(struct socketbase* sb, int sd, SOCKET_TYPE s,
 	write_pipe(g_event_monitor->wake_pipe[1], &wake, 1);
 	
 	SDL_UnlockMutex(g_event_monitor->mutex);
+	return true;
 }
 
 // Unregister a socket from event monitoring
 static void unregister_socket_events(struct socketbase* sb, int sd)
 {
-	if (!g_event_monitor) {
+	if (!g_event_monitor || !valid_amiga_socket_descriptor(sb, sd)) {
 		return;
 	}
 	
@@ -3715,7 +3837,7 @@ static void unregister_all_socket_events(struct socketbase* sb)
 // Set the connecting state for a socket
 static void set_socket_connecting(struct socketbase* sb, int sd, bool connecting)
 {
-	if (!g_event_monitor) return;
+	if (!g_event_monitor || !valid_amiga_socket_descriptor(sb, sd)) return;
 	
 	SDL_LockMutex(g_event_monitor->mutex);
 	for (auto& entry : g_event_monitor->socket_list) {
@@ -3736,7 +3858,7 @@ static void set_socket_connecting(struct socketbase* sb, int sd, bool connecting
 // Re-enable specific events for a socket (called by IO functions)
 static void socket_reenable_events(struct socketbase* sb, int sd, int events)
 {
-	if (!g_event_monitor) return;
+	if (!g_event_monitor || !valid_amiga_socket_descriptor(sb, sd)) return;
 	
 	SDL_LockMutex(g_event_monitor->mutex);
 	for (auto& entry : g_event_monitor->socket_list) {
@@ -3915,7 +4037,7 @@ uae_u32 bsdthr_Accept_2 (SB)
 			return -1;
 		}
 		sb->ftable[s2-1] = sb->ftable[sb->len]; /* new socket inherits the old socket's properties */
-		write_log ("Accept: AmigaSide %d, NativeSide %d, len %d(%d)", sb->resultval, s, hlen, get_long (sb->a_addrlen));
+		BSDLOG ("Accept: AmigaSide %d, NativeSide %d, len %d(%d)", sb->resultval, s, hlen, get_long (sb->a_addrlen));
 		printSockAddr (&addr);
 		foo = get_long (sb->a_addrlen);
 		if (foo > 16)
@@ -3938,11 +4060,11 @@ uae_u32 bsdthr_Recv_2 (SB)
         ssize_t n;
         do {
             if (sb->s != -1 && socktype == SOCK_RAW) {
-                write_log("[RAW RECV] fd=%d, buf=%p, len=%d, flags=0x%x\n", sb->s, sb->buf, sb->len, sb->flags);
+                BSDLOG("[RAW RECV] fd=%d, buf=%p, len=%d, flags=0x%x\n", sb->s, sb->buf, sb->len, sb->flags);
             }
             n = recv(sb->s, (char*)sb->buf, sb->len, sb->flags /*| MSG_NOSIGNAL*/);
             foo = (int)n;
-            { int _e = errno; write_log("recv2, recv returns %d, errno is %d\n", foo, _e); errno = _e; }
+            { int _e = errno; BSDLOG("recv2, recv returns %d, errno is %d\n", foo, _e); errno = _e; }
             if (foo >= 0) break;
         } while (errno == EINTR && --retries > 0);
     } else {
@@ -3953,11 +4075,11 @@ uae_u32 bsdthr_Recv_2 (SB)
         copysockaddr_a2n(&addr, sb->from, i);
         do {
             if (sb->s != -1 && socktype == SOCK_RAW) {
-                write_log("[RAW RECVFROM] fd=%d, buf=%p, len=%d, flags=0x%x\n", sb->s, sb->buf, sb->len, sb->flags);
+                BSDLOG("[RAW RECVFROM] fd=%d, buf=%p, len=%d, flags=0x%x\n", sb->s, sb->buf, sb->len, sb->flags);
             }
             n = recvfrom(sb->s, (char*)sb->buf, sb->len, sb->flags | MSG_NOSIGNAL, (struct sockaddr *)&addr, &l);
             foo = (int)n;
-            { int _e = errno; write_log("recv2, recvfrom returns %d, errno is %d\n", foo, _e); errno = _e; }
+            { int _e = errno; BSDLOG("recv2, recvfrom returns %d, errno is %d\n", foo, _e); errno = _e; }
             if (foo >= 0) {
                 copysockaddr_n2a(sb->from, &addr, l);
                 put_long(sb->fromlen, l);
@@ -3977,7 +4099,7 @@ uae_u32 bsdthr_Send_2 (SB)
             socklen_t optlen = sizeof(socktype);
             getsockopt(sb->s, SOL_SOCKET, SO_TYPE, (char*)&socktype, &optlen);
             if (socktype == SOCK_RAW) {
-                write_log("[RAW SEND] fd=%d, buf=%p, len=%d, flags=0x%x\n", sb->s, sb->buf, sb->len, sb->flags);
+                BSDLOG("[RAW SEND] fd=%d, buf=%p, len=%d, flags=0x%x\n", sb->s, sb->buf, sb->len, sb->flags);
             }
         }
         n = send (sb->s, (const char*)sb->buf, sb->len, sb->flags | MSG_NOSIGNAL);
@@ -3992,7 +4114,7 @@ uae_u32 bsdthr_Send_2 (SB)
             socklen_t optlen = sizeof(socktype);
             getsockopt(sb->s, SOL_SOCKET, SO_TYPE, (char*)&socktype, &optlen);
             if (socktype == SOCK_RAW) {
-                write_log("[RAW SENDTO] fd=%d, buf=%p, len=%d, flags=0x%x\n", sb->s, sb->buf, sb->len, sb->flags);
+                BSDLOG("[RAW SENDTO] fd=%d, buf=%p, len=%d, flags=0x%x\n", sb->s, sb->buf, sb->len, sb->flags);
             }
         }
         n = sendto (sb->s, (const char*)sb->buf, sb->len, sb->flags | MSG_NOSIGNAL, (struct sockaddr *)&addr, l);
@@ -4008,7 +4130,7 @@ uae_u32 bsdthr_Connect_2 (SB)
 		int retval;
 		copysockaddr_a2n (&addr, sb->a_addr, sb->a_addrlen);
 		retval = connect (sb->s, (struct sockaddr *)&addr, len);
-		{ int _e = errno; write_log ("Connect returns %d, errno is %d\n", retval, _e); errno = _e; }
+		{ int _e = errno; BSDLOG ("Connect returns %d, errno is %d\n", retval, _e); errno = _e; }
 		/* Hack: I need to set the action to something other than
 		 * 1 but I know action == 2 does the correct thing
 		 */
@@ -4023,7 +4145,7 @@ uae_u32 bsdthr_Connect_2 (SB)
 		bar = sizeof (foo);
 		if (getsockopt (sb->s, SOL_SOCKET, SO_ERROR, (char*)&foo, &bar) == 0) {
 			errno = foo;
-			write_log("Connect status is %d\n", foo); /* write_log may clobber errno */
+			BSDLOG("Connect status is %d\n", foo); /* write_log may clobber errno */
 			errno = foo; /* restore after write_log */
 			return (foo == 0) ? 0 : -1;
 		}
@@ -4095,6 +4217,19 @@ uae_u32 bsdthr_blockingstuff(uae_u32(*tryfunc)(SB), SB)
                 fd_set readset, writeset, exceptset;
                 int maxfd = (sb->s > sb->sockabort[0]) ? sb->s : sb->sockabort[0];
                 int num;
+                if (!socket_fd_usable_for_select(sb->s) || !socket_fd_usable_for_select(sb->sockabort[0])) {
+                    int fd_errno = EINVAL;
+                    write_log("Blocking select skipped: socket fd %d or abort fd %d exceeds select() limit %d\n",
+                        sb->s, sb->sockabort[0], FD_SETSIZE);
+#ifdef _WIN32
+                    if (!is_raw) { u_long mode = 0; ioctlsocket(sb->s, FIONBIO, &mode); }
+#else
+                    if (!is_raw) fcntl(sb->s, F_SETFL, flags);
+#endif
+                    if (is_raw && timeout_set) setsockopt(sb->s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&orig_timeout, sizeof(orig_timeout));
+                    errno = fd_errno;
+                    return -1;
+                }
 
                 FD_ZERO(&readset);
                 FD_ZERO(&writeset);
@@ -4111,7 +4246,7 @@ uae_u32 bsdthr_blockingstuff(uae_u32(*tryfunc)(SB), SB)
                 } while (num == -1 && errno == EINTR); // retry on EINTR
                 if (num == -1) {
                     int _select_err = errno; /* save before write_log/fcntl/setsockopt clobber it */
-                    write_log("Blocking select(%d) returns -1,errno is %d\n", sb->sockabort[0], _select_err);
+                    BSDLOG("Blocking select(%d) returns -1,errno is %d\n", sb->sockabort[0], _select_err);
 #ifdef _WIN32
                     if (!is_raw) { u_long mode = 0; ioctlsocket(sb->s, FIONBIO, &mode); }
 #else
@@ -4125,10 +4260,10 @@ uae_u32 bsdthr_blockingstuff(uae_u32(*tryfunc)(SB), SB)
                 if (FD_ISSET(sb->sockabort[0], &readset) || FD_ISSET(sb->sockabort[0], &writeset)) {
                     /* reset sock abort pipe */
                     /* read from the pipe to reset it */
-                    write_log("select aborted from signal\n");
+                    BSDLOG("select aborted from signal\n");
 
                     clearsockabort(sb);
-                    write_log("Done read\n");
+                    BSDLOG("Done read\n");
                     errno = EINTR;
                     done = 1;
                 }
@@ -4156,21 +4291,20 @@ static int bsdlib_threadfunc(void* arg)
 {
 	auto* sb = (struct socketbase*)arg;
 
-	write_log("THREAD_START\n");
+	BSDLOG("THREAD_START\n");
 
 	while (1) {
 		uae_sem_wait(&sb->sem);
 
-		write_log("Socket thread got action %d\n", sb->action);
+		BSDLOG("Socket thread got action %d\n", sb->action);
 
 		TrapContext* ctx = sb->context;  // FIXME: Correct?
 
 		switch (sb->action) {
 		case 0:       /* kill thread (CloseLibrary) */
 
-			write_log("THREAD_END\n");
+			BSDLOG("THREAD_END\n");
 
-			uae_sem_destroy(&sb->sem);
 			return 0;
 
 		case 1:       /* Connect */
@@ -4230,6 +4364,9 @@ static int bsdlib_threadfunc(void* arg)
 
 		case 5:       /* WaitSelect */
 			sb->resultval = bsdthr_WaitSelect(sb);
+			if ((int)sb->resultval < 0) {
+				SETERRNO;
+			}
 			break;
 
 		case 6:       /* Accept */
@@ -4277,7 +4414,7 @@ void clearsockabort(SB)
 	int num;
 
 	while ((num = read_pipe(sb->sockabort[0], &chr, sizeof(chr))) >= 0) {
-		write_log("Sockabort got %d bytes\n", num);
+		BSDLOG("Sockabort got %d bytes\n", num);
 	}
 }
 
@@ -4377,9 +4514,25 @@ void host_sbcleanup (SB)
 	/* Abort any pending blocking operation BEFORE closing the pipe.
 	 * Without this, a connect() blocked in select() inside bsdthr_blockingstuff
 	 * will never see the wakeup and the thread hangs forever. */
-	sb->action = 0;
-	sockabort(sb);           /* unblocks any select() waiting on sockabort[0] */
-	uae_sem_post(&sb->sem);  /* wakes thread if blocked on semaphore instead */
+	if (thread) {
+		sb->action = 0;
+		sockabort(sb);           /* unblocks any select() waiting on sockabort[0] */
+		if (sb->sem) {
+			uae_sem_post(&sb->sem);  /* wakes thread if blocked on semaphore instead */
+		}
+
+		/* We need to join with the socket thread to allow the thread to die
+		 * and clean up resources when the underlying thread layer is pthreads.
+		 * Ideally, this shouldn't be necessary, but, for example, when SDL uses
+		 * pthreads, it always creates joinable threads - and we can't do anything
+		 * about that. */
+		uae_wait_thread (&thread);
+		sb->thread = nullptr;
+	}
+
+	if (sb->sem) {
+		uae_sem_destroy(&sb->sem);
+	}
 
 	close_pipe (sb->sockabort[0]);
 	close_pipe (sb->sockabort[1]);
@@ -4388,13 +4541,6 @@ void host_sbcleanup (SB)
 			close_socket(sb->dtable[i]);
 		}
 	}
-
-	/* We need to join with the socket thread to allow the thread to die
-	 * and clean up resources when the underlying thread layer is pthreads.
-	 * Ideally, this shouldn't be necessary, but, for example, when SDL uses
-	 * pthreads, it always creates joinable threads - and we can't do anything
-	 * about that. */
-	uae_wait_thread (&thread);
 }
 
 void host_sbreset (void)
@@ -4405,7 +4551,10 @@ void host_sbreset (void)
 void sockabort (SB)
 {
 	int chr = 1;
-	write_log ("Sock abort!!\n");
+	if (!sb || sb->sockabort[1] < 0) {
+		return;
+	}
+	BSDLOG ("Sock abort!!\n");
 	if (write_pipe (sb->sockabort[1], &chr, sizeof (chr)) != sizeof (chr)) {
 		write_log("sockabort - did not write %zd bytes\n", sizeof(chr));
 	}
@@ -4454,11 +4603,11 @@ int host_socket(TrapContext *ctx, SB, int af, int type, int protocol)
     if (af == 2) af = AF_INET;
 #endif
 
-    write_log("socket(%s,%s,%d) -> ",af == AF_INET ? "AF_INET" : "AF_other",
+    BSDLOG("socket(%s,%s,%d) -> ",af == AF_INET ? "AF_INET" : "AF_other",
            type == SOCK_STREAM ? "SOCK_STREAM" : type == SOCK_DGRAM ?
            "SOCK_DGRAM " : type == SOCK_RAW ? "SOCK_RAW" : "SOCK_other", protocol);
     if (type == SOCK_RAW) {
-        write_log("[RAW SOCKET] af=%d, type=%d, protocol=%d\n", af, type, protocol);
+        BSDLOG("[RAW SOCKET] af=%d, type=%d, protocol=%d\n", af, type, protocol);
     }
 
     if ((s = socket (af, type, protocol)) == -1)  {
@@ -4477,7 +4626,7 @@ int host_socket(TrapContext *ctx, SB, int af, int type, int protocol)
     }
 
     sb->ftable[sd-1] = SF_BLOCKING;
-    write_log("socket returns Amiga %d, NativeSide %d\n", sd - 1, s);
+    BSDLOG("socket returns Amiga %d, NativeSide %d\n", sd - 1, s);
     return sd - 1;
 }
 
@@ -4495,7 +4644,7 @@ uae_u32 host_bind(TrapContext *ctx, SB, uae_u32 sd, uae_u32 name, uae_u32 namele
 		return -1;
 	}
 
-	write_log("bind(%u[%d], 0x%x, %u) -> ", sd, s, name, namelen);
+	BSDLOG("bind(%u[%d], 0x%x, %u) -> ", sd, s, name, namelen);
 	copysockaddr_a2n (&addr, name, namelen);
 	printSockAddr (&addr);
 	if ((success = ::bind (s, (struct sockaddr *)&addr, len)) != (uae_u32)0) {
@@ -4507,7 +4656,7 @@ uae_u32 host_bind(TrapContext *ctx, SB, uae_u32 sd, uae_u32 name, uae_u32 namele
 			write_log("bind() failed: Port %d is privileged (<1024), requires root privileges.\n", ntohs(addr.sin_port));
 		}
 	} else {
-		write_log("OK\n");
+		BSDLOG("OK\n");
 	}
 	return success;
 }
@@ -4517,7 +4666,7 @@ uae_u32 host_listen(TrapContext *ctx, SB, uae_u32 sd, uae_u32 backlog)
 	int s;
 	uae_u32 success = -1;
 
-	write_log("listen(%d,%d) -> ", sd, backlog);
+	BSDLOG("listen(%d,%d) -> ", sd, backlog);
 	s = getsock(ctx, sb, sd + 1);
 
 	if (s == -1) {
@@ -4529,7 +4678,7 @@ uae_u32 host_listen(TrapContext *ctx, SB, uae_u32 sd, uae_u32 backlog)
 		SETERRNO;
 		write_log("failed (%d)\n", sb->sb_errno);
 	} else {
-		write_log("OK\n");
+		BSDLOG("OK\n");
 	}
 	return success;
 }
@@ -4543,7 +4692,7 @@ void host_accept(TrapContext *ctx, SB, uae_u32 sd, uae_u32 name, uae_u32 namelen
 		return;
 	}
 
-	write_log("accept(%d, %x, %x)\n", sb->s, name, namelen);
+	BSDLOG("accept(%d, %x, %x)\n", sb->s, name, namelen);
 	sb->a_addr    = name;
 	sb->a_addrlen = namelen;
 	sb->action    = 6;
@@ -4554,7 +4703,7 @@ void host_accept(TrapContext *ctx, SB, uae_u32 sd, uae_u32 name, uae_u32 namelen
 	uae_sem_post (&sb->sem);
 
 	WAITSIGNAL;
-	write_log("Accept returns %d\n", sb->resultval);
+	BSDLOG("Accept returns %d\n", sb->resultval);
 	
 	// Implicitly re-enable REP_ACCEPT
 	if (sb->resultval >= 0) {
@@ -4635,7 +4784,7 @@ void host_sendto (TrapContext *ctx, SB, uae_u32 sd, uae_u32 msg, uae_u8 *hmsg, u
 		sb->tolen  = tolen;
 		sb->action = 2;
     
-    write_log("BSDSOCK: host_sendto %d called\n", sd);
+    BSDLOG("BSDSOCK: host_sendto %d called\n", sd);
 
 	uae_sem_post (&sb->sem);
 
@@ -4684,7 +4833,7 @@ void host_recvfrom(TrapContext *ctx, SB, uae_u32 sd, uae_u32 msg, uae_u8 *hmsg, 
 	sb->fromlen= addrlen;
 	sb->action = 3;
     
-    write_log("BSDSOCK: host_recvfrom %d called\n", sd);
+    BSDLOG("BSDSOCK: host_recvfrom %d called\n", sd);
 
 	uae_sem_post (&sb->sem);
 
@@ -4699,7 +4848,7 @@ uae_u32 host_shutdown(SB, uae_u32 sd, uae_u32 how)
 	TrapContext *ctx = NULL;
 	SOCKET s;
 
-	write_log("shutdown(%d,%d) -> ", sd, how);
+	BSDLOG("shutdown(%d,%d) -> ", sd, how);
 	s = getsock(ctx, sb, sd + 1);
 
 	if (s != INVALID_SOCKET) {
@@ -4707,7 +4856,7 @@ uae_u32 host_shutdown(SB, uae_u32 sd, uae_u32 how)
 			SETERRNO;
 			write_log("failed (%d)\n", sb->sb_errno);
 		} else {
-			write_log("OK\n");
+			BSDLOG("OK\n");
 			return 0;
 		}
 	}
@@ -4718,10 +4867,16 @@ uae_u32 host_shutdown(SB, uae_u32 sd, uae_u32 how)
 void host_setsockopt(SB, uae_u32 sd, uae_u32 level, uae_u32 optname, uae_u32 optval, uae_u32 len)
 {
 	TrapContext* ctx = NULL;
+	if (!valid_amiga_socket_descriptor_u32(sb, sd)) {
+		sb->resultval = -1;
+		bsdsocklib_seterrno(ctx, sb, 9); /* EBADF */
+		return;
+	}
+
 	int s = getsock(ctx, sb, sd + 1);
 	void* buf = NULL;
-	struct linger sl;
-	struct timeval timeout;
+	struct linger sl {};
+	struct timeval timeout {};
 
 	if (s == INVALID_SOCKET) {
 		sb->resultval = -1;
@@ -4743,16 +4898,24 @@ void host_setsockopt(SB, uae_u32 sd, uae_u32 level, uae_u32 optname, uae_u32 opt
 			eventflags |= REP_WRITE;
 			write_log("BSDSOCK: Force-enabled REP_WRITE for socket %d (requested mask 0x%x -> 0x%x)\n", sd, get_long(optval), eventflags);
 		}
-		
+
 		BSDTRACE((_T("BSDSOCK: SO_EVENTMASK called for socket %d, eventflags=0x%x\n"), sd, eventflags));
-		
+
 		// Store event mask in ftable (using lower bits)
+		uae_u32 old_ftable = sb->ftable[sd];
 		sb->ftable[sd] = (sb->ftable[sd] & ~REP_ALL) | (eventflags & REP_ALL);
-		
+
 		// Register or unregister with event monitor
 		if (eventflags & REP_ALL) {
 			// Register socket for event monitoring
-			register_socket_events(sb, sd, s, eventflags & REP_ALL);
+			if (!register_socket_events(sb, sd, s, eventflags & REP_ALL)) {
+				int saved_errno = errno;
+				sb->ftable[sd] = old_ftable;
+				sb->resultval = -1;
+				errno = saved_errno;
+				SETERRNO;
+				return;
+			}
 		} else {
 			// Unregister socket from event monitoring
 			unregister_socket_events(sb, sd);
@@ -4777,25 +4940,42 @@ void host_setsockopt(SB, uae_u32 sd, uae_u32 level, uae_u32 optname, uae_u32 opt
 		return;
 	}
 
-	if (optval) {
-		buf = malloc(len);
+	int minlen = setsockopt_argument_size(nativelevel, nativeoptname);
+	if (minlen < 0) {
+		write_log("host_setsockopt: Unsupported mapped option 0x%x for level %d (native level %d, native option %d).\n",
+			optname, level, nativelevel, nativeoptname);
+		sb->resultval = -1;
+		errno = EINVAL;
+		SETERRNO;
+		return;
+	}
+	if (optval == 0 || len < (uae_u32)minlen) {
+		write_log("host_setsockopt: Invalid option buffer for socket %d option 0x%x: optval=0x%x len=%u min=%d\n",
+			sd, optname, optval, len, minlen);
+		sb->resultval = -1;
+		errno = EINVAL;
+		SETERRNO;
+		return;
+	}
+
+	if (nativeoptname == SO_LINGER) {
+		sl.l_onoff = get_long(optval);
+		sl.l_linger = get_long(optval + 4);
+	}
+	else if (nativeoptname == SO_RCVTIMEO || nativeoptname == SO_SNDTIMEO) {
+		timeout.tv_sec = get_long(optval);
+		timeout.tv_usec = get_long(optval + 4);
+	}
+	else {
+		buf = calloc(1, len);
 		if (buf == NULL) {
 			sb->resultval = -1;
 			bsdsocklib_seterrno(ctx, sb, 12); // ENOMEM
 			return;
 		}
-		if (nativeoptname == SO_LINGER) {
-			sl.l_onoff = get_long(optval);
-			sl.l_linger = get_long(optval + 4);
-		}
-		else if (nativeoptname == SO_RCVTIMEO || nativeoptname == SO_SNDTIMEO) {
-			timeout.tv_sec = get_long(optval);
-			timeout.tv_usec = get_long(optval + 4);
-		}
-		else {
-			mapsockoptvalue(nativelevel, nativeoptname, optval, buf);
-		}
+		mapsockoptvalue(nativelevel, nativeoptname, optval, buf);
 	}
+
 	if (nativeoptname == SO_RCVTIMEO || nativeoptname == SO_SNDTIMEO) {
 		sb->resultval = setsockopt(s, nativelevel, nativeoptname, (const char*)&timeout, sizeof(timeout));
 	}
@@ -4805,11 +4985,16 @@ void host_setsockopt(SB, uae_u32 sd, uae_u32 level, uae_u32 optname, uae_u32 opt
 	else {
 		sb->resultval = setsockopt(s, nativelevel, nativeoptname, (const char*)buf, len);
 	}
+	int saved_errno = errno;
 	if (buf)
 		free(buf);
-	SETERRNO;
+	errno = saved_errno;
+	if (sb->resultval < 0)
+		SETERRNO;
+	else
+		bsdsocklib_seterrno(ctx, sb, 0);
 
-	write_log("setsockopt: sock %d, level %d, 'name' %d(%d), len %d -> %d, %d\n",
+	BSDLOG("setsockopt: sock %d, level %d, 'name' %d(%d), len %d -> %d, %d\n",
 		s, level, optname, nativeoptname, len,
 		sb->resultval, errno);
 }
@@ -4817,14 +5002,16 @@ void host_setsockopt(SB, uae_u32 sd, uae_u32 level, uae_u32 optname, uae_u32 opt
 uae_u32 host_getsockopt(TrapContext* ctx, SB, uae_u32 sd, uae_u32 level, uae_u32 optname, uae_u32 optval, uae_u32 optlen)
 {
 	socklen_t len = 0;
-	int r;
+	int r = -1;
 	int s;
-	int nativelevel = mapsockoptlevel(level);
-	int nativeoptname = mapsockoptname(nativelevel, optname);
 	void* buf = NULL;
-	struct linger sl;
-	struct timeval timeout;
+	struct linger sl {};
+	struct timeval timeout {};
 
+	if (!valid_amiga_socket_descriptor_u32(sb, sd)) {
+		bsdsocklib_seterrno(ctx, sb, 9); /* EBADF */
+		return -1;
+	}
 	s = getsock(ctx, sb, sd + 1);
 
 	if (s == INVALID_SOCKET) {
@@ -4834,21 +5021,66 @@ uae_u32 host_getsockopt(TrapContext* ctx, SB, uae_u32 sd, uae_u32 level, uae_u32
 
 	// Handle SO_EVENTMASK (0x2001) - Amiga-specific, no host equivalent
 	if (level == 0xFFFF && optname == 0x2001) {
-		if (optval && optlen) {
+		if (optval || optlen) {
+			if (!optval || !optlen) {
+				bsdsocklib_seterrno(ctx, sb, EINVAL);
+				sb->resultval = -1;
+				return -1;
+			}
+			len = get_long(optlen);
+			if (len < sizeof(uae_u32)) {
+				put_long(optlen, sizeof(uae_u32));
+				bsdsocklib_seterrno(ctx, sb, EINVAL);
+				sb->resultval = -1;
+				return -1;
+			}
 			int mask = sb->ftable[sd] & REP_ALL;
 			put_long(optval, mask);
-			put_long(optlen, 4);
+			put_long(optlen, sizeof(uae_u32));
 		}
 		bsdsocklib_seterrno(ctx, sb, 0);
 		sb->resultval = 0;
 		return 0;
 	}
 
-	if (optlen) {
-		len = get_long(optlen);
-		buf = malloc(len);
-		if (buf == NULL) {
+	int nativelevel = mapsockoptlevel(level);
+	int nativeoptname = mapsockoptname(nativelevel, optname);
+	if (nativeoptname == -1) {
+		write_log("host_getsockopt: Invalid option 0x%x for level %d (native level %d), not calling getsockopt.\n",
+			optname, level, nativelevel);
+		errno = EINVAL;
+		SETERRNO;
+		return -1;
+	}
+
+	int minlen = getsockopt_result_size(nativelevel, nativeoptname);
+	if (minlen < 0) {
+		write_log("host_getsockopt: Unsupported mapped option 0x%x for level %d (native level %d, native option %d).\n",
+			optname, level, nativelevel, nativeoptname);
+		errno = EINVAL;
+		SETERRNO;
+		return -1;
+	}
+
+	if (optval || optlen) {
+		if (!optval || !optlen) {
+			errno = EINVAL;
+			SETERRNO;
 			return -1;
+		}
+		len = get_long(optlen);
+		if (len < minlen) {
+			put_long(optlen, minlen);
+			errno = EINVAL;
+			SETERRNO;
+			return -1;
+		}
+		if (nativeoptname != SO_RCVTIMEO && nativeoptname != SO_SNDTIMEO && nativeoptname != SO_LINGER) {
+			buf = calloc(1, len);
+			if (buf == NULL) {
+				bsdsocklib_seterrno(ctx, sb, 12); // ENOMEM
+				return -1;
+			}
 		}
 	}
 
@@ -4863,6 +5095,7 @@ uae_u32 host_getsockopt(TrapContext* ctx, SB, uae_u32 sd, uae_u32 level, uae_u32
 	else {
 		r = getsockopt(s, nativelevel, nativeoptname, optval ? (char*)buf : NULL, optlen ? &len : NULL);
 	}
+	int saved_errno = errno;
 
 	// Write back Amiga-appropriate optlen for size-mismatched types
 	if (r == 0 && optlen) {
@@ -4876,8 +5109,12 @@ uae_u32 host_getsockopt(TrapContext* ctx, SB, uae_u32 sd, uae_u32 level, uae_u32
 	if (optlen)
 		put_long(optlen, len);
 
-	SETERRNO;
-	write_log("getsockopt: sock AmigaSide %d NativeSide %d, level %d, 'name' %x(%d), len %d -> %d, %d\n",
+	errno = saved_errno;
+	if (r < 0)
+		SETERRNO;
+	else
+		bsdsocklib_seterrno(ctx, sb, 0);
+	BSDLOG("getsockopt: sock AmigaSide %d NativeSide %d, level %d, 'name' %x(%d), len %d -> %d, %d\n",
 		sd, s, level, optname, nativeoptname, len, r, errno);
 
 	if (optval) {
@@ -4907,7 +5144,7 @@ uae_u32 host_getsockname(TrapContext *ctx, SB, uae_u32 sd, uae_u32 name, uae_u32
 	socklen_t len = sizeof (struct sockaddr_in);
 	struct sockaddr_in addr{};
 
-	write_log("getsockname(%u, 0x%x, %u) -> ", sd, name, len);
+	BSDLOG("getsockname(%u, 0x%x, %u) -> ", sd, name, len);
 	
 	s = getsock(ctx, sb, sd + 1);
 
@@ -4917,7 +5154,7 @@ uae_u32 host_getsockname(TrapContext *ctx, SB, uae_u32 sd, uae_u32 name, uae_u32
 			write_log("failed (%d)\n", sb->sb_errno);
 		} else {
 			int a_nl;
-			write_log("okay\n");
+			BSDLOG("okay\n");
 			a_nl = get_long (namelen);
 			copysockaddr_n2a (name, &addr, a_nl);
 			if (a_nl > 16)
@@ -4935,7 +5172,7 @@ uae_u32 host_getpeername(TrapContext *ctx, SB, uae_u32 sd, uae_u32 name, uae_u32
 	socklen_t len = sizeof (struct sockaddr_in);
 	struct sockaddr_in addr{};
 
-	write_log("getpeername(%u, 0x%x, %u) -> ", sd, name, len);
+	BSDLOG("getpeername(%u, 0x%x, %u) -> ", sd, name, len);
 
 	s = getsock(ctx, sb, sd + 1);
 
@@ -4945,7 +5182,7 @@ uae_u32 host_getpeername(TrapContext *ctx, SB, uae_u32 sd, uae_u32 name, uae_u32
 			write_log("failed (%d)\n", sb->sb_errno);
 		} else {
 			int a_nl;
-			write_log("okay\n");
+			BSDLOG("okay\n");
 			a_nl = get_long (namelen);
 			copysockaddr_n2a (name, &addr, a_nl);
 			if (a_nl > 16)
@@ -4981,7 +5218,7 @@ uae_u32 host_IoctlSocket(TrapContext *ctx, SB, uae_u32 sd, uae_u32 request, uae_
 
 	// Only log non-FIONREAD ioctls, or errors for FIONREAD
 	if (request != 0x4004667F) {
-		write_log("Ioctl code is %x, flags are %ld\n", request, flags);
+		BSDLOG("Ioctl code is %x, flags are %ld\n", request, flags);
 	}
 
 	switch (request) {
@@ -5014,10 +5251,10 @@ uae_u32 host_IoctlSocket(TrapContext *ctx, SB, uae_u32 sd, uae_u32 request, uae_
 			   flags | O_NONBLOCK : flags & ~O_NONBLOCK);
 #endif
 		if (argval) {
-			write_log("nonblocking\n");
+			BSDLOG("nonblocking\n");
 			sb->ftable[sd-1] &= ~SF_BLOCKING;
 		} else {
-			write_log("blocking\n");
+			BSDLOG("blocking\n");
 			sb->ftable[sd-1] |= SF_BLOCKING;
 		}
 		return r;
@@ -5117,12 +5354,14 @@ int host_CloseSocket(TrapContext *ctx, SB, int sd)
 	return 0;
 	}
 	*/
-	write_log("CloseSocket Amiga: %d, NativeSide %d\n", sd, s);
+	BSDLOG("CloseSocket Amiga: %d, NativeSide %d\n", sd, s);
 	
 	// Unregister from event monitoring if registered
 	unregister_socket_events(sb, sd);
 	// Clear pending event flags to prevent stale GetSocketEvents on fd reuse
-	sb->ftable[sd] &= ~SET_ALL;
+	if (valid_amiga_socket_descriptor(sb, sd)) {
+		sb->ftable[sd] &= ~SET_ALL;
+	}
 
 	retval = close_socket (s);
 	SETERRNO;
@@ -5162,6 +5401,11 @@ uae_u32 bsdthr_WaitSelect(SB)
 	FD_ZERO(&sets[2]);
 
 	/* Set up the abort socket */
+	if (!socket_fd_usable_for_select(sb->sockabort[0])) {
+		write_log(_T("BSDSOCK: WaitSelect abort fd %d exceeds select() limit %d.\n"), sb->sockabort[0], FD_SETSIZE);
+		errno = EINVAL;
+		return -1;
+	}
 	FD_SET(sb->sockabort[0], &sets[0]);
 	FD_SET(sb->sockabort[0], &sets[2]);
 	max = sb->sockabort[0];
@@ -5175,6 +5419,10 @@ uae_u32 bsdthr_WaitSelect(SB)
 					BSDTRACE((_T("WaitSelect: AmigaSide %d set. NativeSide %d.\n"), i, s));
 					if (s == -1) {
 						write_log(_T("BSDSOCK: WaitSelect() called with invalid descriptor %d in set %d.\n"), i, set);
+					} else if (!socket_fd_usable_for_select(s)) {
+						write_log(_T("BSDSOCK: WaitSelect native fd %d for descriptor %d exceeds select() limit %d.\n"), s, i, FD_SETSIZE);
+						errno = EINVAL;
+						return -1;
 					} else {
 						FD_SET(s, &sets[set]);
 						if (max < s) max = s;
@@ -5331,7 +5579,7 @@ void host_getprotobyname (TrapContext *ctx, SB, uae_u32 name)
 	std::lock_guard<std::mutex> lock(bsdsock_mutex);
 	struct protoent *p = getprotobyname ((char *)get_real_address (name));
 #endif
-	write_log("Getprotobyname(%s) = %p\n", get_real_address (name), p);
+	BSDLOG("Getprotobyname(%s) = %p\n", get_real_address (name), p);
 	if (p == NULL) {
 		SETHERRNO;
 		SETERRNO;
@@ -5349,7 +5597,7 @@ void host_getprotobynumber(TrapContext *ctx, SB, uae_u32 number)
 	std::lock_guard<std::mutex> lock(bsdsock_mutex);
 	struct protoent *p = getprotobynumber(number);
 #endif
-	write_log("getprotobynumber(%d) = %p\n", number, p);
+	BSDLOG("getprotobynumber(%d) = %p\n", number, p);
 	if (p == NULL) {
 		SETHERRNO;
 		SETERRNO;
@@ -5377,9 +5625,9 @@ void host_getservbynameport(TrapContext *ctx, SB, uae_u32 nameport, uae_u32 prot
 	uae_u32 aptr;
 	int i;
 	if (type) {
-		write_log("Getservbyport(%d, %s) = %p\n", nameport, get_real_address (proto), s);
+		BSDLOG("Getservbyport(%d, %s) = %p\n", nameport, get_real_address (proto), s);
 	} else {
-		write_log("Getservbyname(%s, %s) = %p\n", get_real_address (nameport), get_real_address (proto), s);
+		BSDLOG("Getservbyname(%s, %s) = %p\n", get_real_address (nameport), get_real_address (proto), s);
 	}
 	if (s != NULL) {
 		// compute total size of servent

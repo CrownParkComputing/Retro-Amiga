@@ -263,9 +263,7 @@ enum { CP_GENERIC = 1, CP_CDTV, CP_CDTVCR, CP_CD32, CP_A500, CP_A500P, CP_A600,
 #define IDE_A600A1200 1
 #define IDE_A4000 2
 
-#define GFX_WINDOW 0
-#define GFX_FULLSCREEN 1
-#define GFX_FULLWINDOW 2
+#include "amiberry_gfx_mode.h"
 
 #define AUTOSCALE_NONE 0
 #define AUTOSCALE_STATIC_AUTO 1
@@ -373,6 +371,11 @@ struct apmode
 
 #define MAX_LUA_STATES 16
 
+#define ASPECT_TYPE_NONE 0
+#define ASPECT_TYPE_VGA 1
+#define ASPECT_TYPE_TV_AUTO 2
+#define ASPECT_TYPE_TV_PAL 3
+#define ASPECT_TYPE_TV_NTSC 4
 
 #define MAX_FILTERDATA 3
 #define GF_NORMAL 0
@@ -401,7 +404,7 @@ struct gfx_filterdata
 	int gfx_filter_noise, gfx_filter_blur;
 	int gfx_filter_saturation, gfx_filter_luminance, gfx_filter_contrast;
 	int gfx_filter_gamma, gfx_filter_gamma_ch[3];
-	int gfx_filter_keep_aspect, gfx_filter_aspect;
+	int gfx_filter_aspect_type, gfx_filter_aspect;
 	int gfx_filter_autoscale;
 	int gfx_filter_integerscalelimit;
 	int gfx_filter_keep_autoscale_aspect;
@@ -565,6 +568,8 @@ struct whdload_custom
 struct whdload_slave
 {
 	std::string filename;
+	std::string sub_path;
+	bool has_sub_path = false;
 	std::string data_path;
 	whdload_custom custom1;
 	whdload_custom custom2;
@@ -878,8 +883,8 @@ struct uae_prefs {
 	TCHAR cartident[256];
 	int cart_internal;
 	TCHAR pci_devices[256];
-	TCHAR prtname[256];
-	TCHAR sername[256];
+	TCHAR prtname[MAX_DPATH];
+	TCHAR sername[MAX_DPATH];
 	TCHAR a2065name[MAX_DPATH];
 	TCHAR ne2000pciname[MAX_DPATH];
 	TCHAR ne2000pcmcianame[MAX_DPATH];
@@ -999,6 +1004,13 @@ struct uae_prefs {
 	int gfx_vertical_offset;
 	int gfx_correct_aspect;
 	int scaling_method;
+#ifdef AMIBERRY
+	char shader[128];
+	char shader_rtg[128];
+	bool use_bezel;
+	bool use_custom_bezel;
+	char custom_bezel[256];
+#endif
 
 	bool gui_alwaysontop;
 	bool main_alwaysontop;
@@ -1054,6 +1066,8 @@ struct uae_prefs {
 	TCHAR minimize[256];
 	TCHAR left_amiga[256];
 	TCHAR right_amiga[256];
+	TCHAR screenshot[256];
+	TCHAR debugger_trigger[256];
 
 	/* input */
 
@@ -1076,7 +1090,9 @@ struct uae_prefs {
 	bool input_autoswitch;
 	bool input_autoswitchleftright;
 	bool input_advancedmultiinput;
+	bool input_multi_mouse;
 	bool input_default_onscreen_keyboard;
+	bool input_joystick_up_button;
 	struct uae_input_device joystick_settings[MAX_INPUT_SETTINGS][MAX_INPUT_DEVICES];
 	struct uae_input_device mouse_settings[MAX_INPUT_SETTINGS][MAX_INPUT_DEVICES];
 	struct uae_input_device keyboard_settings[MAX_INPUT_SETTINGS][MAX_INPUT_DEVICES];
@@ -1088,6 +1104,7 @@ struct uae_prefs {
 
 #ifdef AMIBERRY
 	bool vkbd_enabled;
+	bool vkbd_numpad;
 	bool vkbd_hires;
 	bool vkbd_exit;
 	char vkbd_language[256];
@@ -1136,7 +1153,6 @@ extern void cfgfile_target_write_bool(struct zfile* f, const TCHAR* option, bool
 extern void cfgfile_target_dwrite_bool(struct zfile* f, const TCHAR* option, bool b);
 
 extern void cfgfile_write_str(struct zfile *f, const TCHAR *option, const TCHAR *value);
-//extern void cfgfile_write_str_escape(struct zfile *f, const TCHAR *option, const TCHAR *value);
 extern void cfgfile_dwrite_str(struct zfile *f, const TCHAR *option, const TCHAR *value);
 extern void cfgfile_target_write_str(struct zfile *f, const TCHAR *option, const TCHAR *value);
 extern void cfgfile_target_dwrite_str(struct zfile *f, const TCHAR *option, const TCHAR *value);
@@ -1157,6 +1173,24 @@ extern void copy_prefs(const struct uae_prefs* src, struct uae_prefs* dst);
 extern void copy_inputdevice_prefs(const struct uae_prefs *src, struct uae_prefs *dst);
 
 #ifdef AMIBERRY
+// Distinguish the CD32-specific 3.1 image from the generic 310 RP9 code.
+constexpr int RP9_SYSTEM_ROM_310_CD32 = 31032;
+
+enum class rp9_system_model
+{
+	a1000,
+	a500,
+	a500plus,
+	a600,
+	a1200,
+	a2000,
+	a3000,
+	a4000,
+	cdtv,
+	cd32
+};
+
+extern int configure_rp9_system_rom(struct uae_prefs* p, rp9_system_model model, int rom);
 extern int bip_a500(struct uae_prefs* p, int rom);
 extern int bip_a500plus(struct uae_prefs* p, int rom);
 extern int bip_a600(struct uae_prefs* p, int rom);
@@ -1231,7 +1265,7 @@ extern bool cfgfile_createconfigstore(struct uae_prefs* p);
 extern void cfgfile_get_shader_config(struct uae_prefs* p, int rtg);
 
 #ifdef AMIBERRY
-extern void whdload_auto_prefs(struct uae_prefs* prefs, const char* filepath);
+extern void whdload_auto_prefs(struct uae_prefs* prefs, const char* filepath, bool preserve_quickstart_hardware = false);
 extern void cd_auto_prefs(struct uae_prefs* prefs, char* filepath);
 extern void symlink_roms(struct uae_prefs* prefs);
 extern void drawbridge_update_profiles(struct uae_prefs* prefs);
@@ -1344,6 +1378,14 @@ struct amiberry_gui_theme
 	amiberry_gui_color foreground_color;
 };
 
+struct amiberry_shader_parameter
+{
+	bool rtg = false;
+	std::string shader;
+	std::string name;
+	float value = 0.0f;
+};
+
 struct amiberry_options
 {
 	bool quickstart_start = true;
@@ -1363,6 +1405,11 @@ struct amiberry_options
 	int default_scaling_method = -1;
 	int default_gfx_autoresolution = 0;
 	bool default_frameskip = false;
+	bool perf_log = false;
+	bool slow_host_warning = true;
+	bool use_adpf = true;
+	bool default_disable_cycle_exact = false;
+	int default_quickstart_compatibility = 0;
 	bool default_correct_aspect_ratio = true;
 	bool default_auto_crop = false;
 	int default_width = 720;
@@ -1394,23 +1441,24 @@ struct amiberry_options
 	bool default_whd_quit_on_exit = false;
 	bool use_jst_instead_of_whd = false;
 	bool disable_shutdown_button = true;
-	bool allow_display_settings_from_xml = true;
+	bool allow_display_settings_from_json = true;
 	int default_soundcard = 0;
 #ifdef __ANDROID__
 	bool default_onscreen_joystick = false;
+	// No virtual keyboard is built: upstream's lives in the ImGui GUI, which
+	// this fork removed in favour of the host UI.
+	bool default_vkbd_enabled = false;
 #else
 	bool default_onscreen_joystick = false;
+	bool default_vkbd_enabled = false;
 #endif
-	bool default_vkbd_enabled;
-	bool default_vkbd_hires;
-	bool default_vkbd_exit;
 	char default_vkbd_language[128] = "US";
-	char default_vkbd_style[128] = "Original";
 	int default_vkbd_transparency;
 	char default_vkbd_toggle[128] = "guide";
 	char gui_theme[128] = "Default.theme";
 	char shader[128] = "none";
 	char shader_rtg[128] = "none";
+	std::vector<amiberry_shader_parameter> shader_parameters;
 	bool use_bezel = false;
 	bool use_custom_bezel = false;
 	char custom_bezel[256] = "none";
