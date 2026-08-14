@@ -288,6 +288,10 @@ class MediaLibrary {
     '.dart_tool',
     '.gradle',
     '.cache',
+    // The canonical reference-zip store in Documents. Never scanned, never
+    // imported: adopting it would relocate the masters into this app's
+    // library, and on a desktop that is one user-dirs edit away.
+    'retro-zips',
   ];
 
   static bool _shouldSkip(
