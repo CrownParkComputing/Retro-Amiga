@@ -1,3 +1,4 @@
+import GameController
 import UIKit
 
 /// The in-game controls on iOS.
@@ -80,13 +81,22 @@ final class EmulatorControls {
     let keys = makeButton(systemName: "keyboard", action: #selector(Target.keyboard))
     let pad = makeButton(systemName: "gamecontroller", action: #selector(Target.pad))
     let mouse = makeButton(systemName: "cursorarrow", action: #selector(Target.mouse))
-    let players = makeButton(systemName: "person.2", action: #selector(Target.twoPlayers))
     let quit = makeButton(systemName: "xmark", action: #selector(Target.quit))
     pauseButton = pause
     mouseButton = mouse
-    playersButton = players
 
-    let stack = UIStackView(arrangedSubviews: [pause, keys, pad, mouse, players, quit])
+    var buttons: [UIButton] = [pause, keys, pad, mouse]
+    // Two-player mode only exists when there are two controllers to give
+    // ports to. With one - or none - the button changed nothing anyone could
+    // see, and an icon that does nothing is worse than no icon.
+    if GCController.controllers().count >= 2 {
+      let players = makeButton(systemName: "person.2", action: #selector(Target.twoPlayers))
+      playersButton = players
+      buttons.append(players)
+    }
+    buttons.append(quit)
+
+    let stack = UIStackView(arrangedSubviews: buttons)
     stack.axis = .vertical
     stack.spacing = 12
     stack.translatesAutoresizingMaskIntoConstraints = false

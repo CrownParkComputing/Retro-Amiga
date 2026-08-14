@@ -14,9 +14,17 @@ void osdep_init_keyboard(int* keyboard_german, int* retroarch_inited, int* num_r
 	if (!keyboard_german || !retroarch_inited || !num_retroarch_kbdjoy)
 		return;
 
-	*keyboard_german = 0;
-	if (SDL_GetKeyFromScancode(SDL_SCANCODE_Y, SDL_KMOD_NONE, false) == SDLK_Z)
-		*keyboard_german = 1;
+	/* Once per process. The layout does not change mid-session, and on iOS
+	   this SDL call consults the keymap of a keyboard whose window went away
+	   with the previous run - the second run's init_kb froze right here,
+	   which surfaced as "loading an ADF after a WHDLoad game hangs". */
+	static int cached_german = -1;
+	if (cached_german < 0) {
+		cached_german =
+			SDL_GetKeyFromScancode(SDL_SCANCODE_Y, SDL_KMOD_NONE, false) == SDLK_Z
+				? 1 : 0;
+	}
+	*keyboard_german = cached_german;
 
 	if (*retroarch_inited)
 		return;
