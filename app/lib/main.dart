@@ -11,6 +11,7 @@ import 'overlay_main.dart' show emulatorOverlayMain;
 import 'dart:async';
 
 import 'data/app_prefs.dart';
+import 'data/startup_import.dart';
 import 'data/whdload_support.dart';
 import 'screens/workbench_screen.dart';
 import 'screens/onboarding_screen.dart';
@@ -83,6 +84,12 @@ class _RootState extends State<_Root> {
     } on Object {
       // A missing preference store means first run, not a failure.
     }
+    // File anything new before the Workbench draws, so a collection copied in
+    // through the Files app is simply there. Skipped on first run because the
+    // onboarding walkthrough does its own import, with the root chooser and a
+    // report the user can actually read; doing it twice would move the same
+    // files and then show "nothing found".
+    if (complete) await StartupImport.run();
     if (mounted) setState(() => _setupComplete = complete);
   }
 
