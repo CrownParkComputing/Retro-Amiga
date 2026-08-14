@@ -172,3 +172,14 @@ android/.gradle_home/
 # iOS cross-build trees (dependency sources and object files)
 native/ios/build/
 native/ios/out/
+
+# The reference zips beside docs/ are the app's whole setup story, built from
+# the user's own collection - see docs/ZIPS.md. Only the enabler travels:
+# WHDLoad and the skick relocation tables are freely distributable, and the
+# app already ships the same files as assets. The rest are Commodore's and
+# the publishers' to give away, not ours.
+docs/amiga-kickstarts.zip
+docs/amiga-whdload.zip
+docs/amiga-music.zip
+docs/amiga-cdrom.zip
+docs/amiga-games.zip
