@@ -272,8 +272,20 @@ bool preinit_shm ()
 	MEMORYSTATUSEX memstatsex;
 #endif
 
-	if (natmem_reserved)
+	if (natmem_reserved) {
+		/* Windows MEM_RELEASE demands size 0; munmap demands the true size.
+		   The POSIX shim forwarded the 0 into munmap, which fails with
+		   EINVAL - so every run of the core leaked its whole ~900MB natmem
+		   reservation, and a phone host that runs games back to back
+		   starved the process a few games in. The Dart VM was the first
+		   thing to die of it, which made a memory leak look like a black
+		   screen on "save and play". */
+#ifdef _WIN32
 		VirtualFree (natmem_reserved, 0, MEM_RELEASE);
+#else
+		VirtualFree (natmem_reserved, natmem_reserved_size, MEM_RELEASE);
+#endif
+	}
 
 	natmem_reserved = nullptr;
 	natmem_offset = nullptr;
