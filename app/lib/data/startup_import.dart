@@ -1,6 +1,7 @@
+import 'app_log.dart';
+import 'aros_rom.dart';
 import 'media_library.dart';
 import 'media_root.dart';
-import 'app_log.dart';
 
 /// Files whatever has appeared since last time, every launch.
 ///
@@ -35,6 +36,9 @@ class StartupImport {
   /// is a library that is missing something the user can still fix by hand
   /// with the Scan button.
   static Future<ImportResult?> run() async {
+    // Before the scan, so a first launch on a device with no Kickstart still
+    // finds one and the library reports a ROM rather than nothing.
+    await ArosRom.installIfMissing();
     try {
       final MediaIndex index = await MediaLibrary.scan();
       final ImportResult result = await MediaImporter.import(index);

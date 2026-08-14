@@ -45,5 +45,14 @@ flutter:
     - assets/whdboot/kick40063.A600.RTB
     - assets/whdboot/kick40068.A1200.RTB
     - assets/whdboot/kick40068.A4000.RTB
+    # The AROS m68k ROM: an open reimplementation of AmigaOS, and what the
+    # core falls back to when the user has supplied no Kickstart ("Could not
+    # load system ROM, trying AROS ROM replacement"). It is what makes a clean
+    # install boot to a desktop instead of nothing at all. AROS Public
+    # License; the About panel carries the attribution and source pointer the
+    # licence requires. NOT a Kickstart substitute for games -- most WHDLoad
+    # titles still need a real one.
+    - assets/roms/aros-rom.bin
+    - assets/roms/aros-ext.bin
     - assets/images/retro_recomp_logo.png
     - assets/machines/

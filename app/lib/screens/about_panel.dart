@@ -59,10 +59,21 @@ class AboutPanel extends StatelessWidget {
         ),
         _Section(
           title: 'What you need to supply',
-          body: 'A Kickstart ROM. They are still under copyright, so none '
-              'ships here - Cloanto sell them, and if you have an Amiga you '
-              'may already own one. Everything else, the app will find by '
-              'scanning.',
+          body: 'A Kickstart ROM, for full compatibility. The app boots '
+              'without one using the bundled AROS ROM, but AROS is a '
+              'reimplementation rather than a clone, so most WHDLoad games '
+              'and some floppies still want the real thing. Kickstarts are '
+              'under copyright, so none ships here - Cloanto sell them as '
+              'Amiga Forever, and if you have an Amiga you may already own '
+              'one. Everything else, the app will find by scanning.',
+        ),
+        _Section(
+          title: 'AROS',
+          body: 'The fallback Kickstart is the AROS m68k ROM, an independent '
+              'open reimplementation of AmigaOS, used here under the AROS '
+              'Public License. Source and the licence text are at '
+              'aros.sourceforge.io. WHDLoad, JST and AmiQuit are Bert Jahn\'s '
+              'and ship under their own terms.',
         ),
         _Section(
           title: 'Thanks',
