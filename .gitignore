@@ -176,3 +176,7 @@ native/ios/out/
 # Reference zips never live in the repo; the set is kept in
 # ~/Documents/retro-zips and documented in docs/ZIPS.md.
 docs/*.zip
+# Local build and signing residue, never source
+build-linux/
+.artifacts/
+.asc/
