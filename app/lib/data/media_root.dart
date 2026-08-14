@@ -221,8 +221,10 @@ class MediaImporter {
   /// the 1800 Spectrum and C64 zips that also live on a handheld: if a zip
   /// sits in the Amiga folder, it is an Amiga zip.
   ///
-  /// The zip is kept, moved aside into Archives/, rather than deleted. It is
-  /// the user's file and the extraction may have missed something.
+  /// A zip that gave up everything it recognisably held is deleted - the
+  /// app's folder is a drop zone, not a museum of spent archives, and the
+  /// reference zips live on the machine that built them. One that still
+  /// holds something unrecognised is kept, moved aside into Archives/.
   static Future<int> _extractArchives(MediaIndex index, String root) async {
     int extracted = 0;
 
@@ -243,12 +245,16 @@ class MediaImporter {
       }
 
       bool tookSomething = false;
+      bool owes = false;
       for (final ArchiveFile entry in entries) {
         if (!entry.isFile) continue;
         final String name = entry.name.split('/').last;
         final FileCategory? category = FileCategory.fromPath(name);
         // Only media, and never an archive inside an archive.
-        if (category == null || category == FileCategory.archives) continue;
+        if (category == null || category == FileCategory.archives) {
+          owes = true;
+          continue;
+        }
 
         final Directory target = await MediaRoot.folderFor(category);
         final File destination = File('${target.path}/$name');
@@ -261,15 +267,21 @@ class MediaImporter {
           extracted++;
           tookSomething = true;
         } on Object {
-          // One bad entry should not lose the rest of the archive.
+          owes = true; // One bad entry should not lose the rest.
         }
       }
 
       if (tookSomething) {
-        // Out of the way, but not destroyed.
         try {
-          final Directory kept = await MediaRoot.folderFor(FileCategory.archives);
-          source.renameSync('${kept.path}/${file.name}');
+          if (owes) {
+            // Something unrecognised is still inside: out of the way,
+            // but not destroyed.
+            final Directory kept =
+                await MediaRoot.folderFor(FileCategory.archives);
+            source.renameSync('${kept.path}/${file.name}');
+          } else {
+            source.deleteSync();
+          }
         } on FileSystemException {
           // Leaving it where it is only means it is scanned again.
         }
