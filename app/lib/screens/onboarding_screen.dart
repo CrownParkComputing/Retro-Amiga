@@ -8,6 +8,7 @@ import '../data/app_prefs.dart';
 import '../data/file_category.dart';
 import '../data/media_library.dart';
 import '../data/media_root.dart';
+import '../data/startup_import.dart';
 import '../data/whdload_support.dart';
 import '../widgets/amiga_logo.dart';
 
@@ -162,6 +163,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
 
     try {
+      // File first, then scan: a first run's media arrives as zips dropped in
+      // the app's folder, and a scan that only lists them shows "none" for
+      // every category with the Kickstarts sitting right there. The launch
+      // import is skipped during onboarding precisely so this can run it at
+      // the right moment instead.
+      await StartupImport.run();
       final MediaIndex index = await MediaLibrary.scan();
 
       // Adopt the folder the collection already lives in, unless the user has
