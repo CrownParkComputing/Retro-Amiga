@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'host_paths.dart';
@@ -60,4 +61,18 @@ class AppPrefs {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.setString(_defaultModel, model.cmdArg);
   }
+}
+
+/// The one road back into the setup wizard from inside the app.
+///
+/// The root widget owns whether the wizard or the workbench is showing, and
+/// Settings lives several widgets below it with no line of sight. A global
+/// notifier is the honest shape of that relationship: Settings requests,
+/// the root listens, and neither needs to know the other's tree.
+class SetupFlow {
+  const SetupFlow._();
+
+  static final ValueNotifier<int> requests = ValueNotifier<int>(0);
+
+  static void request() => requests.value++;
 }

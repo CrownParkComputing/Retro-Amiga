@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../data/ags_setup.dart';
+import '../data/app_prefs.dart';
 import '../data/file_category.dart';
 import '../data/amiga_model.dart';
 import '../data/media_library.dart';
@@ -152,7 +153,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
               ListTile(
                 leading: const Icon(Icons.folder_outlined),
                 title: Text(_root.isEmpty ? '...' : _root),
-                subtitle: const Text('Media folder'),
+                subtitle: Text('Media folder - ${_index.files.length} files'),
                 trailing: MediaRoot.canChoose
                     ? TextButton(
                         onPressed: _busy ? null : _chooseRoot,
@@ -160,40 +161,26 @@ class _SettingsPanelState extends State<SettingsPanel> {
                       )
                     : null,
               ),
+              // One action instead of Scan-plus-Import: the wizard IS the
+              // scan, the import, the Kickstart placement and the report,
+              // and it already knows how to say what it found. Two buttons
+              // that each did half of it were a maintenance quiz.
               ListTile(
-                leading: const Icon(Icons.refresh),
-                title: const Text('Scan for media'),
-                subtitle: Text('${_index.files.length} files indexed'),
-                trailing: TextButton(
-                  onPressed: _busy
-                      ? null
-                      : () => _run(() async {
-                            final MediaIndex index = await MediaLibrary.scan();
-                            return '${index.files.length} files found.';
-                          }),
-                  child: const Text('Scan'),
-                ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.drive_file_move_outlined),
-                title: const Text('File everything into the media folder'),
+                leading: const Icon(Icons.restart_alt),
+                title: const Text('Run setup again'),
                 subtitle: const Text(
-                  'Moves what is elsewhere into Floppies, HardDrives, CDROMs, '
-                  'LHA and Kickstarts, and unpacks disk images out of zips.',
+                  'Rescans everything - Kickstarts, games, music, zips '
+                  'dropped in the folder - through the same walkthrough a '
+                  'new install gets.',
                 ),
                 trailing: TextButton(
                   onPressed: _busy
                       ? null
-                      : () => _run(() async {
-                            final ImportResult result =
-                                await MediaImporter.import(_index);
-                            await MediaLibrary.scan();
-                            return '${result.moved} moved, '
-                                '${result.alreadyInPlace} already in place'
-                                '${result.extracted > 0 ? ', ${result.extracted} unzipped' : ''}'
-                                '${result.failed > 0 ? ', ${result.failed} failed' : ''}.';
-                          }),
-                  child: const Text('Import'),
+                      : () async {
+                          await AppPrefs.setSetupComplete(value: false);
+                          SetupFlow.request();
+                        },
+                  child: const Text('Run'),
                 ),
               ),
             ],

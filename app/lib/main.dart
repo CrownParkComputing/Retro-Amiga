@@ -69,6 +69,19 @@ class _RootState extends State<_Root> {
   void initState() {
     super.initState();
     _load();
+    // Settings asks for the wizard through this; the flag is already cleared
+    // by the time the request lands, so showing it is all that is left.
+    SetupFlow.requests.addListener(_onSetupRequested);
+  }
+
+  @override
+  void dispose() {
+    SetupFlow.requests.removeListener(_onSetupRequested);
+    super.dispose();
+  }
+
+  void _onSetupRequested() {
+    if (mounted) setState(() => _setupComplete = false);
   }
 
   Future<void> _load() async {
