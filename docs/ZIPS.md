@@ -2,8 +2,9 @@
 
 The app's whole setup is zips dropped into its folder (Files → On My iPad →
 Amiga-Retro), imported by the wizard's Scan or by any later launch. These are
-the reference set, kept beside the docs so a fresh device can be provisioned
-in one drag:
+the reference set, kept in `~/Documents/retro-zips` on the build machine -
+none of them live in the repo - so a fresh device can be provisioned in one
+drag:
 
 | zip | contents | in git? |
 |---|---|---|
@@ -12,7 +13,7 @@ in one drag:
 | `amiga-games.zip` | ADF floppies + LHA sample | no — publishers' |
 | `amiga-cdrom.zip` | one CD32 title (CHD) | no — publisher's |
 | `amiga-music.zip` | eight ProTracker modules | no — composers' |
-| `amiga-whdload-enabler.zip` | WHDLoad, JST, AmiQuit, boot-data.zip, whdload_db.xml, skick `.RTB` tables | **yes** — freely distributable, and the app ships the same files as assets |
+| `amiga-whdload-enabler.zip` | WHDLoad, JST, AmiQuit, boot-data.zip, whdload_db.xml, skick `.RTB` tables | no — rebuilt from `app/assets/whdboot/`, which the repo does ship |
 
 The enabler is the WHDLoad support set *minus* the Kickstarts: everything the
 booter needs that may legally travel. On iOS the app installs the same files
