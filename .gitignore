@@ -180,3 +180,6 @@ docs/*.zip
 build-linux/
 .artifacts/
 .asc/
+
+# Per-user Xcode state, written by any local build.
+**/xcuserdata/
