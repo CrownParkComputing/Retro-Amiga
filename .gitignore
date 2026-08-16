@@ -183,3 +183,7 @@ build-linux/
 
 # Per-user Xcode state, written by any local build.
 **/xcuserdata/
+# Xcode's resolved Swift Package graph. Regenerated on every build from the
+# package refs already in the project, and it records absolute paths from
+# whichever machine ran the build.
+**/xcshareddata/swiftpm/

@@ -1,7 +1,12 @@
 name: uae4arm2026
 description: "Amiga emulator for iPhone and iPad, built on Amiberry."
 publish_to: 'none'
-version: 1.0.0+7
+# App Store Connect refuses a CFBundleVersion it has already seen, and says so
+# only after the upload finishes. Builds 1-13 are spent: several were uploaded
+# from the Windows machine, so the highest number here has lagged behind the
+# highest number Apple holds. Check with `ruby ~/.config/c64retro/builds.rb`
+# before bumping rather than incrementing this line blind.
+version: 1.0.0+14
 
 environment:
   sdk: ^3.11.5
