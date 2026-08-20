@@ -1,0 +1,5 @@
+Choose the folder your Amiga files live in and the app imports what it finds. No storage permission needed any more, and you can change the folder whenever you like.
+
+This release is 64-bit only. Devices without 64-bit support can no longer install it: the emulator reserves a memory region larger than a 32-bit process can map, so it could not start there reliably.
+
+Updated to target Android 16.
