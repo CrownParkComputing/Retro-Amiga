@@ -184,29 +184,20 @@ class MainActivity : FlutterActivity() {
 		// Below Android 11 there is no such thing: the legacy storage
 		// permission covers it, and a scan just works.
 		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return true
-		return Environment.isExternalStorageManager()
+		// On Android 11 and above this is always false now: the app no longer
+		// declares MANAGE_EXTERNAL_STORAGE, because an undeclared sensitive
+		// permission blocks a Play release and declaring it means passing a
+		// review aimed at file managers. Callers already handle false by
+		// steering the user to Browse, so answering honestly is the whole fix.
+		return false
 	}
 
 	private fun openAllFilesAccessSettings(): Boolean {
-		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return true
-		return try {
-			startActivity(
-				Intent(
-					Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-					Uri.parse("package:$packageName")
-				)
-			)
-			// Sent, not granted: the caller has to re-check on return.
-			false
-		} catch (e: Exception) {
-			// Some builds lack the per-app screen; fall back to the list.
-			try {
-				startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
-				false
-			} catch (e2: Exception) {
-				false
-			}
-		}
+		// Nothing to open. Without MANAGE_EXTERNAL_STORAGE in the manifest the
+		// system's all-files screen does not list this app, so sending the user
+		// there was a dead end: a settings page they cannot act on. Report
+		// "not granted" and let the caller show the Browse route instead.
+		return false
 	}
 
 	private fun launchEmulator(args: Array<String>) {

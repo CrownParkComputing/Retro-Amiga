@@ -153,8 +153,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           setState(() {
             _scanning = false;
             _notice =
-                'Storage access is off, so folders cannot be scanned. '
-                'Grant it and scan again, or import files directly.';
+                'Folders cannot be scanned on this version of Android. '
+                'Use Browse to import your Kickstarts and disk images '
+                'directly.';
           });
         }
         return;

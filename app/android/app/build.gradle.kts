@@ -53,6 +53,11 @@ fun resolveKeystore(): KeystoreConfig? {
     return null
 }
 
+// Floor for the Android version code, chosen to clear the legacy Amiberry
+// codes already on Play (highest: 404021019) with room to spare, while
+// staying well inside the int32 ceiling Play enforces (2147483647).
+val androidVersionCodeBase = 500_000_000
+
 val keystoreConfig = resolveKeystore()
 
 // ABIs to build, as -PandroidAbiFilters=arm64-v8a,armeabi-v7a,x86_64. Defaults to
@@ -83,7 +88,18 @@ android {
         applicationId = "com.uae4arm2026"
         minSdk = 29
         targetSdk = 37
-        versionCode = flutter.versionCode
+        // Play production holds 404021019: the legacy Amiberry app's code, from
+        // the major*100M + minor*1M + patch*10k + minuteOfDay scheme still in
+        // android/app/build.gradle (4.4.2, built at 16:59). The Flutter
+        // launcher restarted numbering at 1, so a bundle numbered 16 is ~404
+        // million BELOW production and Play refuses the rollout: no existing
+        // user could upgrade to it.
+        //
+        // Android gets its own code above the legacy line. The pubspec build
+        // number stays small because App Store Connect keeps a separate, much
+        // shorter sequence, and a CFBundleVersion can never be walked back
+        // down once raised.
+        versionCode = androidVersionCodeBase + flutter.versionCode
         versionName = flutter.versionName
 
         externalNativeBuild {
