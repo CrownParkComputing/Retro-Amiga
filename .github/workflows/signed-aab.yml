@@ -58,14 +58,19 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          # The 64-bit ABIs only. Dropping armeabi-v7a costs the 5,812 32-bit
-          # devices the legacy 4.4.2 release supported, which Play reports as
-          # lost device support and needs acknowledging on the release: that is
-          # accepted deliberately. The core reserves a large natmem region at
-          # startup with an above-4GB base, which a 32-bit process cannot map,
-          # so shipping that split would hand those devices an app that fails
-          # to start rather than no app at all.
-          ORG_GRADLE_PROJECT_androidAbiFilters: arm64-v8a,x86_64
+          # arm64-v8a alone: every phone and tablet this is aimed at.
+          #
+          # armeabi-v7a went because the core reserves a large natmem region
+          # with an above-4GB base at startup, which no 32-bit process can map
+          # - that split would hand those devices an app that fails to start
+          # rather than no app at all. x86_64 went because it is Chromebooks
+          # and emulators, and this is a touch-controlled Amiga.
+          #
+          # Both show up on the release as lost device support and need
+          # acknowledging; that is deliberate. Note neither removal changes
+          # what an arm64 user downloads - Play serves one ABI split per
+          # device - but dropping the third build cuts CI by a third.
+          ORG_GRADLE_PROJECT_androidAbiFilters: arm64-v8a
         run: flutter build appbundle --release
 
       - name: Upload signed AAB
