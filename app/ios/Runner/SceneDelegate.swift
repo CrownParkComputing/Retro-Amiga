@@ -1,4 +1,5 @@
 import Flutter
+import GameController
 import UIKit
 
 /// Adopts the window the app delegate already built, and registers the
@@ -26,6 +27,39 @@ import UIKit
 class SceneDelegate: FlutterSceneDelegate {
 
   private static let channelName = "uae4arm2026/emulator"
+
+  /// Held so controller arrivals can be pushed to Dart after registration.
+  private var emulatorChannel: FlutterMethodChannel?
+
+  private var controllerObservers: [NSObjectProtocol] = []
+
+  /// Tells the launcher when a controller comes or goes.
+  ///
+  /// Asking once at startup is not enough on either platform: an MFi or
+  /// Bluetooth pad finishes connecting seconds after the app opens, and gets
+  /// switched off mid-game. Android pushes the same `gamepadChanged` call from
+  /// an InputDeviceListener; this is the iOS half of it, so the Dart side does
+  /// not need to know which platform it is talking to.
+  private func observeControllers() {
+    let notify: (Notification) -> Void = { [weak self] _ in
+      self?.emulatorChannel?.invokeMethod(
+        "gamepadChanged",
+        arguments: !GCController.controllers().isEmpty)
+    }
+    let center = NotificationCenter.default
+    controllerObservers = [
+      center.addObserver(
+        forName: .GCControllerDidConnect, object: nil, queue: .main, using: notify),
+      center.addObserver(
+        forName: .GCControllerDidDisconnect, object: nil, queue: .main, using: notify),
+    ]
+  }
+
+  deinit {
+    for observer in controllerObservers {
+      NotificationCenter.default.removeObserver(observer)
+    }
+  }
 
   override func scene(
     _ scene: UIScene,
@@ -106,6 +140,8 @@ class SceneDelegate: FlutterSceneDelegate {
     let channel = FlutterMethodChannel(
       name: SceneDelegate.channelName,
       binaryMessenger: controller.binaryMessenger)
+    emulatorChannel = channel
+    observeControllers()
 
     channel.setMethodCallHandler { call, result in
       switch call.method {
@@ -117,16 +153,12 @@ class SceneDelegate: FlutterSceneDelegate {
       case "platformName":
         result("ios")
 
-      case "hasAllFilesAccess":
-        // iOS has app-scoped media permissions; scoped file access here is
-        // handled by Files.app visibility and does not require an explicit
-        // toggle the way Android does.
-        result(true)
-
-      case "requestAllFilesAccess":
-        // No in-app one-shot request exists for iOS parity with the launch
-        // flow expects a boolean response, so treat this as already allowed.
-        result(true)
+      // Whether a real controller is attached, so the launcher does not offer
+      // touch controls over hardware that can already play the game. Android
+      // answers this from InputDevice; here GCController already knows, and
+      // EmulatorControls asks it for the two-player button.
+      case "hasGamepad":
+        result(!GCController.controllers().isEmpty)
 
       // Something that changes every time a build is installed, so the
       // launcher can tell a new deploy from an ordinary start and show the
