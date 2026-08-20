@@ -780,20 +780,7 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 	 * the drawn pad hides itself because it exists.
 	 */
 	private boolean realControllerConnected() {
-		for (int id : android.view.InputDevice.getDeviceIds()) {
-			android.view.InputDevice device = android.view.InputDevice.getDevice(id);
-			if (device == null || device.isVirtual()) continue;
-			int sources = device.getSources();
-			boolean gamepad = (sources & android.view.InputDevice.SOURCE_GAMEPAD)
-				== android.view.InputDevice.SOURCE_GAMEPAD;
-			boolean joystick = (sources & android.view.InputDevice.SOURCE_JOYSTICK)
-				== android.view.InputDevice.SOURCE_JOYSTICK;
-			// Android handhelds commonly advertise a controller as only GAMEPAD
-			// or only JOYSTICK. Requiring both incorrectly hides the real pad and
-			// leaves the touch controls selected from the first frame.
-			if (gamepad || joystick) return true;
-		}
-		return false;
+		return HostSupport.realControllerConnected();
 	}
 
 	private String readPadLayout() {

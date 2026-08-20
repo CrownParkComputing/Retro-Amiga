@@ -11,6 +11,7 @@ import 'overlay_main.dart' show emulatorOverlayMain;
 import 'dart:async';
 
 import 'data/error_log.dart';
+import 'data/music_player.dart';
 
 import 'data/app_prefs.dart';
 import 'data/startup_import.dart';
@@ -37,8 +38,48 @@ void main() {
   runApp(const AmigaRetroApp());
 }
 
-class AmigaRetroApp extends StatelessWidget {
+class AmigaRetroApp extends StatefulWidget {
   const AmigaRetroApp({super.key});
+
+  @override
+  State<AmigaRetroApp> createState() => _AmigaRetroAppState();
+}
+
+/// Watches the app's lifecycle for the whole app, not one screen.
+///
+/// The workbench used to own this, which meant leaving the app from anywhere
+/// else - the music screen above all, where a tune is most likely to be
+/// playing - left the music running out of a pocket with the app off screen.
+/// The observer belongs where every screen is underneath it.
+class _AmigaRetroAppState extends State<AmigaRetroApp>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+      case AppLifecycleState.hidden:
+        MusicPlayer.suspend();
+      case AppLifecycleState.resumed:
+        MusicPlayer.resumeIfSuspended();
+      case AppLifecycleState.inactive:
+        // Transient - a notification shade, a permission dialog - and
+        // silencing on it makes the music stutter every time one appears.
+        break;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

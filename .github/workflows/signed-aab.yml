@@ -60,16 +60,22 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           # arm64-v8a alone: every phone and tablet this is aimed at.
           #
-          # armeabi-v7a went because the core reserves a large natmem region
-          # with an above-4GB base at startup, which no 32-bit process can map
-          # - that split would hand those devices an app that fails to start
-          # rather than no app at all. x86_64 went because it is Chromebooks
-          # and emulators, and this is a touch-controlled Amiga.
+          # x86_64 went because it is Chromebooks and emulators, and this is
+          # a touch-controlled Amiga.
           #
-          # Both show up on the release as lost device support and need
-          # acknowledging; that is deliberate. Note neither removal changes
-          # what an arm64 user downloads - Play serves one ABI split per
-          # device - but dropping the third build cuts CI by a third.
+          # armeabi-v7a went because nothing here can test it, not because the
+          # core cannot build for it. amiberry_mem.cpp has a 32-bit path:
+          # CPU_64_BIT forces natmem to 4GB, and the #else caps it at 3GB with
+          # UAE_VM_32BIT kept. But 3GB is not reservable in a 32-bit Android
+          # process either, so it lands in the shrink-and-retry fallback and
+          # runs with far less Z3 fastmem, on a different JIT backend. That is
+          # an execution path no device on this project can run: they are all
+          # arm64, and recent arm64 SoCs cannot execute 32-bit code at all.
+          #
+          # Both show up on the release as lost device support - 5,812 devices
+          # for the 32-bit one - and need acknowledging; that is deliberate.
+          # Neither removal changes what an arm64 user downloads, since Play
+          # serves one ABI split per device, but each dropped build cuts CI.
           ORG_GRADLE_PROJECT_androidAbiFilters: arm64-v8a
         run: flutter build appbundle --release
 

@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'app_log.dart';
@@ -75,7 +76,17 @@ class MediaFolder {
   /// /sdcard/Amiga. Falls back to the raw URI rather than guessing wrongly.
   static Future<String?> displayPath() async {
     final String? uri = await granted();
-    if (uri == null) return null;
+    return uri == null ? null : pathFromTreeUri(uri);
+  }
+
+  /// The readable path inside a tree URI. Pure, so it can be tested without a
+  /// device: this is the part with the parsing bugs in it, not the channel.
+  ///
+  /// Anything unrecognised comes back as the URI it went in as. A wrong path
+  /// shown confidently is worse than an ugly one, because the whole point of
+  /// showing it is to let the user see they picked the wrong folder.
+  @visibleForTesting
+  static String pathFromTreeUri(String uri) {
     try {
       final int treeAt = uri.indexOf('/tree/');
       if (treeAt < 0) return uri;

@@ -24,6 +24,36 @@ public final class HostSupport {
 
 	private static final String TAG = "Uae4Arm-HostSupport";
 
+	/**
+	 * Whether a real controller is attached.
+	 *
+	 * Virtual devices are skipped deliberately: the core registers its own
+	 * on-screen pad with the input layer, so counting that would mean the
+	 * drawn pad hides itself because it exists.
+	 *
+	 * GAMEPAD or JOYSTICK, not both. Android handhelds - the Retroid among
+	 * them - commonly advertise their built-in controls as only one of the
+	 * two, and requiring both leaves a device with real sticks showing touch
+	 * controls over them.
+	 *
+	 * This lives here rather than in the emulator activity because the
+	 * launcher needs the same answer: the in-process panel draws its own pad
+	 * and had no way to ask.
+	 */
+	public static boolean realControllerConnected() {
+		for (int id : android.view.InputDevice.getDeviceIds()) {
+			android.view.InputDevice device = android.view.InputDevice.getDevice(id);
+			if (device == null || device.isVirtual()) continue;
+			int sources = device.getSources();
+			boolean gamepad = (sources & android.view.InputDevice.SOURCE_GAMEPAD)
+				== android.view.InputDevice.SOURCE_GAMEPAD;
+			boolean joystick = (sources & android.view.InputDevice.SOURCE_JOYSTICK)
+				== android.view.InputDevice.SOURCE_JOYSTICK;
+			if (gamepad || joystick) return true;
+		}
+		return false;
+	}
+
 	/** Config keys shared with the core's .uae files. */
 	public static final String KEY_SHOW_ANDROID_KEYBOARD_BUTTON = "show_android_keyboard_button";
 	public static final String KEY_DEFAULT_OSK = "default_osk";

@@ -132,8 +132,15 @@ class MusicPlayer {
   /// coming back to silence and having to find the track again is worse than
   /// coming back to where it was.
   static Future<void> suspend() async {
-    if (_last.playing && !_last.paused) await setPaused(true);
+    // Told, not asked. The cached state is refreshed by a 100ms poll, and
+    // leaving the app is exactly when that poll is about to stop: trusting a
+    // cache that says "not playing" is how the music kept going after the app
+    // went off screen. Pausing something already paused costs nothing.
     _stopPolling();
+    await _invoke<void>('musicSetPaused', <String, Object?>{'paused': true});
+    if (_last.playing) {
+      _emit(MusicState(playing: true, paused: true, title: _last.title));
+    }
   }
 
   static Future<void> resumeIfSuspended() async {

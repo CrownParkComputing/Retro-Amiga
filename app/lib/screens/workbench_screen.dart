@@ -11,6 +11,7 @@ import '../widgets/workbench_sidebar.dart';
 import '../data/app_prefs.dart';
 import '../data/file_category.dart';
 import '../data/config_store.dart';
+import '../data/game_controller.dart';
 import '../data/media_library.dart';
 import '../data/pad_layout.dart';
 import '../data/pad_layout_store.dart';
@@ -78,6 +79,9 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   // is in the panel. Fill is AppPrefs.screenFill (remembered, and shared with
   // the Video panel); the rest resets with the session.
   bool _mouseMode = false;
+  /// Starts hidden when real hardware is attached: a handheld with its own
+  /// sticks should not have touch controls drawn over them. Set for real in
+  /// _startSession, which asks the host before the first frame of a game.
   bool _padVisible = true;
   bool _keyboardUp = false;
   bool _paused = false;
@@ -128,8 +132,24 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   /// saved and register the pad it asks for with the core.
   Future<void> _startSession() async {
     final PadLayout layout = await PadLayoutStore.load();
+    // Ask before drawing: a controller already attached means the on-screen
+    // pad should never appear, rather than appear and then vanish.
+    final bool hasPad = await GameController.start();
     if (!mounted) return;
-    setState(() => _layout = layout);
+    setState(() {
+      _layout = layout;
+      _padVisible = !hasPad;
+    });
+    _attachPad();
+  }
+
+  /// A controller arriving or leaving mid-session.
+  ///
+  /// Plugging one in hides the touch pad; unplugging brings it back, because
+  /// otherwise a game becomes unplayable the moment a battery dies.
+  void _onControllerChanged() {
+    if (!mounted || !Emulator.playing.value) return;
+    setState(() => _padVisible = !GameController.connected.value);
     _attachPad();
   }
 
@@ -181,16 +201,16 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
       if (mounted) setState(() => _index = index);
     });
     WidgetsBinding.instance.addObserver(_watch);
+    GameController.connected.addListener(_onControllerChanged);
+    unawaited(GameController.start());
   }
 
+  // Session state only. Suspending and resuming the music belongs to the app
+  // root, which is underneath every screen - this one used to own it, so
+  // leaving from the music screen left the tune playing.
   late final _LifecycleWatch _watch = _LifecycleWatch(
-    onResumed: () {
-      _refreshSession();
-      MusicPlayer.resumeIfSuspended();
-    },
-    // Minimising should be silent: the launcher's music playing out of a
-    // pocket while the app is not on screen is nobody's idea of a feature.
-    onPaused: MusicPlayer.suspend,
+    onResumed: _refreshSession,
+    onPaused: () {},
   );
 
   @override
@@ -198,6 +218,7 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     Emulator.playing.removeListener(_onPlayingChanged);
     AppPrefs.screenFill.removeListener(_onPlayingChanged);
     WidgetsBinding.instance.removeObserver(_watch);
+    GameController.connected.removeListener(_onControllerChanged);
     _mediaChanges?.cancel();
     _idleTimer?.cancel();
     _chromeTimer?.cancel();

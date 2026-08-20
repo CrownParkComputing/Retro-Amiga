@@ -2,6 +2,7 @@ package com.uae4arm2026
 
 import android.content.Intent
 import android.net.Uri
+import android.hardware.input.InputManager
 import android.os.Handler
 import android.os.Looper
 import io.flutter.embedding.android.FlutterActivity
@@ -72,6 +73,41 @@ class MainActivity : FlutterActivity() {
 	 */
 	private var pendingFolderPick: MethodChannel.Result? = null
 
+	/// Set once the engine is up, so controller changes can be pushed to Dart.
+	private var channel: MethodChannel? = null
+
+	/**
+	 * Controllers arrive and leave while the app is running - a Bluetooth pad
+	 * connects a few seconds after the app opens, a USB one is unplugged
+	 * mid-game. Asking once at startup means the pad shown in the first frame
+	 * is the pad shown forever, so the launcher is told when the answer
+	 * changes rather than polling for it.
+	 */
+	private val inputDeviceListener = object : InputManager.InputDeviceListener {
+		private fun notifyChanged() {
+			channel?.invokeMethod(
+				"gamepadChanged",
+				HostSupport.realControllerConnected(),
+			)
+		}
+
+		override fun onInputDeviceAdded(deviceId: Int) = notifyChanged()
+		override fun onInputDeviceRemoved(deviceId: Int) = notifyChanged()
+		override fun onInputDeviceChanged(deviceId: Int) = notifyChanged()
+	}
+
+	override fun onResume() {
+		super.onResume()
+		(getSystemService(INPUT_SERVICE) as? InputManager)
+			?.registerInputDeviceListener(inputDeviceListener, Handler(Looper.getMainLooper()))
+	}
+
+	override fun onPause() {
+		(getSystemService(INPUT_SERVICE) as? InputManager)
+			?.unregisterInputDeviceListener(inputDeviceListener)
+		super.onPause()
+	}
+
 	override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
 		super.onActivityResult(requestCode, resultCode, data)
 		if (requestCode != MediaFolderAccess.REQUEST_PICK_FOLDER) return
@@ -98,6 +134,7 @@ class MainActivity : FlutterActivity() {
 		super.configureFlutterEngine(flutterEngine)
 
 		MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+			.also { channel = it }
 			.setMethodCallHandler { call, result ->
 				when (call.method) {
 					"launch" -> {
@@ -147,6 +184,12 @@ class MainActivity : FlutterActivity() {
 					// managers. Instead the user grants one folder through the
 					// system picker and the grant is persisted. See
 					// MediaFolderAccess.
+					// The in-process panel draws its own pad and needs the same
+					// answer the emulator activity already had: is there real
+					// hardware to play on? Without this it always drew touch
+					// controls, including over a handheld's own sticks.
+					"hasGamepad" -> result.success(HostSupport.realControllerConnected())
+
 					"mediaFolderUri" ->
 						result.success(MediaFolderAccess.grantedTree(this)?.toString())
 
