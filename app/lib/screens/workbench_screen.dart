@@ -81,6 +81,23 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   bool _padVisible = true;
   bool _keyboardUp = false;
   bool _paused = false;
+
+  /// While a game runs, the rail and the strip step aside after a few
+  /// seconds so the picture gets the whole screen. Any touch that is not on
+  /// an on-screen control brings them back -- the controls themselves do not,
+  /// because reaching for fire should never shuffle the layout mid-jump.
+  bool _chromeVisible = true;
+  Timer? _chromeTimer;
+
+  void _wakeChrome() {
+    _chromeTimer?.cancel();
+    _chromeTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && Emulator.playing.value) {
+        setState(() => _chromeVisible = false);
+      }
+    });
+    if (!_chromeVisible && mounted) setState(() => _chromeVisible = true);
+  }
   PadLayout _layout = PadLayout.defaults;
 
   int get _pad => _layout.style == PadStyle.cd32 ? 2 : 1;
@@ -97,7 +114,13 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
       _mouseMode = false;
       _keyboardUp = false;
       _paused = false;
+      _chromeVisible = true;
     });
+    if (Emulator.playing.value) {
+      _wakeChrome();
+    } else {
+      _chromeTimer?.cancel();
+    }
     if (Emulator.playing.value) _startSession();
   }
 
@@ -177,6 +200,7 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     WidgetsBinding.instance.removeObserver(_watch);
     _mediaChanges?.cancel();
     _idleTimer?.cancel();
+    _chromeTimer?.cancel();
     super.dispose();
   }
 
@@ -312,7 +336,7 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
                 ignoring: _idle && !Emulator.playing.value,
                 child: SafeArea(
                   child: Padding(
-                    padding: const EdgeInsets.all(AmigaMetrics.gutter),
+                    padding: EdgeInsets.all(_hideChrome ? 0 : AmigaMetrics.gutter),
                     // The shell every Retro-* front end composes the same
                     // way: root padding, the rail in a width-capped box, one
                     // content panel at radius 8 with 10px of padding, and a
@@ -327,7 +351,7 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: <Widget>[
-                              if (!_sidebarHidden) ...<Widget>[
+                              if (!_sidebarHidden && !_hideChrome) ...<Widget>[
                                 ConstrainedBox(
                                   constraints: BoxConstraints(
                                     maxWidth: amigaSidebarStyle.maxWidth(width),
@@ -360,14 +384,20 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
                               ],
                               Expanded(
                                 child: Container(
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                    color: AmigaColors.panel,
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(
-                                      color: AmigaColors.panelBorder,
-                                    ),
-                                  ),
+                                  padding:
+                                      EdgeInsets.all(_hideChrome ? 0 : 10),
+                                  decoration: _hideChrome
+                                      ? const BoxDecoration(
+                                          color: AmigaColors.panel,
+                                        )
+                                      : BoxDecoration(
+                                          color: AmigaColors.panel,
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          border: Border.all(
+                                            color: AmigaColors.panelBorder,
+                                          ),
+                                        ),
                                   clipBehavior: Clip.antiAlias,
                                   child: _panel(),
                                 ),
@@ -375,7 +405,7 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
                             ],
                           ),
                         ),
-                        _statusBar(),
+                        if (!_hideChrome) _statusBar(),
                       ],
                     ),
                   ),
@@ -388,6 +418,12 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     );
   }
 
+  /// Whether the machine has the whole screen right now.
+  bool get _hideChrome =>
+      Emulator.inProcessCore != null &&
+      Emulator.playing.value &&
+      !_chromeVisible;
+
   /// The bottom strip, outside both the rail and the content panel: the
   /// show/hide toggle and what is loaded. It always renders, even with the
   /// rail hidden -- the toggle is the only way back once the rail is gone, so
@@ -396,9 +432,10 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     final bool inGame =
         Emulator.inProcessCore != null && Emulator.playing.value;
     return SizedBox(
-      // Taller while the machine is running: the in-game buttons are finger
-      // sized, like the C64 strip's, and 28px is not a finger.
-      height: inGame ? 48 : 28,
+      // A little taller while the machine is running - the buttons are still
+      // finger sized - but only a little: every pixel this strip takes is a
+      // pixel the picture does not get.
+      height: inGame ? 36 : 28,
       child: Row(
         children: <Widget>[
           IconButton(
@@ -432,6 +469,9 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   List<Widget> _sessionTools(AmigaCore core) {
     const Color idle = Color(0xFF24292E);
     const Color lit = Color(0xFF4040E0);
+    // Compact, not FAB-sized: the strip sits under the picture, and a row of
+    // 40px buttons was costing the Amiga a border's worth of height. 32px is
+    // still a comfortable target with the strip's own padding around it.
     Widget tool({
       required String tag,
       required IconData icon,
@@ -440,16 +480,26 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
       bool active = false,
     }) {
       return Padding(
-        padding: const EdgeInsets.only(left: 10),
-        child: FloatingActionButton.small(
-          heroTag: tag,
-          backgroundColor: active ? lit : idle,
-          tooltip: tip,
-          onPressed: () {
-            _wake();
-            onPressed();
-          },
-          child: Icon(icon, color: Colors.white),
+        padding: const EdgeInsets.only(left: 8),
+        child: Material(
+          color: active ? lit : idle,
+          shape: const CircleBorder(),
+          clipBehavior: Clip.antiAlias,
+          child: Tooltip(
+            message: tip,
+            child: InkWell(
+              onTap: () {
+                _wake();
+                _wakeChrome();
+                onPressed();
+              },
+              child: SizedBox(
+                width: 32,
+                height: 32,
+                child: Icon(icon, color: Colors.white, size: 18),
+              ),
+            ),
+          ),
         ),
       );
     }
@@ -600,6 +650,17 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
               core: core,
               fill: AppPrefs.screenFill.value,
               mouseMode: _mouseMode,
+            ),
+          ),
+          // The chrome's wake-up call. UNDER the pad and the keyboard, so a
+          // touch they claim - a stick move, a fire press, a key - never
+          // reaches it, and only a touch on the picture itself brings the
+          // rail and the strip back. Translucent, so the same touch still
+          // works as the mouse when the mouse mode is on.
+          Positioned.fill(
+            child: Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: (_) => _wakeChrome(),
             ),
           ),
           // The pad steps aside while the keyboard is up: both live along
