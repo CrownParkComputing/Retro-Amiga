@@ -7,6 +7,7 @@
 #include "fsdb_host.h"
 #include "amiga_constants.h"
 #include "gui/amiberry_png_data.h"
+#include "host_framebuffer.h"
 
 static inline bool gfx_platform_skip_alloctexture(int monid, int w, int h)
 {
@@ -31,18 +32,33 @@ static inline bool gfx_platform_skip_renderframe(int monid, int mode, int immedi
 
 static inline bool gfx_platform_present_frame(const SDL_Surface* surface)
 {
+	/* With framebuffer output on, the finished frame goes to the launcher
+	 * instead of to a window -- and returning true is what stops SDL
+	 * presenting it as well. Off (the default) this is exactly the no-op it
+	 * always was. */
+	if (uae4arm_host_framebuffer_output()) {
+		uae4arm_host_publish_frame(surface);
+		return true;
+	}
 	(void)surface;
 	return false;
 }
 
 static inline bool gfx_platform_requires_window()
 {
-	return true;
+	/* With framebuffer output on there is nothing to put a window around:
+	 * the finished frame goes to the app, which draws it in a panel. Saying
+	 * "yes" here is what made the core try to create one anyway, fail through
+	 * every renderer mode ("Could not initialize OpenGL / GLES library") and
+	 * abort doInit -- with the offscreen video driver correctly selected. The
+	 * libretro platform has always returned false for the same reason. */
+	return !uae4arm_host_framebuffer_output();
 }
 
 static inline bool gfx_platform_skip_window_activation()
 {
-	return false;
+	/* Nothing to activate without a window. */
+	return uae4arm_host_framebuffer_output();
 }
 
 static inline bool gfx_platform_enumeratedisplays()

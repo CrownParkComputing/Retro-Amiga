@@ -54,6 +54,7 @@
 #include "uae/ppc.h"
 #endif
 #include "devices.h"
+#include "osdep/uae4arm_host.h"
 #ifdef JIT
 #include "jit/compemu.h"
 #endif
@@ -1728,6 +1729,10 @@ static int real_main2 (int argc, TCHAR **argv)
 		consolehook_config (&currprefs, console_path[0] ? console_path : NULL);
 		fixup_prefs (&currprefs, true);
 	}
+	/* The Android activity can request the physical pad before SDL has parsed
+	   the selected config. Reapply that request at the point where parsed
+	   prefs are final, otherwise joyport1=none in the config wins silently. */
+	uae4arm_host_apply_pending_controller_mode();
 
 	if (! setup_sound ()) {
 		write_log (_T("Sound driver unavailable: Sound output disabled\n"));
@@ -1779,6 +1784,10 @@ static int real_main2 (int argc, TCHAR **argv)
 #endif
 
 	fixup_prefs (&currprefs, true);
+	/* fixup_prefs applies the persisted desktop display mode; reapply the
+	 * host's active-game policy afterwards so the SDL surface remains the sole
+	 * full-window owner while the launcher is hidden. */
+	uae4arm_host_apply_pending_controller_mode();
 #ifdef RETROPLATFORM
 	rp_fixup_options (&currprefs);
 #endif

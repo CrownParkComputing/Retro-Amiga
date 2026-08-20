@@ -55,7 +55,7 @@ set(VERSION_PRE_RELEASE "" CACHE STRING "Pre-release version")
 
 # Project identity
 set(UPSTREAM_EMULATOR_NAME "Copperline")
-set(PRODUCT_DISPLAY_NAME "Amiga-Retro")
+set(PRODUCT_DISPLAY_NAME "Retro-Amiga")
 set(PROJECT_COMPANY_NAME "UAE4Arm Team")
 set(PROJECT_COMPANY_NAMESPACE "com.uae4arm2026")
 # Legacy variable retained for existing packaging logic.
@@ -66,4 +66,3 @@ include(GNUInstallDirs)
 include(cmake/StandardProjectSettings.cmake)
 include(cmake/SourceFiles.cmake)
 include(cmake/Dependencies.cmake)
-

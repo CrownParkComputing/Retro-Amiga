@@ -5883,8 +5883,10 @@ static void get_line(int monid, int gfx_ypos, enum nln_how how, int lol_shift_pr
 	if (!vb->locked) {
 		denise_pixtotal_totalmax = -0x7fffffff;
 		denise_pixtotal_max = denise_pixtotal_totalmax;
+		extern unsigned long host_getline_unlocked; host_getline_unlocked++;
 		return;
 	}
+	{ extern unsigned long host_getline_locked; host_getline_locked++; }
 
 	if (erase_next_draw) {
 		// clear lines if mode height changed
@@ -5899,10 +5901,12 @@ static void get_line(int monid, int gfx_ypos, enum nln_how how, int lol_shift_pr
 	}
 
 	if (how == nln_none) {
+		extern unsigned long host_getline_none; host_getline_none++;
 		return;
 	}
 
 	if (gfx_ypos >= 0 && gfx_ypos < vb->inheight) {
+		{ extern unsigned long host_getline_row; host_getline_row++; }
 		denise_y_end = gfx_ypos + 1;
 		switch (how)
 		{

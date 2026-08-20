@@ -1075,6 +1075,45 @@ bool doInit(AmigaMonitor* mon)
 
 		mon->screen_is_initialized = 1;
 		init_colors(mon->monitor_id);
+
+		/*
+		 * Give the vram drawbuffer its allocation size NOW, from the surface.
+		 *
+		 * The drawbuffer has no memory of its own -- lockscr() binds it to
+		 * amiga_surface and sets width/height_allocated from the surface at
+		 * that moment. Before the first lock they are 0. compute_framesync()
+		 * computes the correct in/out sizes (752x576 for PAL) and then clamps
+		 * every one of them to width/height_allocated -- which in headless
+		 * is still 0 because nothing has sized it yet -- so inheight, outwidth
+		 * and outheight all become 0. From then on get_line() rejects every
+		 * row (gfx_ypos < inheight fails) and setxlinebuffer() sizes every
+		 * line as outwidth*4 = 0 bytes. The emulation locks the surface on
+		 * every frame and writes nothing into it.
+		 *
+		 * The windowed path never hits this because its doInit tail sizes the
+		 * buffer through the renderer (alloc_texture / set_scaling) before
+		 * compute_framesync runs. Headless has no renderer, so it has to do
+		 * the one thing that path did for it: tell the drawbuffer how big its
+		 * backing surface is.
+		 */
+		if (!mon->screen_is_picasso) {
+			struct vidbuffer* db = &avidinfo->drawbuffer;
+			db->width_allocated = amiga_surface->w;
+			db->height_allocated = amiga_surface->h;
+			db->rowbytes = amiga_surface->pitch;
+			db->pixbytes = 4;
+			/* And seed the display sizes so the first
+			 * target_graphics_buffer_update() does not return early on
+			 * !w || !h and leave everything at 0. compute_framesync() will
+			 * replace them with the real PAL/NTSC geometry. */
+			if (!db->outwidth || !db->outheight) {
+				db->outwidth = db->inwidth = amiga_surface->w;
+				db->outheight = db->inheight = amiga_surface->h;
+			}
+			write_log("Headless mode: drawbuffer sized to surface %dx%d\n",
+				amiga_surface->w, amiga_surface->h);
+		}
+
 		target_graphics_buffer_update(mon->monitor_id, false);
 		return true;
 	}

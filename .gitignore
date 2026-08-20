@@ -176,7 +176,11 @@ native/ios/out/
 # Reference zips never live in the repo; the set is kept in
 # ~/Documents/retro-zips and documented in docs/ZIPS.md.
 docs/*.zip
+# User media stays on the device/build machine and must never enter GitHub.
+Amiga-Retro/
+Retro-Amiga/
 # Local build and signing residue, never source
 build-linux/
 .artifacts/
 .asc/
+build-asan/

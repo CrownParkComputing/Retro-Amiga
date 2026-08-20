@@ -24,6 +24,9 @@ extern "C" {
  * -1 requests the full pause menu; 0..3 request a disk requester for that
  * floppy drive. Values match the historic gui_display() shortcut numbering. */
 #define UAE4ARM_HOST_MENU_MAIN (-1)
+/* Desktop-only request used when the native control sheet's Return button is
+ * selected. The host marshals launcher presentation back to its UI thread. */
+#define UAE4ARM_HOST_MENU_QUIT (-2)
 
 /*
  * Installed once by the platform host, before the core starts. Any field may
@@ -40,6 +43,23 @@ typedef struct uae4arm_host_callbacks
 /* Passing null clears the callbacks. The struct is copied, so the caller need
  * not keep it alive. */
 void uae4arm_host_set_callbacks(const uae4arm_host_callbacks* callbacks);
+
+/* ---- logging ----------------------------------------------------------- */
+
+/*
+ * Writes the emulator's log to a file as well as to the platform log.
+ *
+ * On a handheld there is no console to read, and logcat needs a computer and
+ * a cable. With the core running inside the launcher the app can show its own
+ * emulator log on the Logs page, which is the only place a user -- or anyone
+ * debugging on the device itself -- can actually see why a game did not
+ * start. Call before uae4arm_host_run.
+ */
+void uae4arm_host_set_logfile_enabled(bool enabled);
+
+/* Where that log is being written, or "" when logging to file is off. The
+ * pointer stays valid until the next call. */
+const char* uae4arm_host_logfile_path(void);
 
 /* ---- starting the emulator -------------------------------------------- */
 
@@ -102,6 +122,13 @@ void uae4arm_host_set_emulation_visible(bool visible);
    short of killing the app. */
 void uae4arm_host_quit(void);
 
+/* Desktop hosts provide the state/config paths for the current launch.  The
+ * shared core then performs the same save-and-index operation on Return that
+ * Android performs in its Activity. */
+void uae4arm_host_set_session(const char* state_path, const char* config_path,
+	const char* title);
+bool uae4arm_host_save_session(void);
+
 void uae4arm_host_insert_floppy(int drive, const char* path);
 void uae4arm_host_eject_floppy(int drive);
 int  uae4arm_host_get_floppy_count(void);
@@ -110,6 +137,12 @@ int  uae4arm_host_get_floppy_count(void);
 void uae4arm_host_set_onscreen_controller(int mode);
 /* JSEM_MODE constant for port 1 (3 = joystick, 7 = CD32 pad) */
 void uae4arm_host_set_external_controller_mode(int jsem_mode);
+/* Reapply the host's physical-controller request after the config parser has
+ * populated changed_prefs, but before the first inputdevice_init/update. */
+void uae4arm_host_apply_pending_controller_mode(void);
+/* Desktop hosts use one full-window SDL surface while a game is active, so
+ * the launcher cannot show through around a smaller emulation window. */
+void uae4arm_host_set_desktop_fullscreen(bool enabled);
 
 /* Puts the second physical joystick in port 0 (true) or gives the port back
  * to the mouse (false), for two-player games with two controllers plugged

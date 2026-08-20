@@ -31,6 +31,7 @@
 #include "picasso96.h"
 #include "gui.h"
 #include "amiberry_gfx.h"
+#include "host_framebuffer.h"
 #include "perf_monitor.h"
 #include "sounddep/sound.h"
 #include "inputdevice.h"
@@ -1090,6 +1091,88 @@ void show_screen(const int monid, int mode)
 {
 	// Skip all rendering if headless mode
 	if (currprefs.headless) {
+		/* Except the one thing headless is FOR here: handing the finished
+		 * frame to the app, which draws it in a panel. The renderer's own tap
+		 * in present_frame never runs in this mode, because headless returns
+		 * before a renderer is ever asked for -- so the publish happens here
+		 * instead. The Amiga surface exists either way: doInit allocates it
+		 * for headless too, and the emulation draws into it through
+		 * lockscr(). */
+		if (uae4arm_host_framebuffer_output()) {
+			/* From the DRAW BUFFER, not amiga_surface. In headless doInit
+			 * allocates soft buffers and points outbuffer at one; the surface
+			 * is created and then never drawn into, so publishing it handed
+			 * the app a perfectly valid, perfectly black frame. */
+			const struct amigadisplay* ad = &adisplays[monid];
+			const struct vidbuf_description* avidinfo = &ad->gfxvidinfo;
+			/* inbuffer FIRST, then outbuffer.
+			 *
+			 * Headless doInit points inbuffer at tempbuffer -- soft memory
+			 * that allocsoftbuffer really allocates -- and outbuffer at the
+			 * drawbuffer, which is the vram buffer and therefore has no
+			 * memory of its own until lockscr() binds it to amiga_surface.
+			 * The step that would move the picture from one to the other
+			 * lives in the renderer, which headless never runs. So the
+			 * surface stayed the black rectangle it was created as while the
+			 * game played perfectly: right size, right format, no pixels. */
+			const struct vidbuffer* vb = avidinfo->inbuffer;
+			if (vb == nullptr || vb->bufmem == nullptr)
+				vb = avidinfo->outbuffer;
+			SDL_Surface* surface = get_amiga_surface(monid);
+			static int reported = 0;
+			if (vb != nullptr && vb->bufmem != nullptr && vb->outwidth > 0
+				&& vb->outheight > 0) {
+				const AmigaMonitor* hmon = &AMonitors[monid];
+				/* outwidth/outheight are what the buffer was sized for, not
+				 * necessarily what the machine is currently displaying. */
+				int pw = vb->outwidth > 0 ? vb->outwidth
+					: hmon->currentmode.amiga_width;
+				int ph = vb->outheight > 0 ? vb->outheight
+					: hmon->currentmode.amiga_height;
+				if (!reported) {
+					reported = 1;
+					write_log("host framebuffer: source is a vidbuffer "
+						"(%dx%d pitch %d bufmem %p)\n", pw, ph, vb->rowbytes,
+						(const void*)vb->bufmem);
+				}
+				uae4arm_host_publish_frame_pixels(
+					vb->bufmem, pw, ph, vb->rowbytes);
+			} else if (surface != nullptr) {
+				/* Whichever of the two the build actually draws into. The
+				 * draw buffer is the one with the picture when headless
+				 * allocates soft buffers; the surface is the one when
+				 * lockscr() has pointed the vidbuffer at it. Getting this
+				 * wrong publishes a valid, entirely black frame, so the log
+				 * says which was chosen. */
+				if (!reported) {
+					reported = 1;
+					const struct vidbuffer* ib = avidinfo->inbuffer;
+					const struct vidbuffer* ob = avidinfo->outbuffer;
+					write_log("host framebuffer: source is amiga_surface %dx%d; "
+						"inbuffer=%p (in %dx%d out %dx%d alloc %dx%d) "
+						"outbuffer=%p (in %dx%d out %dx%d alloc %dx%d) same=%d\n",
+						surface->w, surface->h,
+						(const void*)ib, ib ? ib->inwidth : -1, ib ? ib->inheight : -1,
+						ib ? ib->outwidth : -1, ib ? ib->outheight : -1,
+						ib ? ib->width_allocated : -1, ib ? ib->height_allocated : -1,
+						(const void*)ob, ob ? ob->inwidth : -1, ob ? ob->inheight : -1,
+						ob ? ob->outwidth : -1, ob ? ob->outheight : -1,
+						ob ? ob->width_allocated : -1, ob ? ob->height_allocated : -1,
+						ib == ob);
+				}
+				/* The WHOLE surface, deliberately.
+				 *
+				 * The drawbuffer is the vram buffer, so lockscr() binds it to
+				 * all 1920x1080 of amiga_surface -- but the Amiga's 752x576
+				 * picture is not necessarily at (0,0) in it. Cropping to the
+				 * top-left corner published an opaque, correctly sized
+				 * rectangle of pure border while the game played happily
+				 * underneath. Publishing everything and letting the widget
+				 * fit it is honest; finding the real origin is the next
+				 * refinement, not a guess to bake in here. */
+				uae4arm_host_publish_frame_region(surface, 0, 0);
+			}
+		}
 		return;
 	}
 
@@ -1117,10 +1200,25 @@ void show_screen(const int monid, int mode)
 	mon->render_ok = false;
 }
 
+/* How many times the emulation has locked a buffer to draw into it. Zero
+ * while the machine "plays" means the picture is never produced at all --
+ * which is a very different bug from one where it is produced and lost. */
+unsigned long host_lockscr_calls = 0;
+unsigned long host_lockscr_ok = 0;
+unsigned long host_lockscr_nowindow = 0;
+unsigned long host_lockscr_nosurface = 0;
+
 int lockscr(struct vidbuffer* vb, bool fullupdate, bool skip)
 {
 	const struct AmigaMonitor* mon = &AMonitors[vb->monitor_id];
 	int ret = 0;
+	host_lockscr_calls++;
+	{
+		/* Which early-out, if any, is taking this lock away. */
+		SDL_Surface* s0 = get_amiga_surface(vb->monitor_id);
+		if (gfx_platform_requires_window() && !mon->amiga_window) host_lockscr_nowindow++;
+		if (!s0) host_lockscr_nosurface++;
+	}
 
 	SDL_Surface* surface = get_amiga_surface(vb->monitor_id);
 
@@ -1148,6 +1246,7 @@ int lockscr(struct vidbuffer* vb, bool fullupdate, bool skip)
 	}
 	if (ret) {
 		vb->locked = true;
+		host_lockscr_ok++;
 	}
 	return ret;
 }
@@ -1686,6 +1785,51 @@ int graphics_init(bool mousecapture)
 			}
 			update_system_pixel_format();
 		}
+
+		/*
+		 * This is the ONLY graphics init that runs in headless -- doInit /
+		 * open_windows never do -- so the drawbuffer has to be set up here.
+		 *
+		 * The drawbuffer is the vram buffer: no memory of its own, it is
+		 * bound to amiga_surface by lockscr(), which also sets
+		 * width/height_allocated from the surface at that moment. Before the
+		 * first lock they are 0. compute_framesync() computes the correct
+		 * in/out geometry (752x576 PAL) and then clamps all of it to
+		 * width/height_allocated -- so everything collapses to 0, get_line()
+		 * rejects every row, and setxlinebuffer() makes every line 0 bytes
+		 * wide. Measured: 85k rows "drawn", 0 non-black pixels, every frame.
+		 * The windowed path never sees this because its doInit tail sizes the
+		 * buffer through the renderer first. Headless has no renderer.
+		 */
+		{
+			struct vidbuf_description* avidinfo = &adisplays[0].gfxvidinfo;
+			struct vidbuffer* db = &avidinfo->drawbuffer;
+			db->monitor_id = 0;
+			db->vram_buffer = true;
+			db->initialized = true;
+			db->pixbytes = 4;
+			db->rowbytes = amiga_surface->pitch;
+			db->width_allocated = amiga_surface->w;
+			db->height_allocated = amiga_surface->h;
+			if (!db->outwidth || !db->outheight) {
+				db->outwidth = db->inwidth = amiga_surface->w;
+				db->outheight = db->inheight = amiga_surface->h;
+			}
+			avidinfo->outbuffer = db;
+			avidinfo->inbuffer = db;
+			write_log("Headless mode: drawbuffer bound to surface %dx%d\n",
+				amiga_surface->w, amiga_surface->h);
+		}
+
+		/* And the colours. init_colors() builds the Amiga->host colour table
+		 * (alloc_colors64k + notice_new_xcolors). Only the windowed doInit
+		 * called it; with it never run in headless every xcolors[] entry is
+		 * 0, and the picture is drawn -- full width, every row -- in pure
+		 * black. That was the last zero standing: geometry correct, rows
+		 * written, no colour to write them in. */
+		init_colors(0);
+		AMonitors[0].screen_is_initialized = 1;
+		write_log("Headless mode: colour tables initialised\n");
 		return amiga_surface != nullptr;
 	}
 
@@ -1974,12 +2118,27 @@ bool target_graphics_buffer_update(const int monid, const bool force)
 		vbout->height_allocated = h;
 	}
 
-	if (avidinfo->inbuffer != avidinfo->outbuffer) {
-		if (avidinfo->outbuffer) {
-			avidinfo->outbuffer->inwidth = w;
-			avidinfo->outbuffer->inheight = h;
-			avidinfo->outbuffer->width_allocated = w;
-			avidinfo->outbuffer->height_allocated = h;
+	/* Unconditionally, not only when inbuffer != outbuffer.
+	 *
+	 * With line optimisations on, set_drawbuffer() makes inbuffer and
+	 * outbuffer the SAME vidbuffer, so the old guard skipped this block and
+	 * the drawbuffer's inwidth/inheight stayed 0. In a windowed build that
+	 * never showed, because the renderer sized everything through
+	 * alloc_texture()/set_scaling() afterwards. Headless has no renderer --
+	 * so get_line()'s `gfx_ypos < vb->inheight` rejected every single line,
+	 * lockscr() succeeded on every frame, and the surface stayed black with
+	 * a Kickstart loaded and a disk in the drive. These are the display
+	 * dimensions; they belong on the output buffer regardless of aliasing. */
+	if (avidinfo->outbuffer) {
+		avidinfo->outbuffer->inwidth = w;
+		avidinfo->outbuffer->inheight = h;
+		avidinfo->outbuffer->width_allocated = w;
+		avidinfo->outbuffer->height_allocated = h;
+	}
+	if (avidinfo->inbuffer && avidinfo->inbuffer != avidinfo->outbuffer) {
+		if (!avidinfo->inbuffer->inwidth || !avidinfo->inbuffer->inheight) {
+			avidinfo->inbuffer->inwidth = w;
+			avidinfo->inbuffer->inheight = h;
 		}
 	}
 

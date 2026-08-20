@@ -1,5 +1,7 @@
 #pragma once
 
+#include "host_framebuffer.h"
+
 // Returns true if mouse activation should be skipped when no SDL window exists.
 // Host always has a window, so this guard is unnecessary — return false.
 // Libretro returns true since it runs without an SDL window.
@@ -20,7 +22,20 @@ static inline bool osdep_platform_should_delay_on_pause()
 
 static inline bool osdep_platform_init_sdl()
 {
-	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS))
+	/* No SDL joystick/gamepad subsystem when the host draws the picture.
+	 *
+	 * On Android those subsystems are backed by SDLControllerManager, a Java
+	 * class SDLActivity creates -- and with the core running inside the
+	 * launcher's process there is no SDLActivity. The joystick thread then
+	 * calls pollInputDevices() on a null object and the whole app aborts
+	 * about two seconds after boot. Input reaches the core through the host
+	 * pad API (uae4arm_host_pad_*) from the launcher's own UI in this mode,
+	 * so SDL's controller enumeration is not wanted here in the first place. */
+	const Uint32 subsystems = SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS
+		| (uae4arm_host_framebuffer_output()
+			? 0u
+			: (SDL_INIT_JOYSTICK | SDL_INIT_GAMEPAD));
+	if (!SDL_Init(subsystems))
 	{
 		write_log("SDL could not initialize! SDL_Error: %s\n", SDL_GetError());
 		int num = SDL_GetNumVideoDrivers();
