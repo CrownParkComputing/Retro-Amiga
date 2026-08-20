@@ -3,6 +3,9 @@ package com.uae4arm2026
 import android.content.Intent
 import android.net.Uri
 import android.hardware.input.InputManager
+import android.view.InputDevice
+import android.view.KeyEvent
+import android.view.MotionEvent
 import android.os.Handler
 import android.os.Looper
 import io.flutter.embedding.android.FlutterActivity
@@ -94,6 +97,130 @@ class MainActivity : FlutterActivity() {
 		override fun onInputDeviceAdded(deviceId: Int) = notifyChanged()
 		override fun onInputDeviceRemoved(deviceId: Int) = notifyChanged()
 		override fun onInputDeviceChanged(deviceId: Int) = notifyChanged()
+	}
+
+	/**
+	 * True while a game is running in the in-process panel.
+	 *
+	 * Gamepad events are only swallowed while that is the case. Outside a
+	 * game the same buttons drive the launcher's own navigation, and eating
+	 * them would leave a handheld unable to move around its own menus.
+	 */
+	private var gameRunning = false
+
+	/** Last direction sent, so a repeat is not pushed on every motion event. */
+	private var lastDirection = 0
+
+	/**
+	 * Feeds a physical controller into the core.
+	 *
+	 * SDL's Android backend learns about controllers through SDLActivity's own
+	 * callbacks, and the in-process panel is not an SDLActivity: the core runs
+	 * as a thread inside this Flutter activity, so it never sees the hardware
+	 * and no SDL joystick is registered for it. Port 1 is bound to the first
+	 * joystick, which is the virtual pad the launcher attaches - so without
+	 * this, a real controller does nothing at all and hiding the on-screen pad
+	 * leaves the port with no device driving it.
+	 *
+	 * The events are forwarded to Dart, which owns the core handle through FFI
+	 * and pushes them into the same pad the on-screen controls use.
+	 */
+	private fun forwardDirection(left: Boolean, right: Boolean, up: Boolean, down: Boolean) {
+		val packed = (if (left) 1 else 0) or (if (right) 2 else 0) or
+			(if (up) 4 else 0) or (if (down) 8 else 0)
+		if (packed == lastDirection) return
+		lastDirection = packed
+		channel?.invokeMethod(
+			"physicalPadDirection",
+			mapOf("left" to left, "right" to right, "up" to up, "down" to down),
+		)
+	}
+
+	private fun isFromController(source: Int): Boolean =
+		(source and InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD ||
+			(source and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK
+
+	override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+		// Forwarded whether or not a game is running, and only SWALLOWED while
+		// one is. Gating the forwarding on gameRunning meant a single missed
+		// setGameRunning call silently killed every button - which is exactly
+		// what happened. Dart drops the event if no core is running, so a
+		// stray press costs nothing.
+		if (isFromController(event.source)) {
+			val pressed = event.action == KeyEvent.ACTION_DOWN
+			when (event.keyCode) {
+				// Fire and second fire. B as well as A, because a handheld's
+				// A is where a thumb rests and the Amiga only has two.
+				// Fire on the whole right-hand cluster. The Amiga has two
+				// buttons and a modern pad has four, and a player reaching for
+				// X or Y - as a test on the Retroid immediately did - should
+				// not find half the pad dead.
+				KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_DPAD_CENTER,
+				KeyEvent.KEYCODE_BUTTON_X ->
+					channel?.invokeMethod(
+						"physicalPadButton", mapOf("button" to 0, "pressed" to pressed))
+				KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BUTTON_Y ->
+					channel?.invokeMethod(
+						"physicalPadButton", mapOf("button" to 1, "pressed" to pressed))
+				KeyEvent.KEYCODE_DPAD_LEFT -> forwardDirection(pressed, false, false, false)
+				KeyEvent.KEYCODE_DPAD_RIGHT -> forwardDirection(false, pressed, false, false)
+				KeyEvent.KEYCODE_DPAD_UP -> forwardDirection(false, false, pressed, false)
+				KeyEvent.KEYCODE_DPAD_DOWN -> forwardDirection(false, false, false, pressed)
+				// Anything else - Start, Select, shoulders - is left alone so
+				// the system and the launcher keep working.
+				else -> return super.dispatchKeyEvent(event)
+			}
+			// Consume only during a game. Outside one the launcher still needs
+			// these to move around its own menus on a handheld.
+			if (gameRunning) return true
+		}
+		return super.dispatchKeyEvent(event)
+	}
+
+	/**
+	 * Also handled here, not only in dispatchGenericMotionEvent.
+	 *
+	 * A joystick's axes are delivered to the focused view first; the activity
+	 * only sees what nothing else claimed. Flutter's view takes focus, so a
+	 * stick can produce no dispatch at all - which is exactly what a device
+	 * test showed: every button logged, not one motion event.
+	 */
+	override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+		if (handleControllerMotion(event)) return true
+		return super.onGenericMotionEvent(event)
+	}
+
+	private fun handleControllerMotion(event: MotionEvent): Boolean {
+		if (!isFromController(event.source) || event.action != MotionEvent.ACTION_MOVE) {
+			return false
+		}
+		val x = event.getAxisValue(MotionEvent.AXIS_X) +
+			event.getAxisValue(MotionEvent.AXIS_HAT_X)
+		val y = event.getAxisValue(MotionEvent.AXIS_Y) +
+			event.getAxisValue(MotionEvent.AXIS_HAT_Y)
+		val threshold = 0.5f
+		forwardDirection(x < -threshold, x > threshold, y < -threshold, y > threshold)
+		return gameRunning
+	}
+
+	override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+		if (isFromController(event.source) &&
+			event.action == MotionEvent.ACTION_MOVE
+		) {
+			// Stick and hat together: a handheld reports its d-pad as a hat on
+			// some builds and as DPAD keys on others, and taking both means
+			// the direction works either way.
+			val x = event.getAxisValue(MotionEvent.AXIS_X) +
+				event.getAxisValue(MotionEvent.AXIS_HAT_X)
+			val y = event.getAxisValue(MotionEvent.AXIS_Y) +
+				event.getAxisValue(MotionEvent.AXIS_HAT_Y)
+			// Half travel, not a hair trigger: an Amiga joystick is a switch,
+			// and a resting stick that drifts would walk the player into a wall.
+			val threshold = 0.5f
+			forwardDirection(x < -threshold, x > threshold, y < -threshold, y > threshold)
+			if (gameRunning) return true
+		}
+		return super.dispatchGenericMotionEvent(event)
 	}
 
 	override fun onResume() {
@@ -189,6 +316,15 @@ class MainActivity : FlutterActivity() {
 					// hardware to play on? Without this it always drew touch
 					// controls, including over a handheld's own sticks.
 					"hasGamepad" -> result.success(HostSupport.realControllerConnected())
+
+					// Told by Dart, because only Dart knows whether the panel
+					// is running a game. Controller events are forwarded to the
+					// core only while it is.
+					"setGameRunning" -> {
+						gameRunning = call.argument<Boolean>("running") ?: false
+						if (!gameRunning) lastDirection = 0
+						result.success(true)
+					}
 
 					"mediaFolderUri" ->
 						result.success(MediaFolderAccess.grantedTree(this)?.toString())

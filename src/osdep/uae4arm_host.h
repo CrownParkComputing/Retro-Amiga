@@ -218,6 +218,10 @@ void uae4arm_host_music_set_volume(float volume);
  * repeatedly, and cheap enough to call before each batch of input. Physical
  * devices are not re-enumerated, so custom mappings survive. */
 void uae4arm_host_pad_attach(int pad);
+/* Applies queued pad input. EMULATOR THREAD ONLY - the pad_* calls above may
+ * be made from any thread and only enqueue; this is where the core's input
+ * device table is actually touched. Called from process_event(). */
+void uae4arm_host_drain_pad_events(void);
 
 /* axis: 0 = X (left negative), 1 = Y (up negative).
  * value is clamped to +/-UAE4ARM_HOST_AXIS_MAX. */

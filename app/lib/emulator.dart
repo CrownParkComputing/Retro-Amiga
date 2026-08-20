@@ -39,6 +39,40 @@ class Emulator {
   /// show the machine in its panel.
   static final ValueNotifier<bool> playing = ValueNotifier<bool>(false);
 
+  /// True when the app backgrounded a running game, so it is known whether
+  /// coming back should start it again. A game the user paused themselves is
+  /// left paused: resuming it for them would drop them straight back into
+  /// play with no warning.
+  static bool _suspendedByBackground = false;
+
+  /// Pauses a running game because the app is leaving the foreground.
+  ///
+  /// The in-process core keeps emulating whatever the app is doing - it is a
+  /// thread in this process, not a second Activity that the system stops - so
+  /// without this a minimised launcher carries on playing the game's audio out
+  /// of a pocket, and burning battery on frames nobody can see.
+  static void suspend() {
+    if (!playing.value) return;
+    final AmigaCore? core = inProcessCore;
+    if (core == null || !core.isRunning) return;
+    core.setPaused(true);
+    _suspendedByBackground = true;
+  }
+
+  /// Restarts a game that [suspend] paused, and only one it paused.
+  static void resumeIfSuspended() {
+    if (!_suspendedByBackground) return;
+    _suspendedByBackground = false;
+    if (!playing.value) return;
+    final AmigaCore? core = inProcessCore;
+    if (core == null || !core.isRunning) return;
+    core.setPaused(false);
+  }
+
+  /// Forgets that the app paused the game, for a user who pauses or resumes it
+  /// themselves while the app is away - their choice outranks ours.
+  static void forgetBackgroundPause() => _suspendedByBackground = false;
+
   /// Starts emulation. [args] is passed through verbatim to the core.
   static Future<void> launch(List<String> args) async {
     // The core's own stored paths rot when iOS moves the container; see

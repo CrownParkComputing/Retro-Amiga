@@ -22,6 +22,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <deque>
+#include <mutex>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -465,17 +467,55 @@ static int pad_device(int pad)
 	return -1;
 }
 
+/* Pad input arrives on whichever thread the host UI runs on - the Android
+ * platform thread, the iOS main thread - while the emulator runs on its own.
+ * The calls below reach the core's input-device table, and registering a pad
+ * mutates that table: doing it from another thread while the emulator is
+ * building or reading it corrupted the heap, aborting out of the allocator in
+ * unordered_map::find during config parsing.
+ *
+ * So nothing is applied where it is asked for. Events are queued under a lock
+ * and drained by uae4arm_host_drain_pad_events() on the emulator thread, the
+ * same shape as the Android touch-neutralization request already published
+ * through process_event(). */
+namespace {
+
+struct PadEvent {
+	enum class Kind { Attach, Axis, Direction, Button, ReleaseAll };
+	Kind kind;
+	int pad;
+	int a;      /* axis index, or button index */
+	int value;  /* axis value, or pressed */
+	bool left, right, up, down;
+};
+
+std::mutex pad_queue_lock;
+std::deque<PadEvent> pad_queue;
+
+/* A cap, not a policy: if the emulator thread stalls - a long disk seek, a
+ * savestate write - a stick held down would otherwise grow this without
+ * bound. Dropping the oldest keeps the newest, which is the one the player
+ * is holding right now. */
+constexpr size_t PAD_QUEUE_MAX = 256;
+
+void pad_enqueue(const PadEvent& event)
+{
+	std::lock_guard<std::mutex> guard(pad_queue_lock);
+	if (pad_queue.size() >= PAD_QUEUE_MAX)
+		pad_queue.pop_front();
+	pad_queue.push_back(event);
+}
+
+} // namespace
+
 void uae4arm_host_pad_attach(int pad)
 {
-	pad_device(pad);
+	pad_enqueue(PadEvent{PadEvent::Kind::Attach, pad, 0, 0, false, false, false, false});
 }
 
 void uae4arm_host_pad_axis(int pad, int axis, int value)
 {
 	if (axis != 0 && axis != 1)
-		return;
-	const int dev = pad_device(pad);
-	if (dev < 0)
 		return;
 
 	if (value > UAE4ARM_HOST_AXIS_MAX)
@@ -483,43 +523,105 @@ void uae4arm_host_pad_axis(int pad, int axis, int value)
 	else if (value < -UAE4ARM_HOST_AXIS_MAX)
 		value = -UAE4ARM_HOST_AXIS_MAX;
 
-	setjoystickstate(dev, axis, value, UAE4ARM_HOST_AXIS_MAX);
+	pad_enqueue(PadEvent{PadEvent::Kind::Axis, pad, axis, value, false, false, false, false});
 }
 
 void uae4arm_host_pad_direction(int pad, bool left, bool right, bool up, bool down)
 {
-	int x = 0;
-	if (left)  x -= UAE4ARM_HOST_AXIS_MAX;
-	if (right) x += UAE4ARM_HOST_AXIS_MAX;
-
-	int y = 0;
-	if (up)   y -= UAE4ARM_HOST_AXIS_MAX;
-	if (down) y += UAE4ARM_HOST_AXIS_MAX;
-
-	uae4arm_host_pad_axis(pad, 0, x);
-	uae4arm_host_pad_axis(pad, 1, y);
+	/* Queued as one event rather than two axis writes. Split across the lock
+	 * a diagonal could be drained half-applied, which reads as a stick that
+	 * flicks straight before it goes diagonal. */
+	pad_enqueue(PadEvent{PadEvent::Kind::Direction, pad, 0, 0, left, right, up, down});
 }
 
 void uae4arm_host_pad_button(int pad, int button, bool pressed)
 {
 	if (button < 0 || button >= pad_button_count(pad))
 		return;
-	const int dev = pad_device(pad);
-	if (dev < 0)
-		return;
-	setjoybuttonstate(dev, button, pressed ? 1 : 0);
+	pad_enqueue(PadEvent{PadEvent::Kind::Button, pad, button, pressed ? 1 : 0,
+		false, false, false, false});
 }
 
 void uae4arm_host_pad_release_all(int pad)
 {
-	const int dev = pad_device(pad);
-	if (dev < 0)
-		return;
-
-	setjoystickstate(dev, 0, 0, UAE4ARM_HOST_AXIS_MAX);
-	setjoystickstate(dev, 1, 0, UAE4ARM_HOST_AXIS_MAX);
-
-	const int buttons = pad_button_count(pad);
-	for (int button = 0; button < buttons; button++)
-		setjoybuttonstate(dev, button, 0);
+	pad_enqueue(PadEvent{PadEvent::Kind::ReleaseAll, pad, 0, 0, false, false, false, false});
 }
+
+/* Applies everything queued since the last call. Emulator thread only: this
+ * is where the input-device table is touched, and the whole point of the
+ * queue is that it happens on one thread. */
+void uae4arm_host_drain_pad_events(void)
+{
+	std::deque<PadEvent> events;
+	{
+		std::lock_guard<std::mutex> guard(pad_queue_lock);
+		if (pad_queue.empty())
+			return;
+		events.swap(pad_queue);
+	}
+
+	for (const PadEvent& event : events) {
+		/* Registers on first use, on this thread. */
+		const int dev = pad_device(event.pad);
+		if (dev < 0)
+			continue;
+
+		/* And make sure the Amiga is actually listening to it.
+		 *
+		 * set_external_controller_mode writes changed_prefs, but the core
+		 * applies the pending controller mode during startup - before the
+		 * launcher's call arrives - and nothing re-applies it afterwards. The
+		 * result was a port bound to nothing: every button reached the right
+		 * device, setjoybuttonstate ran, and the machine ignored all of it
+		 * because currprefs.jports[1].id was -1. Checked per drain rather than
+		 * per event, and only when it is actually wrong, so this is a no-op
+		 * once the port is bound. */
+		const int wanted = JSEM_JOYS + dev;
+		if (currprefs.jports[1].id != wanted) {
+			const int mode = pending_external_controller_mode >= 0
+				? pending_external_controller_mode
+				: (event.pad == UAE4ARM_HOST_PAD_CD32
+					? JSEM_MODE_JOYSTICK_CD32 : JSEM_MODE_JOYSTICK);
+			write_log(_T("pad: binding port 1 to device %d (was %d)\n"),
+				wanted, currprefs.jports[1].id);
+			changed_prefs.jports[1].id = wanted;
+			changed_prefs.jports[1].mode = mode;
+			set_config_changed();
+		}
+
+		switch (event.kind) {
+		case PadEvent::Kind::Attach:
+			break; /* pad_device did it. */
+
+		case PadEvent::Kind::Axis:
+			setjoystickstate(dev, event.a, event.value, UAE4ARM_HOST_AXIS_MAX);
+			break;
+
+		case PadEvent::Kind::Direction: {
+			int x = 0;
+			if (event.left)  x -= UAE4ARM_HOST_AXIS_MAX;
+			if (event.right) x += UAE4ARM_HOST_AXIS_MAX;
+			int y = 0;
+			if (event.up)   y -= UAE4ARM_HOST_AXIS_MAX;
+			if (event.down) y += UAE4ARM_HOST_AXIS_MAX;
+			setjoystickstate(dev, 0, x, UAE4ARM_HOST_AXIS_MAX);
+			setjoystickstate(dev, 1, y, UAE4ARM_HOST_AXIS_MAX);
+			break;
+		}
+
+		case PadEvent::Kind::Button:
+			setjoybuttonstate(dev, event.a, event.value);
+			break;
+
+		case PadEvent::Kind::ReleaseAll: {
+			setjoystickstate(dev, 0, 0, UAE4ARM_HOST_AXIS_MAX);
+			setjoystickstate(dev, 1, 0, UAE4ARM_HOST_AXIS_MAX);
+			const int buttons = pad_button_count(event.pad);
+			for (int button = 0; button < buttons; button++)
+				setjoybuttonstate(dev, button, 0);
+			break;
+		}
+		}
+	}
+}
+

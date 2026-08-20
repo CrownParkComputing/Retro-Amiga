@@ -84,6 +84,10 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   /// _startSession, which asks the host before the first frame of a game.
   bool _padVisible = true;
   bool _keyboardUp = false;
+
+  /// True once _attachPad has registered the pad with the core. Until then no
+  /// pad event may be pushed in: see _padTarget.
+  bool _padAttached = false;
   bool _paused = false;
 
   /// While a game runs, the rail and the strip step aside after a few
@@ -95,11 +99,17 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
 
   void _wakeChrome() {
     _chromeTimer?.cancel();
-    _chromeTimer = Timer(const Duration(seconds: 3), () {
-      if (mounted && Emulator.playing.value) {
-        setState(() => _chromeVisible = false);
-      }
-    });
+    // A paused game keeps its chrome. The strip is the only thing on screen
+    // saying the machine is stopped and offering the way back into it, and
+    // hiding it after three seconds leaves a frozen picture and no
+    // explanation - which reads as a hang, not a pause.
+    if (!_paused) {
+      _chromeTimer = Timer(const Duration(seconds: 3), () {
+        if (mounted && Emulator.playing.value && !_paused) {
+          setState(() => _chromeVisible = false);
+        }
+      });
+    }
     if (!_chromeVisible && mounted) setState(() => _chromeVisible = true);
   }
   PadLayout _layout = PadLayout.defaults;
@@ -124,6 +134,10 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
       _wakeChrome();
     } else {
       _chromeTimer?.cancel();
+      _padAttached = false;
+      // Give the buttons back to the launcher: a handheld navigates its own
+      // menus with the same stick it just played with.
+      unawaited(GameController.setGameRunning(false));
     }
     if (Emulator.playing.value) _startSession();
   }
@@ -140,6 +154,8 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
       _layout = layout;
       _padVisible = !hasPad;
     });
+    _bindPhysicalController();
+    unawaited(GameController.setGameRunning(true));
     _attachPad();
   }
 
@@ -156,9 +172,50 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   void _attachPad() {
     final AmigaCore? core = Emulator.inProcessCore;
     if (core == null || !core.isRunning) return;
+    // Attached even when nothing is drawn. The pad is the DEVICE bound to
+    // port 1, not the picture: detaching it because a real controller is
+    // present would leave the port with nothing driving it, which is exactly
+    // what made a physical pad do nothing at all.
     core.padAttach(_pad);
     core.setPortMode(_layout.style == PadStyle.cd32 ? 7 : 3);
     core.setOnscreenController(_padVisible ? _pad : 0);
+    _padAttached = true;
+  }
+
+  /// Routes a physical controller into the same pad the touch controls drive.
+  ///
+  /// The core cannot see the hardware itself on this path: SDL learns about
+  /// Android controllers through SDLActivity's callbacks, and the in-process
+  /// core is a thread in the Flutter activity rather than an SDLActivity. So
+  /// the host forwards the events and they are pushed in here.
+  void _bindPhysicalController() {
+    GameController.onDirection = (bool l, bool r, bool u, bool d) {
+      final AmigaCore? core = _padTarget();
+      if (core == null) return;
+      core.padDirection(_pad, u, d, l, r);
+    };
+    GameController.onButton = (int button, bool pressed) {
+      final AmigaCore? core = _padTarget();
+      if (core == null) return;
+      core.padButton(_pad, button, pressed);
+    };
+  }
+
+  /// The core to push pad input into, or null if now is not the time.
+  ///
+  /// [_padAttached] is the load-bearing part. These calls reach the core's
+  /// input-device table, which registers a virtual pad on first use, and they
+  /// arrive on the platform thread while the emulator runs on its own. During
+  /// startup the core is building that table and parsing config through the
+  /// same string maps, and a pad event landing in the middle corrupted the
+  /// heap: an unordered_map::find on a half-built table, then SIGABRT out of
+  /// Scudo. Waiting until _attachPad has registered the device means the table
+  /// is built before anything else touches it.
+  AmigaCore? _padTarget() {
+    if (!_padAttached || !Emulator.playing.value) return null;
+    final AmigaCore? core = Emulator.inProcessCore;
+    if (core == null || !core.isRunning) return null;
+    return core;
   }
 
   Future<void> _adoptRequestedSection() async {
@@ -202,6 +259,11 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     });
     WidgetsBinding.instance.addObserver(_watch);
     GameController.connected.addListener(_onControllerChanged);
+    // Bound once, not per session. These no-op unless a core is running, and
+    // binding them only when a game starts meant any path that reached the
+    // panel without going through _startSession left a controller doing
+    // nothing at all.
+    _bindPhysicalController();
     unawaited(GameController.start());
   }
 
@@ -219,6 +281,9 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     AppPrefs.screenFill.removeListener(_onPlayingChanged);
     WidgetsBinding.instance.removeObserver(_watch);
     GameController.connected.removeListener(_onControllerChanged);
+    GameController.onDirection = null;
+    GameController.onButton = null;
+    unawaited(GameController.setGameRunning(false));
     _mediaChanges?.cancel();
     _idleTimer?.cancel();
     _chromeTimer?.cancel();
@@ -478,6 +543,22 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
           // hidden the panel's own heading says it. A third copy was just
           // noise next to the toggle.
           const Spacer(),
+          // Said in words, not just by the button's icon. A stopped machine
+          // shows a still picture, which is indistinguishable from a hung one
+          // until something on screen says otherwise - and a tooltip does not
+          // count, because reading it means long-pressing the very button you
+          // are trying to understand.
+          if (inGame && _paused)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Text(
+                'Paused',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: AmigaColors.textDim,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
           if (inGame) ..._sessionTools(Emulator.inProcessCore!),
         ],
       ),
@@ -535,12 +616,31 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
         active: _paused,
         onPressed: () {
           setState(() => _paused = !_paused);
+          // Their pause outranks the one the app applies on the way to the
+          // background: a game paused here must not start again by itself
+          // just because the app came back to the front.
+          Emulator.forgetBackgroundPause();
           if (_paused) {
             // Pausing IS the snapshot, as on the C64: the moment you step
             // away is the moment worth being able to come back to.
             core.saveSession();
           }
           core.setPaused(_paused);
+          if (_paused) {
+            // Everything back, not just the strip. Chrome, sidebar and the
+            // shelf are three separate pieces of state, and restoring only
+            // the strip left a stopped machine looking identical to a hung
+            // one for anyone who had hidden the rail. Pausing is the moment
+            // you want the setups in front of you - to switch disk, change
+            // machine, or pick something else entirely.
+            setState(() {
+              _sidebarHidden = false;
+              _section = WorkbenchSection.setups;
+            });
+          }
+          // Chrome back and held while paused; resuming hands the screen to
+          // the game again on the usual timer.
+          _wakeChrome();
         },
       ),
       tool(

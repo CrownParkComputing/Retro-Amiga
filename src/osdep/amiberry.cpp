@@ -549,6 +549,14 @@ static void neutralize_touch_controls()
 #endif
 }
 
+/* Host pad input, applied on this thread. The pad_* entry points are called
+ * from whatever thread the launcher's UI runs on, and only queue; touching the
+ * input device table from there corrupted the heap. */
+static void drain_host_pad_events()
+{
+	uae4arm_host_drain_pad_events();
+}
+
 static void drain_pending_touch_neutralization()
 {
 #ifdef __ANDROID__
@@ -3877,6 +3885,7 @@ static AmigaMonitor* monitor_from_window_id(SDL_WindowID window_id)
 static void process_event(const SDL_Event& event)
 {
 	drain_pending_touch_neutralization();
+	drain_host_pad_events();
 #ifdef __ANDROID__
 	amiberry_android_retire_gui_swipe_filter_contact(event);
 #endif
@@ -4151,6 +4160,7 @@ int handle_msgpump(bool vblank)
 	flush_macos_synthetic_mouse_releases();
 #endif
 	drain_pending_touch_neutralization();
+	drain_host_pad_events();
 #ifdef __ANDROID__
 	amiberry_android_check_touch_overlay_transitions();
 	amiberry_android_touch_mouse_begin_pump();
@@ -4165,6 +4175,7 @@ int handle_msgpump(bool vblank)
 		process_event(event);
 	}
 	drain_pending_touch_neutralization();
+	drain_host_pad_events();
 #ifdef __ANDROID__
 	amiberry_android_touch_mouse_tick();
 #endif

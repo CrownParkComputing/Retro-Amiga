@@ -12,6 +12,7 @@ import 'dart:async';
 
 import 'data/error_log.dart';
 import 'data/music_player.dart';
+import 'emulator.dart';
 
 import 'data/app_prefs.dart';
 import 'data/startup_import.dart';
@@ -72,8 +73,13 @@ class _AmigaRetroAppState extends State<AmigaRetroApp>
       case AppLifecycleState.detached:
       case AppLifecycleState.hidden:
         MusicPlayer.suspend();
+        // And the game. The in-process core is a thread in this process, not
+        // an Activity the system stops, so it plays on regardless of whether
+        // the app is on screen.
+        Emulator.suspend();
       case AppLifecycleState.resumed:
         MusicPlayer.resumeIfSuspended();
+        Emulator.resumeIfSuspended();
       case AppLifecycleState.inactive:
         // Transient - a notification shade, a permission dialog - and
         // silencing on it makes the music stutter every time one appears.
