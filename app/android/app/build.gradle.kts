@@ -1,9 +1,59 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+// Release signing, resolved the same way Retro-Dosbox does it, so the same
+// GitHub Actions secrets pattern serves every app:
+//   1. ANDROID_KEYSTORE_PATH / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS /
+//      ANDROID_KEY_PASSWORD env vars - CI decodes ANDROID_KEYSTORE_BASE64 to
+//      a temp .jks and exports the path.
+//   2. key.properties next to this file, for local signed builds.
+// With neither, release falls back to the debug key with a warning, so
+// `flutter run --release` still works on a fresh tree. No .jks is committed.
+data class KeystoreConfig(
+    val path: String,
+    val storePassword: String,
+    val keyAlias: String,
+    val keyPassword: String,
+)
+
+fun resolveKeystore(): KeystoreConfig? {
+    val envPath = System.getenv("ANDROID_KEYSTORE_PATH")
+    val envStorePw = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+    val envAlias = System.getenv("ANDROID_KEY_ALIAS")
+    val envKeyPw = System.getenv("ANDROID_KEY_PASSWORD")
+    if (envPath != null && envStorePw != null && envAlias != null && envKeyPw != null) {
+        logger.lifecycle("release: using keystore from ANDROID_KEYSTORE_PATH env var")
+        return KeystoreConfig(envPath, envStorePw, envAlias, envKeyPw)
+    }
+
+    val propsFile = file("key.properties")
+    if (propsFile.exists()) {
+        val p = Properties().apply { load(propsFile.inputStream()) }
+        val path = p["storeFile"] as String?
+        val storePw = p["storePassword"] as String?
+        val alias = p["keyAlias"] as String?
+        val keyPw = p["keyPassword"] as String?
+        if (path != null && storePw != null && alias != null && keyPw != null) {
+            logger.lifecycle("release: using keystore from ${propsFile.absolutePath}")
+            return KeystoreConfig(path, storePw, alias, keyPw)
+        }
+    }
+
+    logger.warn(
+        "release: no ANDROID_KEYSTORE_* env vars and no key.properties; " +
+            "falling back to the debug keystore. This build will not be " +
+            "accepted by Play Console."
+    )
+    return null
+}
+
+val keystoreConfig = resolveKeystore()
 
 // ABIs to build, as -PandroidAbiFilters=arm64-v8a,armeabi-v7a,x86_64. Defaults to
 // arm64-v8a for fast local builds; CI passes the full set for release.
@@ -56,11 +106,27 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            if (keystoreConfig != null) {
+                storeFile = file(keystoreConfig.path)
+                storePassword = keystoreConfig.storePassword
+                keyAlias = keystoreConfig.keyAlias
+                keyPassword = keystoreConfig.keyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (keystoreConfig != null) {
+                signingConfigs.getByName("release")
+            } else {
+                // Dev/CI without secrets: the debug key, so `flutter run
+                // --release` works on a fresh tree. The warning above is the
+                // signal that this build cannot go to Play.
+                signingConfigs.getByName("debug")
+            }
             // SDL registers its Java native methods by name at library load
             // time. Keep the release bridge unshrunk: removing an apparently
             // unused native declaration makes ART abort before the game starts.
