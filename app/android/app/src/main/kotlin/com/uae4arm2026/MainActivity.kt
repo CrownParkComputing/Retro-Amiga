@@ -2,9 +2,8 @@ package com.uae4arm2026
 
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
-import android.os.Environment
-import android.provider.Settings
+import android.os.Handler
+import android.os.Looper
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -63,6 +62,38 @@ class MainActivity : FlutterActivity() {
 		@JvmStatic external fun nativeMusicSetVolume(volume: Float)
 	}
 
+	/**
+	 * The Dart call waiting on the folder picker.
+	 *
+	 * ACTION_OPEN_DOCUMENT_TREE answers through onActivityResult, which has no
+	 * way back to the MethodChannel result on its own, so it is parked here for
+	 * the callback to complete. Cleared on every outcome, including the user
+	 * backing out, or a second attempt would be refused as "busy" forever.
+	 */
+	private var pendingFolderPick: MethodChannel.Result? = null
+
+	override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+		super.onActivityResult(requestCode, resultCode, data)
+		if (requestCode != MediaFolderAccess.REQUEST_PICK_FOLDER) return
+
+		val pending = pendingFolderPick
+		pendingFolderPick = null
+		if (pending == null) return
+
+		val uri: Uri? = if (resultCode == RESULT_OK) data?.data else null
+		if (uri == null) {
+			// Backed out of the picker: not an error, just no folder.
+			pending.success(null)
+			return
+		}
+		try {
+			MediaFolderAccess.persist(this, uri)
+			pending.success(uri.toString())
+		} catch (e: SecurityException) {
+			pending.error("not_persistable", "the folder grant could not be kept", null)
+		}
+	}
+
 	override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
 		super.configureFlutterEngine(flutterEngine)
 
@@ -110,19 +141,88 @@ class MainActivity : FlutterActivity() {
 					"emulatorHomeDirectory" ->
 						result.success(getExternalFilesDir(null)?.absolutePath)
 
-					// Scanning for media means walking folders, which scoped
-					// storage cannot do - it hands back one file at a time
-					// through a picker. All-files access is the only way to
-					// offer a library, and it is granted on a system screen
-					// rather than in a dialog, so this can only send the user
-					// there and let them come back.
-					"hasAllFilesAccess" -> result.success(hasAllFilesAccess())
+					// Scoped storage will not let the app walk a folder like
+					// /sdcard/Amiga, and the permission that would - all-files
+					// access - is one Play gates behind a review aimed at file
+					// managers. Instead the user grants one folder through the
+					// system picker and the grant is persisted. See
+					// MediaFolderAccess.
+					"mediaFolderUri" ->
+						result.success(MediaFolderAccess.grantedTree(this)?.toString())
 
-					"requestAllFilesAccess" -> {
-						if (hasAllFilesAccess()) {
-							result.success(true)
+					"pickMediaFolder" -> {
+						// The answer arrives in onActivityResult, not here.
+						// Held so that callback can complete the same Dart
+						// future the user is waiting on.
+						if (pendingFolderPick != null) {
+							result.error(
+								"busy",
+								"a folder picker is already open",
+								null,
+							)
 						} else {
-							result.success(openAllFilesAccessSettings())
+							pendingFolderPick = result
+							MediaFolderAccess.pickFolder(this)
+						}
+					}
+
+					"forgetMediaFolder" -> {
+						MediaFolderAccess.release(this)
+						result.success(true)
+					}
+
+					"listMediaFolder" -> {
+						val limit = call.argument<Int>("fileLimit") ?: 20000
+						val tree = MediaFolderAccess.grantedTree(this)
+						if (tree == null) {
+							result.error("no_folder", "no folder has been granted", null)
+						} else {
+							// Off the main thread: a large collection is tens
+							// of thousands of provider rows, and doing that on
+							// the UI thread is an ANR, not a slow scan.
+							Thread {
+								val entries = MediaFolderAccess.enumerate(
+									contentResolver,
+									tree,
+									limit,
+								)
+								val payload = entries.map {
+									mapOf(
+										"documentId" to it.documentId,
+										"name" to it.name,
+										"directory" to it.relativeDirectory,
+										"size" to it.size,
+									)
+								}
+								Handler(Looper.getMainLooper()).post {
+									result.success(payload)
+								}
+							}.start()
+						}
+					}
+
+					"copyFromMediaFolder" -> {
+						val documentId = call.argument<String>("documentId")
+						val destination = call.argument<String>("destination")
+						val tree = MediaFolderAccess.grantedTree(this)
+						if (documentId == null || destination == null) {
+							result.error(
+								"bad_args",
+								"copyFromMediaFolder needs documentId and destination",
+								null,
+							)
+						} else if (tree == null) {
+							result.error("no_folder", "no folder has been granted", null)
+						} else {
+							Thread {
+								val ok = MediaFolderAccess.copyDocument(
+									contentResolver,
+									tree,
+									documentId,
+									destination,
+								)
+								Handler(Looper.getMainLooper()).post { result.success(ok) }
+							}.start()
 						}
 					}
 					"musicPlay" -> {
@@ -178,26 +278,6 @@ class MainActivity : FlutterActivity() {
 					else -> result.notImplemented()
 				}
 			}
-	}
-
-	private fun hasAllFilesAccess(): Boolean {
-		// Below Android 11 there is no such thing: the legacy storage
-		// permission covers it, and a scan just works.
-		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return true
-		// On Android 11 and above this is always false now: the app no longer
-		// declares MANAGE_EXTERNAL_STORAGE, because an undeclared sensitive
-		// permission blocks a Play release and declaring it means passing a
-		// review aimed at file managers. Callers already handle false by
-		// steering the user to Browse, so answering honestly is the whole fix.
-		return false
-	}
-
-	private fun openAllFilesAccessSettings(): Boolean {
-		// Nothing to open. Without MANAGE_EXTERNAL_STORAGE in the manifest the
-		// system's all-files screen does not list this app, so sending the user
-		// there was a dead end: a settings page they cannot act on. Report
-		// "not granted" and let the caller show the Browse route instead.
-		return false
 	}
 
 	private fun launchEmulator(args: Array<String>) {

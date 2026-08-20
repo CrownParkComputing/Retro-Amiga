@@ -6,6 +6,7 @@ import '../data/ags_setup.dart';
 import '../data/app_prefs.dart';
 import '../data/file_category.dart';
 import '../data/amiga_model.dart';
+import '../data/media_folder.dart';
 import '../data/media_library.dart';
 import '../data/media_root.dart';
 import '../theme/amiga_theme.dart';
@@ -24,6 +25,9 @@ class SettingsPanel extends StatefulWidget {
 
 class _SettingsPanelState extends State<SettingsPanel> {
   String _root = '';
+  /// The folder the user granted on Android, shown instead of the internal
+  /// destination: it is the one they chose and the only one they can change.
+  String? _sourceFolder;
   MediaIndex _index = const MediaIndex.empty();
   bool _busy = false;
   String? _notice;
@@ -130,12 +134,35 @@ class _SettingsPanelState extends State<SettingsPanel> {
     final String root = await MediaRoot.path();
     final MediaIndex index = await MediaLibrary.cached();
     final bool confirmFileDelete = await AppPrefs.confirmFileDelete();
+    final String? source = await MediaFolder.displayPath();
     if (!mounted) return;
     setState(() {
       _root = root;
       _index = index;
       _confirmFileDelete = confirmFileDelete;
+      _sourceFolder = source;
     });
+  }
+
+  /// Picks a source folder and brings in what it holds.
+  ///
+  /// Always opens the picker, including when a folder is already granted:
+  /// correcting a wrong choice is the main reason anyone opens this row.
+  Future<void> _chooseSourceFolder() async {
+    final String? picked = await MediaFolder.pick();
+    if (picked == null) return; // Backed out.
+
+    setState(() => _busy = true);
+    try {
+      await MediaFolderImporter.importAll();
+      await MediaLibrary.scan();
+    } on Exception {
+      // The import reports its own failures to the log; the reload below
+      // shows whatever did land rather than leaving a half-updated screen.
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+    await _load();
   }
 
   Future<void> _setConfirmFileDelete(bool value) async {
@@ -167,17 +194,35 @@ class _SettingsPanelState extends State<SettingsPanel> {
           color: AmigaColors.card,
           child: Column(
             children: <Widget>[
-              ListTile(
-                leading: const Icon(Icons.folder_outlined),
-                title: Text(_root.isEmpty ? '...' : _root),
-                subtitle: Text('Media folder - ${_index.files.length} files'),
-                trailing: MediaRoot.canChoose
-                    ? TextButton(
-                        onPressed: _busy ? null : _chooseRoot,
-                        child: const Text('Change'),
-                      )
-                    : null,
-              ),
+              // On Android the row is about the folder the user PICKED, not
+              // the app's internal destination. The destination cannot be
+              // changed and showing its path invites the question of how.
+              if (MediaFolder.isSupported)
+                ListTile(
+                  leading: const Icon(Icons.drive_folder_upload),
+                  title: Text(_sourceFolder ?? 'No folder chosen'),
+                  subtitle: Text(
+                    _sourceFolder == null
+                        ? 'Choose the folder your Amiga files are in'
+                        : '${_index.files.length} files in the library',
+                  ),
+                  trailing: TextButton(
+                    onPressed: _busy ? null : _chooseSourceFolder,
+                    child: Text(_sourceFolder == null ? 'Choose' : 'Change'),
+                  ),
+                )
+              else
+                ListTile(
+                  leading: const Icon(Icons.folder_outlined),
+                  title: Text(_root.isEmpty ? '...' : _root),
+                  subtitle: Text('Media folder - ${_index.files.length} files'),
+                  trailing: MediaRoot.canChoose
+                      ? TextButton(
+                          onPressed: _busy ? null : _chooseRoot,
+                          child: const Text('Change'),
+                        )
+                      : null,
+                ),
               // One action instead of Scan-plus-Import: the wizard IS the
               // scan, the import, the Kickstart placement and the report,
               // and it already knows how to say what it found. Two buttons

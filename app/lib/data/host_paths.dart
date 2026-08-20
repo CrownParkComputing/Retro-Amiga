@@ -45,6 +45,32 @@ class HostPaths {
     return path;
   }
 
+  static String? _emulatorHome;
+
+  /// The folder the core treats as its own: getExternalFilesDir(null) on
+  /// Android, which is what SDL_GetAndroidExternalStoragePath returns.
+  ///
+  /// It matters because it is the one place on Android the app can read and
+  /// write without any permission at all. Shared storage - /sdcard/Amiga and
+  /// everything like it - needs all-files access, which this app deliberately
+  /// no longer asks for.
+  static Future<String> emulatorHome() async {
+    final String? cached = _emulatorHome;
+    if (cached != null) return cached;
+    final String? path = await _channel.invokeMethod<String>(
+      'emulatorHomeDirectory',
+    );
+    if (path == null || path.isEmpty) {
+      // Not Android, or the host could not answer: the app's own support
+      // directory is always readable, so it is a safe floor.
+      final String fallback = await appSupport();
+      _emulatorHome = fallback;
+      return fallback;
+    }
+    _emulatorHome = path;
+    return path;
+  }
+
   /// Rewrites a path saved by an earlier install so it points at this one.
   ///
   /// iOS hands the app a fresh data container UUID on every install, so an

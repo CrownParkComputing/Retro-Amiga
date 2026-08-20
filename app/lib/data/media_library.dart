@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 
-import 'package:flutter/services.dart';
 
 import 'amiga_model.dart';
 import 'app_log.dart';
@@ -206,7 +205,12 @@ class MediaLibrary {
   /// is where files dropped in through the Files app land.
   static Future<List<String>> defaultRoots() async {
     if (Platform.isAndroid) {
-      return <String>['/sdcard'];
+      // The app's own media root, not the whole of /sdcard. Scoped storage
+      // will not let this app list shared storage at all, so walking /sdcard
+      // returns nothing but a permission error per folder. What the user has
+      // elsewhere reaches the library through the folder picker instead: see
+      // MediaFolder.
+      return <String>[await MediaRoot.path()];
     }
     if (Platform.isIOS) {
       return <String>[await HostPaths.documents()];
@@ -227,34 +231,6 @@ class MediaLibrary {
           Directory(documents).existsSync())
         documents,
     ];
-  }
-
-  /// Asked of the host rather than a plugin: this is two Android calls, and
-  /// permission_handler's Android module does not build against this AGP.
-  static const MethodChannel _channel = MethodChannel('uae4arm2026/emulator');
-
-  /// Whether a scan can actually read folders. On Android that needs all-files
-  /// access, because scoped storage deliberately cannot enumerate.
-  static Future<bool> hasScanPermission() async {
-    if (!Platform.isAndroid) return true;
-    try {
-      return await _channel.invokeMethod<bool>('hasAllFilesAccess') ?? false;
-    } on PlatformException {
-      return false;
-    }
-  }
-
-  /// Opens the system screen where all-files access is granted. There is no
-  /// in-app dialog for this one, so this returns once the user is sent there
-  /// rather than once they have decided.
-  static Future<bool> requestScanPermission() async {
-    if (!Platform.isAndroid) return true;
-    try {
-      return await _channel.invokeMethod<bool>('requestAllFilesAccess') ??
-          false;
-    } on PlatformException {
-      return false;
-    }
   }
 
   /// Folders never worth walking wherever they appear: caches and other

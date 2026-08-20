@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../data/amiga_model.dart';
 import '../data/app_prefs.dart';
 import '../data/file_category.dart';
+import '../data/media_folder.dart';
 import '../data/media_library.dart';
 import '../data/media_root.dart';
 import '../data/startup_import.dart';
@@ -31,6 +32,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   AmigaModel _model = AmigaModel.a500;
   bool _scanning = false;
   bool _scanned = false;
+  /// The folder the user picked, shown so a wrong choice is visible.
+  String? _sourceFolder;
   String? _notice;
 
   /// A Kickstart is the one thing that cannot be worked around later.
@@ -138,29 +141,62 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     });
   }
 
+  /// Android's one way in: the user hands over a folder, and what it holds is
+  /// copied into the app's own media folder.
+  ///
+  /// There is no scan option on Android any more. Scoped storage will not let
+  /// this app walk shared storage, so a "scan for files" button could only
+  /// ever search the app's own folder - which the user has no easy way to put
+  /// anything into. Offering it was offering a button that finds nothing.
+  Future<void> _importFolder() async {
+    // Always ask, even when a folder is already granted: picking the wrong
+    // one is easy, and a button that silently reuses the previous choice
+    // leaves no way to correct it. The system picker opens where it left off,
+    // so re-confirming the same folder is two taps.
+    final String? picked = await MediaFolder.pick();
+    if (picked == null) return; // Backed out: not an error.
+    final String? shown = await MediaFolder.displayPath();
+    if (mounted) setState(() => _sourceFolder = shown);
+
+    setState(() {
+      _scanning = true;
+      _notice = 'Reading the folder…';
+    });
+    try {
+      final ImportResult result = await MediaFolderImporter.importAll(
+        onProgress: (int done, int total) {
+          if (mounted && total > 0) {
+            setState(() => _notice = 'Copying $done of $total…');
+          }
+        },
+      );
+      if (!mounted) return;
+      setState(
+        () => _notice = result.total == 0
+            ? 'Nothing the app recognises in that folder.'
+            : '${result.moved} copied, ${result.alreadyInPlace} already here'
+                  '${result.failed > 0 ? ', ${result.failed} failed' : ''}.',
+      );
+    } on Exception catch (e) {
+      if (mounted) setState(() => _notice = 'Import failed: $e');
+      return;
+    } finally {
+      if (mounted) setState(() => _scanning = false);
+    }
+    // Index what was just copied, so the sections below fill in.
+    await _scan();
+  }
+
   Future<void> _scan() async {
     setState(() {
       _scanning = true;
       _notice = null;
     });
 
-    if (!await MediaLibrary.hasScanPermission()) {
-      await MediaLibrary.requestScanPermission();
-      // Granting happens on a system screen, so we cannot know the answer
-      // here: re-check rather than assume either way.
-      if (!await MediaLibrary.hasScanPermission()) {
-        if (mounted) {
-          setState(() {
-            _scanning = false;
-            _notice =
-                'Folders cannot be scanned on this version of Android. '
-                'Use Browse to import your Kickstarts and disk images '
-                'directly.';
-          });
-        }
-        return;
-      }
-    }
+    // No permission gate: the library root is the app's own folder, which
+    // every Android lets it read. A collection sitting somewhere else - the
+    // /sdcard/Amiga a previous install filled while it still held all-files
+    // access - is brought in through the folder picker on the media screens.
 
     try {
       // File first, then scan: a first run's media arrives as zips dropped in
@@ -241,11 +277,17 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
             const _SectionHeader('1', 'Find your Amiga files'),
             const SizedBox(height: 8),
-            const Text(
-              'Kickstart ROMs, floppies, hard drives, CD images and WHDLoad '
-              'archives. You supply your own: drop them - zipped is fine - '
-              'into this app\'s folder in the Files app '
-              '(On My iPad > Retro-Amiga), then Scan.',
+            Text(
+              MediaFolder.isSupported
+                  ? 'Kickstart ROMs, floppies, hard drives, CD images and '
+                        'WHDLoad archives. You supply your own: choose the '
+                        'folder they live in - /sdcard/Amiga, a Downloads '
+                        'folder, wherever - and the app copies what it '
+                        'recognises into its own library.'
+                  : 'Kickstart ROMs, floppies, hard drives, CD images and '
+                        'WHDLoad archives. You supply your own: drop them - '
+                        'zipped is fine - into this app\'s folder in the '
+                        'Files app (On My iPad > Retro-Amiga), then Scan.',
             ),
             const SizedBox(height: 12),
             if (_scanning)
@@ -269,11 +311,34 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               // found, exactly as C64-Retro does. A Files picker here was a
               // second road in, one that filed things by the picker's rules
               // instead of the importer's.
-              OutlinedButton.icon(
-                onPressed: _scan,
-                icon: const Icon(Icons.search),
-                label: Text(_scanned ? 'Scan again' : 'Scan for files'),
-              ),
+              MediaFolder.isSupported
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        OutlinedButton.icon(
+                          onPressed: _importFolder,
+                          icon: const Icon(Icons.drive_folder_upload),
+                          label: Text(
+                            _sourceFolder == null
+                                ? 'Choose your Amiga folder'
+                                : 'Choose a different folder',
+                          ),
+                        ),
+                        if (_sourceFolder != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text(
+                              'Reading from $_sourceFolder',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ),
+                      ],
+                    )
+                  : OutlinedButton.icon(
+                      onPressed: _scan,
+                      icon: const Icon(Icons.search),
+                      label: Text(_scanned ? 'Scan again' : 'Scan for files'),
+                    ),
             if (_notice != null)
               Padding(
                 padding: const EdgeInsets.only(top: 12),
@@ -329,70 +394,81 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               const SizedBox(height: 16),
             ],
 
-            const _SectionHeader('2', 'Where media lives'),
-            const SizedBox(height: 8),
-            Text(
-              MediaRoot.canChoose
-                  ? 'Everything is filed here, in a folder per kind. It can be '
-                        'anywhere you can write - a collection you already have '
-                        'stays put, and survives this app being uninstalled.'
-                  : 'iOS only lets the app read its own Documents folder, so '
-                        'that is where media lives. It is reachable from the '
-                        'Files app.',
-            ),
-            const SizedBox(height: 12),
-            Card(
-              child: Column(
-                children: <Widget>[
-                  ListTile(
-                    leading: const Icon(Icons.folder_outlined),
-                    title: Text(_root.isEmpty ? 'Choosing...' : _root),
-                    subtitle: const Text('Media folder'),
-                    trailing: MediaRoot.canChoose
-                        ? TextButton(
-                            onPressed: _chooseRoot,
-                            child: const Text('Change'),
-                          )
-                        : null,
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.drive_file_move_outlined),
-                    title: Text(
-                      _imported == null
-                          ? 'File everything into it'
-                          : '${_imported!.moved} moved, '
-                                '${_imported!.alreadyInPlace} already in place'
-                                '${_imported!.extracted > 0 ? ', ${_imported!.extracted} unzipped' : ''}'
-                                '${_imported!.failed > 0 ? ', ${_imported!.failed} failed' : ''}',
-                    ),
-                    subtitle: const Text(
-                      'Moves what is elsewhere into Floppies, HardDrives, '
-                      'CDROMs, LHA and Kickstarts, and unpacks disk images '
-                      'out of zips.',
-                    ),
-                    trailing: _importing
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : TextButton(
-                            onPressed: _scanning ? null : _fileIntoRoot,
-                            child: const Text('Import'),
-                          ),
-                  ),
-                ],
+            // Android has no media-folder question to answer. The library lives
+            // inside the app's own storage because that is the only place it can
+            // write, and the folder the user picks in step 1 is the source. A
+            // "where media lives" step could only show a path they cannot change.
+            if (!Platform.isAndroid) ...<Widget>[
+              const _SectionHeader('2', 'Where media lives'),
+              const SizedBox(height: 8),
+              Text(
+                MediaRoot.canChoose
+                    ? 'Everything is filed here, in a folder per kind. It can be '
+                          'anywhere you can write - a collection you already have '
+                          'stays put, and survives this app being uninstalled.'
+                    : Platform.isAndroid
+                    ? 'Filed automatically, in a folder per kind, inside the '
+                          'app\'s own storage - the only place Android lets it '
+                          'write without asking for a permission the Play Store '
+                          'will not grant. Your own folder is left untouched.'
+                    : 'iOS only lets the app read its own Documents folder, so '
+                          'that is where media lives. It is reachable from the '
+                          'Files app.',
               ),
-            ),
-            const SizedBox(height: 24),
+              const SizedBox(height: 12),
+              Card(
+                child: Column(
+                  children: <Widget>[
+                    ListTile(
+                      leading: const Icon(Icons.folder_outlined),
+                      title: Text(_root.isEmpty ? 'Choosing...' : _root),
+                      subtitle: const Text('Media folder'),
+                      trailing: MediaRoot.canChoose
+                          ? TextButton(
+                              onPressed: _chooseRoot,
+                              child: const Text('Change'),
+                            )
+                          : null,
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.drive_file_move_outlined),
+                      title: Text(
+                        _imported == null
+                            ? 'File everything into it'
+                            : '${_imported!.moved} moved, '
+                                  '${_imported!.alreadyInPlace} already in place'
+                                  '${_imported!.extracted > 0 ? ', ${_imported!.extracted} unzipped' : ''}'
+                                  '${_imported!.failed > 0 ? ', ${_imported!.failed} failed' : ''}',
+                      ),
+                      subtitle: const Text(
+                        'Moves what is elsewhere into Floppies, HardDrives, '
+                        'CDROMs, LHA and Kickstarts, and unpacks disk images '
+                        'out of zips.',
+                      ),
+                      trailing: _importing
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : TextButton(
+                              onPressed: _scanning ? null : _fileIntoRoot,
+                              child: const Text('Import'),
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
 
+            ],
             // WHDLoad setup is Android only. The boot archive has to be found
             // on the device, and iOS gives the app nothing to search: no
             // shared storage, and the sandbox holds only what has been handed
             // to it. Rather than show a step that can only ever say "not
             // found", iOS does not offer one.
             if (Platform.isAndroid) ...<Widget>[
-              const _SectionHeader('3', 'WHDLoad support'),
+              const _SectionHeader('2', 'WHDLoad support'),
               const SizedBox(height: 8),
               const Text(
                 'WHDLoad games are .lha archives that need WHDLoad itself to '

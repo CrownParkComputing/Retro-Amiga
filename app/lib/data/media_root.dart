@@ -45,14 +45,40 @@ class MediaRoot {
 
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     final String? stored = prefs.getString(_prefsKey);
-    if (stored != null && stored.isNotEmpty) {
+    if (stored != null && stored.isNotEmpty && await _isUsable(stored)) {
       _cached = stored;
       return stored;
+    }
+    if (stored != null && stored.isNotEmpty) {
+      // Stored by a build that still held all-files access, pointing at
+      // somewhere like /sdcard/Amiga that this one cannot open. Left in place
+      // it means an empty library and every import failing silently, so fall
+      // back rather than honour a root that no longer works.
+      AppLog.info('media', 'root $stored is unreadable now; using the default');
     }
 
     final String fallback = await defaultPath();
     _cached = fallback;
     return fallback;
+  }
+
+  /// Whether a root can actually be listed and written.
+  ///
+  /// Checked rather than assumed: the answer changed underneath existing
+  /// installs when all-files access was dropped, and a root that cannot be
+  /// read fails in the least helpful way possible - a library that is simply
+  /// empty, with no error anywhere.
+  static Future<bool> _isUsable(String path) async {
+    try {
+      final Directory dir = Directory(path);
+      if (!dir.existsSync()) {
+        dir.createSync(recursive: true);
+      }
+      dir.listSync(followLinks: false).take(1).toList();
+      return true;
+    } on FileSystemException {
+      return false;
+    }
   }
 
   static Future<void> setPath(String value) async {
@@ -70,7 +96,14 @@ class MediaRoot {
   /// a launcher that files disks into somebody else's folders is worse than
   /// one that asks.
   static Future<String> defaultPath() async {
-    if (Platform.isAndroid) return '/sdcard/Amiga';
+    // The app's own external folder, not /sdcard/Amiga. Under scoped storage
+    // a shared folder like that can be neither listed nor written without
+    // all-files access, which Play gates behind a review this app does not
+    // pass and does not ask for. The emulator home is the one place on
+    // Android that always works, and it is already where the core keeps
+    // Kickstarts, Floppies and HardDrives. A collection elsewhere comes in
+    // through the folder picker: see MediaFolder.
+    if (Platform.isAndroid) return await HostPaths.emulatorHome();
     if (Platform.isIOS) return await HostPaths.documents();
     final Directory dir = Directory(
       '${Platform.environment['HOME'] ?? await HostPaths.documents()}'
@@ -80,16 +113,27 @@ class MediaRoot {
     return dir.path;
   }
 
-  /// Anywhere but iOS, which can only ever use its own Documents folder.
-  static bool get canChoose => !Platform.isIOS;
+  /// Desktop only.
+  ///
+  /// iOS can only ever read its own Documents folder. Android could once be
+  /// pointed anywhere, but that depended on all-files access; without it the
+  /// only writable place is the app's own folder, so offering a choice would
+  /// only let the user pick somewhere that silently fails. On Android the
+  /// question is answered by the folder they pick to import FROM - the
+  /// destination is an implementation detail, not a setting.
+  static bool get canChoose => !Platform.isIOS && !Platform.isAndroid;
 
   /// Whether a collection found by the scan should be adopted as the root.
   ///
-  /// Android only. It exists for the device that has been running the old
-  /// launcher and already has /sdcard/UAE4Arm full of disks. On a desktop the
-  /// busiest folder full of media is somebody else's emulator, which is
+  /// Never, now.
+  ///
+  /// It existed for the Android device that already had /sdcard/UAE4Arm full
+  /// of disks, back when all-files access made that folder usable as a root.
+  /// Without that permission such a folder can be neither listed nor written,
+  /// so adopting one would swap a working root for a broken one. On a desktop
+  /// the busiest folder full of media is somebody else's emulator, which is
   /// exactly what happened the first time this ran on Linux.
-  static bool get adoptsExistingCollection => Platform.isAndroid;
+  static bool get adoptsExistingCollection => false;
 
   /// The folder in [index] that already holds the most media, if any.
   ///

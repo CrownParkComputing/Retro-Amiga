@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'alphabet_filter.dart';
 
 import '../data/file_category.dart';
+import '../data/media_folder.dart';
+import '../data/media_root.dart';
 import '../data/media_library.dart';
 
 /// Offers what a scan found, rather than making the user go and find it.
@@ -66,20 +68,9 @@ class _MediaChooserState extends State<MediaChooser> {
   }
 
   Future<void> _rescan() async {
-    if (!await MediaLibrary.hasScanPermission()) {
-      final bool granted = await MediaLibrary.requestScanPermission();
-      if (!granted) {
-        if (mounted) {
-          setState(
-            () => _notice =
-                'Without all-files access the app cannot scan folders. You can '
-                'still choose files one at a time with Browse.',
-          );
-        }
-        return;
-      }
-    }
-
+    // No permission gate: the library root is the app's own folder, which is
+    // readable on every Android without asking for anything. A collection
+    // somewhere else arrives through _importFolder.
     setState(() {
       _scanning = true;
       _notice = null;
@@ -103,6 +94,50 @@ class _MediaChooserState extends State<MediaChooser> {
         });
       }
     }
+  }
+
+  /// Points the library at a folder the user picks, and copies what it holds.
+  ///
+  /// The system picker rather than a path: scoped storage will not let this
+  /// app open /sdcard/Amiga by name, but it will honour a folder the user
+  /// hands over, and that grant survives restarts. Copied rather than read in
+  /// place because the emulator core opens files with POSIX calls and cannot
+  /// be given a document URI.
+  Future<void> _importFolder() async {
+    if (!MediaFolder.isSupported) return;
+
+    // Always ask, even when a folder is already granted: picking the wrong
+    // one is easy, and a button that silently reuses the previous choice
+    // leaves no way to correct it. The system picker opens where it left off,
+    // so re-confirming the same folder is two taps.
+    final String? picked = await MediaFolder.pick();
+    if (picked == null) return; // Backed out: not an error.
+
+    setState(() {
+      _scanning = true;
+      _notice = 'Reading the folder…';
+    });
+    try {
+      final ImportResult result = await MediaFolderImporter.importAll(
+        onProgress: (int done, int total) {
+          if (mounted && total > 0) {
+            setState(() => _notice = 'Copying $done of $total…');
+          }
+        },
+      );
+      if (!mounted) return;
+      setState(
+        () => _notice = result.total == 0
+            ? 'Nothing the app recognises in that folder.'
+            : '${result.moved} copied, ${result.alreadyInPlace} already here'
+                  '${result.failed > 0 ? ', ${result.failed} failed' : ''}.',
+      );
+    } on Exception catch (e) {
+      if (mounted) setState(() => _notice = 'Import failed: $e');
+    } finally {
+      if (mounted) setState(() => _scanning = false);
+    }
+    await _rescan();
   }
 
   Future<void> _browse() async {
@@ -162,12 +197,24 @@ class _MediaChooserState extends State<MediaChooser> {
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
-              IconButton(
-                tooltip: 'Rescan',
-                visualDensity: VisualDensity.compact,
-                onPressed: _scanning ? null : _rescan,
-                icon: const Icon(Icons.refresh, size: 20),
-              ),
+              // No rescan on Android. Scoped storage limits a scan to the
+              // app's own folder, so the button could only ever re-list what
+              // the last import copied - it looks like a way to find media and
+              // is not one. Importing a folder re-indexes on its way out.
+              if (!MediaFolder.isSupported)
+                IconButton(
+                  tooltip: 'Rescan',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _scanning ? null : _rescan,
+                  icon: const Icon(Icons.refresh, size: 20),
+                ),
+              if (MediaFolder.isSupported)
+                IconButton(
+                  tooltip: 'Import a folder',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _scanning ? null : _importFolder,
+                  icon: const Icon(Icons.drive_folder_upload, size: 20),
+                ),
               IconButton(
                 tooltip: 'Browse',
                 visualDensity: VisualDensity.compact,
