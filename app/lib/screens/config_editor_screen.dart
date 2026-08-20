@@ -39,10 +39,9 @@ class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
     try {
       final String text = await ConfigStore.read(widget.config.path);
       if (!mounted) return;
-      setState(() => _settings = ConfigParser.parse(
-            text,
-            model: widget.config.model,
-          ));
+      setState(
+        () => _settings = ConfigParser.parse(text, model: widget.config.model),
+      );
     } on Object catch (e) {
       if (mounted) setState(() => _error = '$e');
     }
@@ -72,7 +71,8 @@ class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
   /// setup is not worth keeping, and a delete on the shelf itself sits one
   /// slip away from the tap that plays.
   Future<void> _delete() async {
-    final bool confirmed = await showDialog<bool>(
+    final bool confirmed =
+        await showDialog<bool>(
           context: context,
           builder: (BuildContext context) => AlertDialog(
             title: Text('Delete ${widget.config.name}?'),
@@ -166,7 +166,8 @@ class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
                     'real': 'As the real machine',
                     'max': 'Fastest possible',
                   },
-                  help: 'Fastest suits WHDLoad and Workbench. Games written '
+                  help:
+                      'Fastest suits WHDLoad and Workbench. Games written '
                       'for a stock machine often need the real speed, or they '
                       'run too quickly to play.',
                   onChanged: (String v) =>
@@ -189,13 +190,13 @@ class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
                 if (settings.cpuModel >= 68020)
                   _Switch(
                     label: 'JIT',
-                    help: 'Recompiles 68020 and later. Much faster; a few '
+                    help:
+                        'Recompiles 68020 and later. Much faster; a few '
                         'timing-sensitive titles dislike it.',
                     value: settings.jitCacheSize > 0,
-                    onChanged: (bool v) => _update(settings.copyWith(
-                      jitCacheSize: v ? 16384 : 0,
-                      jitFpu: v,
-                    )),
+                    onChanged: (bool v) => _update(
+                      settings.copyWith(jitCacheSize: v ? 16384 : 0, jitFpu: v),
+                    ),
                   ),
 
                 _Section('Memory'),
@@ -233,7 +234,8 @@ class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
                     4: '4 MB',
                     8: '8 MB',
                   },
-                  help: 'WHDLoad wants some. A few floppy games refuse to run '
+                  help:
+                      'WHDLoad wants some. A few floppy games refuse to run '
                       'with any.',
                   onChanged: (int v) => _update(settings.copyWith(fastRam: v)),
                 ),
@@ -265,7 +267,8 @@ class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
                 ),
                 _Switch(
                   label: 'Immediate blits',
-                  help: 'The blitter finishes at once. Faster, and wrong for '
+                  help:
+                      'The blitter finishes at once. Faster, and wrong for '
                       'anything that races it.',
                   value: settings.immediateBlits,
                   onChanged: (bool v) =>
@@ -324,7 +327,8 @@ class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
                     7: '70%',
                     10: 'Full',
                   },
-                  help: 'The Amiga panned two channels hard left and two hard '
+                  help:
+                      'The Amiga panned two channels hard left and two hard '
                       'right; full is what the hardware did and less is '
                       'kinder on headphones.',
                   onChanged: (int v) =>
@@ -363,9 +367,9 @@ class _Section extends StatelessWidget {
       child: Text(
         title,
         style: Theme.of(context).textTheme.titleSmall?.copyWith(
-              color: Theme.of(context).colorScheme.primary,
-              fontWeight: FontWeight.w700,
-            ),
+          color: Theme.of(context).colorScheme.primary,
+          fontWeight: FontWeight.w700,
+        ),
       ),
     );
   }
@@ -425,10 +429,7 @@ class _Choice<T> extends StatelessWidget {
           if (help != null)
             Padding(
               padding: const EdgeInsets.only(top: 2, bottom: 4),
-              child: Text(
-                help!,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
+              child: Text(help!, style: Theme.of(context).textTheme.bodySmall),
             ),
           const SizedBox(height: 4),
           Wrap(

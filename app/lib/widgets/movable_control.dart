@@ -38,10 +38,12 @@ class MovableControl extends StatelessWidget {
                 behavior: HitTestBehavior.opaque,
                 onPanUpdate: (DragUpdateDetails d) {
                   if (area.width == 0 || area.height == 0) return;
-                  onMoved(fraction.shifted(
-                    d.delta.dx / area.width,
-                    d.delta.dy / area.height,
-                  ));
+                  onMoved(
+                    fraction.shifted(
+                      d.delta.dx / area.width,
+                      d.delta.dy / area.height,
+                    ),
+                  );
                 },
                 onPanEnd: (_) => onMoveEnd(),
                 child: _chrome(child),

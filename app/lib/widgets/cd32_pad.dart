@@ -10,11 +10,7 @@ import 'package:flutter/material.dart';
 ///
 /// The indices are UAE4ARM_HOST_CD32_* from uae4arm_host.h.
 class Cd32Pad extends StatelessWidget {
-  const Cd32Pad({
-    super.key,
-    required this.onButton,
-    this.enabled = true,
-  });
+  const Cd32Pad({super.key, required this.onButton, this.enabled = true});
 
   /// (button index, pressed).
   final void Function(int button, bool pressed) onButton;
@@ -38,42 +34,42 @@ class Cd32Pad extends StatelessWidget {
       height: 170,
       child: Stack(
         children: <Widget>[
-        Align(
-          alignment: Alignment.topCenter,
-          child: _Cd32Button(
-            label: 'Y',
-            colour: const Color(0xFFD8C43C),
-            enabled: enabled,
-            onChanged: (bool p) => onButton(yellow, p),
+          Align(
+            alignment: Alignment.topCenter,
+            child: _Cd32Button(
+              label: 'Y',
+              colour: const Color(0xFFD8C43C),
+              enabled: enabled,
+              onChanged: (bool p) => onButton(yellow, p),
+            ),
           ),
-        ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: _Cd32Button(
-            label: 'B',
-            colour: const Color(0xFF3050DC),
-            enabled: enabled,
-            onChanged: (bool p) => onButton(blue, p),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: _Cd32Button(
+              label: 'B',
+              colour: const Color(0xFF3050DC),
+              enabled: enabled,
+              onChanged: (bool p) => onButton(blue, p),
+            ),
           ),
-        ),
-        Align(
-          alignment: Alignment.centerRight,
-          child: _Cd32Button(
-            label: 'G',
-            colour: const Color(0xFF2E9E44),
-            enabled: enabled,
-            onChanged: (bool p) => onButton(green, p),
+          Align(
+            alignment: Alignment.centerRight,
+            child: _Cd32Button(
+              label: 'G',
+              colour: const Color(0xFF2E9E44),
+              enabled: enabled,
+              onChanged: (bool p) => onButton(green, p),
+            ),
           ),
-        ),
-        Align(
-          alignment: Alignment.bottomCenter,
-          child: _Cd32Button(
-            label: 'R',
-            colour: const Color(0xFFDC3232),
-            enabled: enabled,
-            onChanged: (bool p) => onButton(red, p),
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: _Cd32Button(
+              label: 'R',
+              colour: const Color(0xFFDC3232),
+              enabled: enabled,
+              onChanged: (bool p) => onButton(red, p),
+            ),
           ),
-        ),
         ],
       ),
     );
@@ -87,11 +83,7 @@ class Cd32Pad extends StatelessWidget {
 /// your place on the soundtrack because a finger strayed off the fire button
 /// is not a trade anybody would make.
 class Cd32Transport extends StatelessWidget {
-  const Cd32Transport({
-    super.key,
-    required this.onButton,
-    this.enabled = true,
-  });
+  const Cd32Transport({super.key, required this.onButton, this.enabled = true});
 
   final void Function(int button, bool pressed) onButton;
   final bool enabled;

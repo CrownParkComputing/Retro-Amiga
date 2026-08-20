@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'ffi/amiga_core.dart';
+
 import 'data/config_store.dart';
 import 'data/whdload_support.dart';
 
@@ -19,6 +21,23 @@ import 'data/session.dart';
 class Emulator {
   static const MethodChannel _channel = MethodChannel('uae4arm2026/emulator');
 
+  /// The core running INSIDE this process, when the build has one.
+  ///
+  /// This is what stops a game wiping the launcher: with frames coming back
+  /// as pixels the machine is a widget in the workbench's panel, not a second
+  /// Activity. Null on a core too old to hand frames back, or on a platform
+  /// that runs the core as a child process -- and then [launch] falls back to
+  /// the Activity exactly as before.
+  static AmigaCore? get inProcessCore {
+    final core = AmigaCore.open();
+    if (core == null || !core.hasFramebufferOutput) return null;
+    return core;
+  }
+
+  /// True while the in-process core is running, so the workbench knows to
+  /// show the machine in its panel.
+  static final ValueNotifier<bool> playing = ValueNotifier<bool>(false);
+
   /// Starts emulation. [args] is passed through verbatim to the core.
   static Future<void> launch(List<String> args) async {
     // The core's own stored paths rot when iOS moves the container; see
@@ -31,6 +50,20 @@ class Emulator {
     // Android it would be a second process holding the audio device.
     await MusicPlayer.stop(byUser: false);
     Session.markStarted();
+
+    final AmigaCore? core = inProcessCore;
+    if (core != null) {
+      // In-process: the launcher stays on screen and the picture appears in
+      // its panel. No Activity, no window, no wipe. A session that is still
+      // running -- parked behind the workbench, or simply abandoned for a
+      // different game -- is quit and waited for inside start().
+      AppLog.info('launch', 'in-process core');
+      playing.value = false;
+      await core.start(args);
+      playing.value = true;
+      return;
+    }
+
     try {
       await _channel.invokeMethod<bool>('launch', <String, Object?>{
         'args': args,
@@ -39,6 +72,14 @@ class Emulator {
       AppLog.error('launch', '${e.code}: ${e.message}');
       rethrow;
     }
+  }
+
+  /// Ends an in-process session and puts the workbench back in charge.
+  static void stopInProcess() {
+    final AmigaCore? core = inProcessCore;
+    if (core == null || !core.isRunning) return;
+    core.quit();
+    playing.value = false;
   }
 
   /// Which host implementation answered, for showing platform-specific UI.
@@ -83,7 +124,9 @@ class Emulator {
       for (final String line in file.readAsLinesSync()) {
         final String trimmed = line.trim();
         if (!trimmed.startsWith('whdload_filename=')) continue;
-        final String path = trimmed.substring('whdload_filename='.length).trim();
+        final String path = trimmed
+            .substring('whdload_filename='.length)
+            .trim();
         return path.isEmpty ? null : path;
       }
     } on FileSystemException {
@@ -117,10 +160,11 @@ class Emulator {
   /// no longer exists. Passing that stale path to --autoload gave the booter
   /// nothing to load and the player a black screen, while the config beside
   /// it was perfectly correct.
-  static Future<void> launchConfig(String configPath,
-      {String whdloadArchive = ''}) async {
-    final String archive =
-        await _archiveIn(configPath) ?? whdloadArchive;
+  static Future<void> launchConfig(
+    String configPath, {
+    String whdloadArchive = '',
+  }) async {
+    final String archive = await _archiveIn(configPath) ?? whdloadArchive;
     // A WHDLoad game needs Amiberry's booter, and the booter needs its boot
     // archive mounted as DH3. Without it the machine boots to Workbench and
     // stops on "No disk present in device DH3" - a dead end that says nothing

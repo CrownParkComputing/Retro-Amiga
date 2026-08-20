@@ -12,6 +12,9 @@ class AppPrefs {
   static const String _setupComplete = 'setup_complete';
   static const String _defaultModel = 'default_model';
   static const String _buildStamp = 'build_stamp';
+  static const String _confirmFileDelete = 'confirm_file_delete';
+  static const String _screenFill = 'screen_fill';
+  static const String _musicVolume = 'music_volume';
 
   /// Whether first-run setup has been through. Until it has, the app has no
   /// Kickstart and nothing can boot, so the shelf is not worth showing.
@@ -60,6 +63,49 @@ class AppPrefs {
   static Future<void> setDefaultModel(AmigaModel model) async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.setString(_defaultModel, model.cmdArg);
+  }
+
+  /// Whether deleting a local media file asks for confirmation. Enabled by
+  /// default because this action removes the user's file, not just an index
+  /// entry.
+  static Future<bool> confirmFileDelete() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_confirmFileDelete) ?? true;
+  }
+
+  static Future<void> setConfirmFileDelete({required bool value}) async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_confirmFileDelete, value);
+  }
+
+  /// Whether the in-process Amiga picture stretches to fill the whole panel
+  /// (16:9 on a phone) rather than keeping its own shape with bars either
+  /// side. Off by default: the Amiga's shape is the faithful one.
+  ///
+  /// Live, not just stored: the Video panel and the in-game button both flip
+  /// it, and the picture has to follow whichever was touched.
+  static final ValueNotifier<bool> screenFill = ValueNotifier<bool>(false);
+
+  static Future<bool> loadScreenFill() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    return screenFill.value = prefs.getBool(_screenFill) ?? false;
+  }
+
+  static Future<void> setScreenFill({required bool value}) async {
+    screenFill.value = value;
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_screenFill, value);
+  }
+
+  /// Workbench music volume, 0..1.
+  static Future<double> musicVolume() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    return prefs.getDouble(_musicVolume) ?? 1.0;
+  }
+
+  static Future<void> setMusicVolume(double value) async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_musicVolume, value);
   }
 }
 

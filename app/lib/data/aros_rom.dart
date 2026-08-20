@@ -61,17 +61,17 @@ class ArosRom {
         if (file.existsSync() && file.lengthSync() > 0) continue;
         final ByteData data = await rootBundle.load('assets/roms/$name');
         file.writeAsBytesSync(
-          data.buffer.asUint8List(
-            data.offsetInBytes,
-            data.lengthInBytes,
-          ),
+          data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
           flush: true,
         );
         wrote++;
       }
       if (wrote > 0) {
-        AppLog.info('aros', 'installed $wrote AROS ROM file(s) into '
-            '${target.path}');
+        AppLog.info(
+          'aros',
+          'installed $wrote AROS ROM file(s) into '
+              '${target.path}',
+        );
       }
       return true;
     } on Object catch (error) {

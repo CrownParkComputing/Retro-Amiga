@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -37,7 +38,7 @@ class BoingBackdrop extends StatefulWidget {
 class _BoingBackdropState extends State<BoingBackdrop>
     with SingleTickerProviderStateMixin {
   late final Ticker _ticker;
-  Duration _elapsed = Duration.zero;
+  late final ValueNotifier<Duration> _elapsed;
 
   /// The message, fixed for the life of this screensaver session.
   ///
@@ -53,14 +54,15 @@ class _BoingBackdropState extends State<BoingBackdrop>
   void initState() {
     super.initState();
     _text = widget.scrollText;
-    _ticker = createTicker((Duration elapsed) {
-      setState(() => _elapsed = elapsed);
-    })..start();
+    _elapsed = ValueNotifier<Duration>(Duration.zero);
+    _ticker = createTicker((Duration elapsed) => _elapsed.value = elapsed)
+      ..start();
   }
 
   @override
   void dispose() {
     _ticker.dispose();
+    _elapsed.dispose();
     super.dispose();
   }
 
@@ -69,23 +71,28 @@ class _BoingBackdropState extends State<BoingBackdrop>
     if (widget.opacity <= 0) return const SizedBox.expand();
     return Opacity(
       opacity: widget.opacity,
-      child: CustomPaint(
-        painter: _BoingPainter(
-          seconds: _elapsed.inMicroseconds / 1e6,
-          text: _text ?? _BoingPainter.defaultText,
+      child: RepaintBoundary(
+        child: CustomPaint(
+          painter: _BoingPainter(
+            elapsed: _elapsed,
+            text: _text ?? _BoingPainter.defaultText,
+          ),
+          size: Size.infinite,
         ),
-        size: Size.infinite,
       ),
     );
   }
 }
 
 class _BoingPainter extends CustomPainter {
-  _BoingPainter({required this.seconds, required this.text});
+  _BoingPainter({required this.elapsed, required this.text})
+    : super(repaint: elapsed);
 
   /// Real elapsed seconds, so the motion is wall-clock rather than per-frame.
-  final double seconds;
+  final ValueListenable<Duration> elapsed;
   final String text;
+
+  double get seconds => elapsed.value.inMicroseconds / 1e6;
 
   static const String defaultText =
       'AMIGA-RETRO  ***  KICKSTART YOUR MEMORY  ***  '
@@ -203,8 +210,7 @@ class _BoingPainter extends CustomPainter {
       // Each bar rides its own slow sine, offset so they cross rather than
       // move as a block.
       final double phase = seconds * 0.35 + b * 1.7;
-      final double centre =
-          size.height * (0.5 + 0.42 * math.sin(phase));
+      final double centre = size.height * (0.5 + 0.42 * math.sin(phase));
       final Color colour = _copper[b % _copper.length];
 
       final Rect rect = Rect.fromCenter(
@@ -278,7 +284,10 @@ class _BoingPainter extends CustomPainter {
     x = xt;
     y = yt;
 
-    return (point: Offset(centre.dx + x * radius, centre.dy - y * radius), z: z);
+    return (
+      point: Offset(centre.dx + x * radius, centre.dy - y * radius),
+      z: z,
+    );
   }
 
   void _paintBall(Canvas canvas, Offset centre, double radius, double spin) {
@@ -294,11 +303,11 @@ class _BoingPainter extends CustomPainter {
 
         final List<({Offset point, double z})> corners =
             <({Offset point, double z})>[
-          _project(t0, p0, spin, centre, radius),
-          _project(t1, p0, spin, centre, radius),
-          _project(t1, p1, spin, centre, radius),
-          _project(t0, p1, spin, centre, radius),
-        ];
+              _project(t0, p0, spin, centre, radius),
+              _project(t1, p0, spin, centre, radius),
+              _project(t1, p1, spin, centre, radius),
+              _project(t0, p1, spin, centre, radius),
+            ];
 
         // Cull the far side, or the pattern on the back shows through and the
         // ball looks flat.
@@ -350,7 +359,8 @@ class _BoingPainter extends CustomPainter {
     for (int i = 0; x < size.width && i < text.length * 2; i++) {
       final TextPainter glyph = _glyph(text[i % text.length]);
       if (x + glyph.width > 0) {
-        final double y = baseline +
+        final double y =
+            baseline +
             math.sin((x / size.width) * math.pi * 3 + seconds * 2) * amplitude;
         glyph.paint(canvas, Offset(x, y));
       }
@@ -359,6 +369,5 @@ class _BoingPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_BoingPainter oldDelegate) =>
-      oldDelegate.seconds != seconds || oldDelegate.text != text;
+  bool shouldRepaint(_BoingPainter oldDelegate) => oldDelegate.text != text;
 }

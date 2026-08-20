@@ -31,7 +31,10 @@ fastmem_size=8
 
     // What the launcher would have believed before the repair.
     const String stale = '/var/mobile/Containers/Data/Application/OLD/x.lha';
-    expect(await Emulator.archiveFor(file.path, stale), '${dir.path}/Current.lha');
+    expect(
+      await Emulator.archiveFor(file.path, stale),
+      '${dir.path}/Current.lha',
+    );
 
     // A config with no archive falls back to what the caller passed.
     final File plain = File('${dir.path}/plain.uae')

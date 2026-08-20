@@ -128,8 +128,9 @@ class _MediaChooserState extends State<MediaChooser> {
   @override
   Widget build(BuildContext context) {
     final List<MediaFile> all = _index.of(widget.category);
-    final List<String> initials =
-        AlphabetFilter.from(all.map((MediaFile f) => f.name));
+    final List<String> initials = AlphabetFilter.from(
+      all.map((MediaFile f) => f.name),
+    );
     // A filter that survives its own letter disappearing - a rescan can leave
     // a chosen letter with nothing behind it, and an empty list with no way
     // back reads as a broken screen.
@@ -137,8 +138,10 @@ class _MediaChooserState extends State<MediaChooser> {
     final List<MediaFile> files = initial == null
         ? all
         : all
-            .where((MediaFile f) => AlphabetFilter.initialOf(f.name) == initial)
-            .toList();
+              .where(
+                (MediaFile f) => AlphabetFilter.initialOf(f.name) == initial,
+              )
+              .toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -210,8 +213,9 @@ class _MediaChooserState extends State<MediaChooser> {
               // of a hundred - so the screen gets used across, not just down.
               : LayoutBuilder(
                   builder: (BuildContext context, BoxConstraints constraints) {
-                    final int columns =
-                        (constraints.maxWidth / 380).floor().clamp(1, 3);
+                    final int columns = (constraints.maxWidth / 380)
+                        .floor()
+                        .clamp(1, 3);
                     // Kickstart names carry their identity in the tail -
                     // "(1993-12)(Commodore)(A1200)" - which is exactly what
                     // one ellipsized line cuts off. ROMs are a short list, so
@@ -219,8 +223,7 @@ class _MediaChooserState extends State<MediaChooser> {
                     final bool tall = widget.category == FileCategory.roms;
                     return GridView.builder(
                       padding: EdgeInsets.zero,
-                      gridDelegate:
-                          SliverGridDelegateWithFixedCrossAxisCount(
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: columns,
                         mainAxisExtent: tall ? 62 : 46,
                         crossAxisSpacing: 8,

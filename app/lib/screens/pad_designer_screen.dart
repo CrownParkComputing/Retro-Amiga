@@ -212,7 +212,10 @@ class _Stage extends StatelessWidget {
                       ],
                       if (layout.style == PadStyle.cd32)
                         const IgnorePointer(
-                          child: Cd32Pad(enabled: false, onButton: _ignoreButton),
+                          child: Cd32Pad(
+                            enabled: false,
+                            onButton: _ignoreButton,
+                          ),
                         )
                       else ...<Widget>[
                         const _Fire(label: '2', colour: Color(0xFF3050DC)),
@@ -298,7 +301,10 @@ class _Fire extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: colour.withValues(alpha: 0.45),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.65), width: 2),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.65),
+          width: 2,
+        ),
       ),
       alignment: Alignment.center,
       child: Text(
@@ -350,8 +356,9 @@ Future<PadButton?> showPadButtonPicker(BuildContext context) {
                       for (final PadDirection direction in PadDirection.values)
                         _PickerChip(
                           label: direction.label,
-                          onTap: () => Navigator.of(context)
-                              .pop(PadButton.direction(direction)),
+                          onTap: () => Navigator.of(
+                            context,
+                          ).pop(PadButton.direction(direction)),
                         ),
                     ],
                   ),

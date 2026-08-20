@@ -83,9 +83,12 @@ class ConfigStore {
   /// with every install, so a setup made yesterday names files by a path that
   /// no longer exists. Doing it here means both new setups and ones already on
   /// the shelf heal the next time they are launched.
-  static Future<EmulatorSettings> _repairPaths(EmulatorSettings settings) async {
+  static Future<EmulatorSettings> _repairPaths(
+    EmulatorSettings settings,
+  ) async {
     final List<String> hardDrives = <String>[
-      for (final String drive in settings.hardDrives) await HostPaths.repair(drive),
+      for (final String drive in settings.hardDrives)
+        await HostPaths.repair(drive),
     ];
     return settings.copyWith(
       romFile: await HostPaths.repair(settings.romFile),
@@ -103,7 +106,9 @@ class ConfigStore {
   static Future<File> save(EmulatorSettings settings, String name) async {
     final Directory dir = await configDirectory();
     final File file = File('${dir.path}/${_sanitise(name)}.uae');
-    file.writeAsStringSync(ConfigGenerator.generate(await _repairPaths(settings)));
+    file.writeAsStringSync(
+      ConfigGenerator.generate(await _repairPaths(settings)),
+    );
     return file;
   }
 
@@ -112,7 +117,9 @@ class ConfigStore {
   static Future<File> saveCurrent(EmulatorSettings settings) async {
     final Directory dir = await configDirectory();
     final File file = File('${dir.path}/$currentSettingsFile');
-    file.writeAsStringSync(ConfigGenerator.generate(await _repairPaths(settings)));
+    file.writeAsStringSync(
+      ConfigGenerator.generate(await _repairPaths(settings)),
+    );
     return file;
   }
 
@@ -133,10 +140,7 @@ class ConfigStore {
     final String original = text;
 
     final String container = File(await HostPaths.documents()).parent.path;
-    text = text.replaceAllMapped(
-      _containerPrefix,
-      (Match m) => '$container/',
-    );
+    text = text.replaceAllMapped(_containerPrefix, (Match m) => '$container/');
 
     text = await _relocateMissingMedia(text);
     text = await _addMissingRoms(text);
@@ -156,8 +160,9 @@ class ConfigStore {
   /// saved - an AGS set is not something anyone wants to build twice.
   static String _moveOverflowingDrivesOffIde(String text) {
     final List<String> lines = text.split('\n');
-    final int drives =
-        lines.where((String l) => l.startsWith('hardfile2=')).length;
+    final int drives = lines
+        .where((String l) => l.startsWith('hardfile2='))
+        .length;
     if (drives <= 2) return text;
 
     bool changed = false;
@@ -186,10 +191,14 @@ class ConfigStore {
     final AmigaModel? model = _modelFrom(text);
     if (model == null) return text;
 
-    final bool hasKickstart =
-        RegExp(r'^kickstart_rom_file=\S', multiLine: true).hasMatch(text);
-    final bool hasExtended =
-        RegExp(r'^kickstart_ext_rom_file=\S', multiLine: true).hasMatch(text);
+    final bool hasKickstart = RegExp(
+      r'^kickstart_rom_file=\S',
+      multiLine: true,
+    ).hasMatch(text);
+    final bool hasExtended = RegExp(
+      r'^kickstart_ext_rom_file=\S',
+      multiLine: true,
+    ).hasMatch(text);
     if (hasKickstart && (!model.needsExtendedRom || hasExtended)) return text;
 
     final MediaIndex index = await MediaLibrary.cached();
@@ -234,8 +243,7 @@ class ConfigStore {
   static Future<void> repairEmulatorSettings() async {
     try {
       final String documents = await HostPaths.documents();
-      final File file =
-          File('$documents/Amiberry/Settings/amiberry.conf');
+      final File file = File('$documents/Amiberry/Settings/amiberry.conf');
       if (!file.existsSync()) return;
 
       // Both spellings appear: the core resolves through /private on iOS.

@@ -14,15 +14,15 @@ void main() {
     // then the parser is blamed for reading what is written.
     final EmulatorSettings original =
         EmulatorSettings.fromModel(AmigaModel.a1200).copyWith(
-      cpuSpeed: 'max',
-      jitCacheSize: 16384,
-      chipRam: 4,
-      fastRam: 8,
-      romFile: '/roms/kick31.rom',
-      floppy0: '/disks/game.adf',
-      hardDrives: <String>['/hd/game.hdf'],
-      soundStereoSeparation: 7,
-    );
+          cpuSpeed: 'max',
+          jitCacheSize: 16384,
+          chipRam: 4,
+          fastRam: 8,
+          romFile: '/roms/kick31.rom',
+          floppy0: '/disks/game.adf',
+          hardDrives: <String>['/hd/game.hdf'],
+          soundStereoSeparation: 7,
+        );
 
     late EmulatorSettings parsed;
 

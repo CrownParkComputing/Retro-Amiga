@@ -19,14 +19,17 @@ class ConfigParser {
     final Map<String, String> out = <String, String>{};
     for (final String line in text.split('\n')) {
       final String trimmed = line.trim();
-      if (trimmed.isEmpty || trimmed.startsWith(';') || trimmed.startsWith('#')) {
+      if (trimmed.isEmpty ||
+          trimmed.startsWith(';') ||
+          trimmed.startsWith('#')) {
         continue;
       }
       final int equals = trimmed.indexOf('=');
       if (equals <= 0) continue;
       // Later wins: the core takes the last value for a repeated key.
-      out[trimmed.substring(0, equals).trim()] =
-          trimmed.substring(equals + 1).trim();
+      out[trimmed.substring(0, equals).trim()] = trimmed
+          .substring(equals + 1)
+          .trim();
     }
     return out;
   }
@@ -75,8 +78,7 @@ class ConfigParser {
       // config happens to hold the default and wrong the rest of the time.
       cpuModel: _int(pairs['cpu_model'], defaults.cpuModel),
       cpuCompatible: _bool(pairs['cpu_compatible'], defaults.cpuCompatible),
-      address24Bit:
-          _bool(pairs['cpu_24bit_addressing'], defaults.address24Bit),
+      address24Bit: _bool(pairs['cpu_24bit_addressing'], defaults.address24Bit),
       cpuSpeed: pairs['cpu_speed'] ?? defaults.cpuSpeed,
       fpuModel: _int(pairs['fpu_model'], defaults.fpuModel),
       jitCacheSize: _int(pairs['cachesize'], defaults.jitCacheSize),
@@ -112,8 +114,10 @@ class ConfigParser {
 
       soundFreq: _int(pairs['sound_frequency'], defaults.soundFreq),
       soundChannels: pairs['sound_channels'] ?? defaults.soundChannels,
-      soundStereoSeparation:
-          _int(pairs['sound_stereo_separation'], defaults.soundStereoSeparation),
+      soundStereoSeparation: _int(
+        pairs['sound_stereo_separation'],
+        defaults.soundStereoSeparation,
+      ),
       soundInterpolation:
           pairs['sound_interpol'] ?? defaults.soundInterpolation,
 

@@ -37,8 +37,7 @@ class Session {
   /// The config that session was running, if the marker names one.
   static Future<String> configPath() async {
     try {
-      final File marker =
-          File('${await HostPaths.appSupport()}/$_markerName');
+      final File marker = File('${await HostPaths.appSupport()}/$_markerName');
       if (!marker.existsSync()) return '';
       return marker.readAsStringSync().trim();
     } on Object {
@@ -49,8 +48,7 @@ class Session {
   static Future<void> clear() async {
     _startedThisRun = false;
     try {
-      final File marker =
-          File('${await HostPaths.appSupport()}/$_markerName');
+      final File marker = File('${await HostPaths.appSupport()}/$_markerName');
       if (marker.existsSync()) marker.deleteSync();
     } on Object {
       // Nothing to do: the worst case is an offer to resume something that is

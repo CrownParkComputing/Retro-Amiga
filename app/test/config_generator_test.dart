@@ -8,18 +8,20 @@ import 'package:uae4arm2026/data/emulator_settings.dart';
 /// so it could not be carried over as-is. Each correction is noted where it
 /// applies.
 String gen(EmulatorSettings settings) => ConfigGenerator.generate(
-      settings,
-      // Nothing in these tests touches the filesystem: paths are fictional.
-      isDirectoryPath: (String path) => false,
-      hasRdb: (String path) => true,
-    );
+  settings,
+  // Nothing in these tests touches the filesystem: paths are fictional.
+  isDirectoryPath: (String path) => false,
+  hasRdb: (String path) => true,
+);
 
 void main() {
   _hardfileTests();
   group('header and always-present keys', () {
     test('starts with the header the core expects', () {
-      expect(gen(const EmulatorSettings()),
-          startsWith(ConfigGenerator.generatedByHeader));
+      expect(
+        gen(const EmulatorSettings()),
+        startsWith(ConfigGenerator.generatedByHeader),
+      );
     });
 
     test('always writes use_gui=no', () {
@@ -35,8 +37,10 @@ void main() {
         expect(output, contains('floppy${i}type='));
       }
       expect(output, isNot(contains('floppy0=')));
-      expect(gen(const EmulatorSettings(floppy0: '/disks/game.adf')),
-          contains('floppy0=/disks/game.adf'));
+      expect(
+        gen(const EmulatorSettings(floppy0: '/disks/game.adf')),
+        contains('floppy0=/disks/game.adf'),
+      );
     });
 
     test('always writes sound and display keys', () {
@@ -57,8 +61,10 @@ void main() {
 
   group('cpu', () {
     test('writes the cpu model', () {
-      expect(gen(const EmulatorSettings(cpuModel: 68020)),
-          contains('cpu_model=68020'));
+      expect(
+        gen(const EmulatorSettings(cpuModel: 68020)),
+        contains('cpu_model=68020'),
+      );
     });
 
     test('writes booleans as true/false', () {
@@ -69,8 +75,10 @@ void main() {
 
     test('omits the fpu when there is none, writes it when there is', () {
       expect(gen(const EmulatorSettings()), isNot(contains('fpu_model=')));
-      expect(gen(const EmulatorSettings(fpuModel: 68882)),
-          contains('fpu_model=68882'));
+      expect(
+        gen(const EmulatorSettings(fpuModel: 68882)),
+        contains('fpu_model=68882'),
+      );
     });
 
     test('omits jit keys when the cache is off, writes them when on', () {
@@ -78,8 +86,9 @@ void main() {
       expect(off, isNot(contains('cachesize=')));
       expect(off, isNot(contains('compfpu=')));
 
-      final String on =
-          gen(const EmulatorSettings(jitCacheSize: 8192, jitFpu: true));
+      final String on = gen(
+        const EmulatorSettings(jitCacheSize: 8192, jitFpu: true),
+      );
       expect(on, contains('cachesize=8192'));
       expect(on, contains('compfpu=true'));
     });
@@ -87,8 +96,9 @@ void main() {
     test('forces cpu_compatible off when jit is on', () {
       // The pairing makes self-modifying code crawl. The core only
       // auto-disables it for 68040+, so the generator does it for all.
-      final String output = gen(const EmulatorSettings(
-          cpuCompatible: true, jitCacheSize: 8192));
+      final String output = gen(
+        const EmulatorSettings(cpuCompatible: true, jitCacheSize: 8192),
+      );
       expect(output, contains('cpu_compatible=false'));
     });
   });
@@ -108,11 +118,15 @@ void main() {
 
     test('rtg swaps in the rtg resolution', () {
       expect(
-          gen(const EmulatorSettings(
-              useRtg: true, rtgWidth: 1920, rtgHeight: 1080)),
-          contains('gfx_width=1920'));
-      expect(gen(const EmulatorSettings(gfxWidth: 720)),
-          contains('gfx_width=720'));
+        gen(
+          const EmulatorSettings(useRtg: true, rtgWidth: 1920, rtgHeight: 1080),
+        ),
+        contains('gfx_width=1920'),
+      );
+      expect(
+        gen(const EmulatorSettings(gfxWidth: 720)),
+        contains('gfx_width=720'),
+      );
     });
   });
 
@@ -124,8 +138,10 @@ void main() {
     });
 
     test('writes the rom when set', () {
-      expect(gen(const EmulatorSettings(romFile: '/path/kick.rom')),
-          contains('kickstart_rom_file=/path/kick.rom'));
+      expect(
+        gen(const EmulatorSettings(romFile: '/path/kick.rom')),
+        contains('kickstart_rom_file=/path/kick.rom'),
+      );
     });
   });
 
@@ -135,36 +151,55 @@ void main() {
     });
 
     test('writes cdimage with the ,image suffix the core needs', () {
-      expect(gen(const EmulatorSettings(cdImage: '/path/game.iso')),
-          contains('cdimage0=/path/game.iso,image'));
+      expect(
+        gen(const EmulatorSettings(cdImage: '/path/game.iso')),
+        contains('cdimage0=/path/game.iso,image'),
+      );
     });
 
     test('does not double the ,image suffix', () {
-      expect(gen(const EmulatorSettings(cdImage: '/path/game.iso,image')),
-          contains('cdimage0=/path/game.iso,image'));
+      expect(
+        gen(const EmulatorSettings(cdImage: '/path/game.iso,image')),
+        contains('cdimage0=/path/game.iso,image'),
+      );
     });
 
     test('accepts every cd format the core can actually mount', () {
       // The launcher this replaces allowed only iso and chd, so a .cue was
       // dropped despite blkdev_cdimage.cpp having a parser for it.
-      for (final String ext in <String>['cue', 'ccd', 'mds', 'nrg', 'chd', 'iso']) {
-        expect(gen(EmulatorSettings(cdImage: '/path/game.$ext')),
-            contains('cdimage0=/path/game.$ext,image'),
-            reason: '.$ext is mountable by the core and must survive');
+      for (final String ext in <String>[
+        'cue',
+        'ccd',
+        'mds',
+        'nrg',
+        'chd',
+        'iso',
+      ]) {
+        expect(
+          gen(EmulatorSettings(cdImage: '/path/game.$ext')),
+          contains('cdimage0=/path/game.$ext,image'),
+          reason: '.$ext is mountable by the core and must survive',
+        );
       }
     });
 
     test('still drops a path that is not a cd image at all', () {
-      expect(gen(const EmulatorSettings(cdImage: '/path/notes.txt')),
-          isNot(contains('cdimage0=')));
+      expect(
+        gen(const EmulatorSettings(cdImage: '/path/notes.txt')),
+        isNot(contains('cdimage0=')),
+      );
     });
 
     test('the cd consoles declare an absent disc rather than none at all', () {
       // Without this the BIOS loops.
-      expect(gen(EmulatorSettings.fromModel(AmigaModel.cd32)),
-          contains('cdimage0_present=false'));
-      expect(gen(EmulatorSettings.fromModel(AmigaModel.cdtv)),
-          contains('cdimage0_present=false'));
+      expect(
+        gen(EmulatorSettings.fromModel(AmigaModel.cd32)),
+        contains('cdimage0_present=false'),
+      );
+      expect(
+        gen(EmulatorSettings.fromModel(AmigaModel.cdtv)),
+        contains('cdimage0_present=false'),
+      );
     });
   });
 
@@ -174,8 +209,9 @@ void main() {
       // onscreen_joystick=true. The generator forces the core's own on-screen
       // controls off unconditionally, because the host draws them; that is
       // the shipping behaviour and the test contradicts it.
-      final String output =
-          gen(const EmulatorSettings(joyport1: 'onscreen_joy'));
+      final String output = gen(
+        const EmulatorSettings(joyport1: 'onscreen_joy'),
+      );
       expect(output, contains('joyport1=joy1'));
       expect(output, contains('amiberry.android_joyport1=onscreen_joy'));
       expect(output, contains('amiberry.touch_settings_version=1'));
@@ -194,10 +230,14 @@ void main() {
     test('a cd32 puts port 1 in cd32 pad mode', () {
       // Without this, CD32 titles polling the pad's shift register see no
       // usable controller at all, not merely fewer buttons.
-      expect(gen(EmulatorSettings.fromModel(AmigaModel.cd32)),
-          contains('joyport1mode=cd32joy'));
-      expect(gen(EmulatorSettings.fromModel(AmigaModel.a1200)),
-          isNot(contains('joyport1mode=')));
+      expect(
+        gen(EmulatorSettings.fromModel(AmigaModel.cd32)),
+        contains('joyport1mode=cd32joy'),
+      );
+      expect(
+        gen(EmulatorSettings.fromModel(AmigaModel.a1200)),
+        isNot(contains('joyport1mode=')),
+      );
     });
   });
 
@@ -211,24 +251,28 @@ void main() {
       expect(output, contains('filesystem2=rw,DH0:WB:"/games/WB",0'));
     });
 
-    test('an rdb hardfile gets auto geometry, and real ide on ide machines',
-        () {
-      final String output = ConfigGenerator.generate(
-        EmulatorSettings.fromModel(AmigaModel.a1200)
-            .copyWith(hardDrives: <String>['/games/wb.hdf']),
-        isDirectoryPath: (String path) => false,
-        hasRdb: (String path) => true,
-      );
-      expect(output, contains('0,0,0'));
-      expect(output, contains('ide0'));
-    });
+    test(
+      'an rdb hardfile gets auto geometry, and real ide on ide machines',
+      () {
+        final String output = ConfigGenerator.generate(
+          EmulatorSettings.fromModel(
+            AmigaModel.a1200,
+          ).copyWith(hardDrives: <String>['/games/wb.hdf']),
+          isDirectoryPath: (String path) => false,
+          hasRdb: (String path) => true,
+        );
+        expect(output, contains('0,0,0'));
+        expect(output, contains('ide0'));
+      },
+    );
 
     test('an rdb-less hardfile falls back to uaehf with explicit geometry', () {
       // Real IDE cannot discover a drive with no partition table, and the
       // core needs a CHS to synthesise one.
       final String output = ConfigGenerator.generate(
-        EmulatorSettings.fromModel(AmigaModel.a1200)
-            .copyWith(hardDrives: <String>['/games/raw.hdf']),
+        EmulatorSettings.fromModel(
+          AmigaModel.a1200,
+        ).copyWith(hardDrives: <String>['/games/raw.hdf']),
         isDirectoryPath: (String path) => false,
         hasRdb: (String path) => false,
       );
@@ -239,7 +283,8 @@ void main() {
     test('only the first drive is bootable', () {
       final String output = ConfigGenerator.generate(
         const EmulatorSettings(
-            hardDrives: <String>['/games/one.hdf', '/games/two.hdf']),
+          hardDrives: <String>['/games/one.hdf', '/games/two.hdf'],
+        ),
         isDirectoryPath: (String path) => false,
         hasRdb: (String path) => true,
       );
@@ -262,8 +307,9 @@ void main() {
     });
 
     test('a cd32 is a 24-bit 68020 with no jit and no floppy', () {
-      final EmulatorSettings settings =
-          EmulatorSettings.fromModel(AmigaModel.cd32);
+      final EmulatorSettings settings = EmulatorSettings.fromModel(
+        AmigaModel.cd32,
+      );
       expect(settings.jitCacheSize, 0);
       expect(settings.floppy0Type, -1);
       final String output = gen(settings);
@@ -286,8 +332,16 @@ void main() {
       // The core's --model handler is the authority; a typo here boots the
       // wrong machine silently.
       const Set<String> known = <String>{
-        'A500', 'A500P', 'A600', 'A1000', 'A2000',
-        'A1200', 'A3000', 'A4000', 'CD32', 'CDTV',
+        'A500',
+        'A500P',
+        'A600',
+        'A1000',
+        'A2000',
+        'A1200',
+        'A3000',
+        'A4000',
+        'CD32',
+        'CDTV',
       };
       for (final AmigaModel model in AmigaModel.values) {
         expect(known, contains(model.cmdArg));
@@ -298,14 +352,24 @@ void main() {
   group('floppy count', () {
     test('counts the highest enabled drive', () {
       expect(gen(const EmulatorSettings()), contains('nr_floppies=1'));
-      expect(gen(const EmulatorSettings(floppy1Type: 0)),
-          contains('nr_floppies=2'));
       expect(
-          gen(const EmulatorSettings(
-              floppy1Type: 0, floppy2Type: 0, floppy3Type: 0)),
-          contains('nr_floppies=4'));
-      expect(gen(const EmulatorSettings(floppy0Type: -1)),
-          contains('nr_floppies=0'));
+        gen(const EmulatorSettings(floppy1Type: 0)),
+        contains('nr_floppies=2'),
+      );
+      expect(
+        gen(
+          const EmulatorSettings(
+            floppy1Type: 0,
+            floppy2Type: 0,
+            floppy3Type: 0,
+          ),
+        ),
+        contains('nr_floppies=4'),
+      );
+      expect(
+        gen(const EmulatorSettings(floppy0Type: -1)),
+        contains('nr_floppies=0'),
+      );
     });
   });
 }
@@ -335,33 +399,33 @@ void _hardfileTests() {
       // and never boots.
       final EmulatorSettings settings =
           EmulatorSettings.fromModel(AmigaModel.a1200).copyWith(
-        hardDrives: <String>[
-          '/ags/Workbench.hdf',
-          '/ags/Games.hdf',
-          '/ags/Music.hdf',
-          '/ags/Work.hdf',
-        ],
-      );
-      final List<String> lines = ConfigGenerator.generate(settings)
-          .split('\n')
-          .where((String l) => l.startsWith('hardfile2='))
-          .toList();
+            hardDrives: <String>[
+              '/ags/Workbench.hdf',
+              '/ags/Games.hdf',
+              '/ags/Music.hdf',
+              '/ags/Work.hdf',
+            ],
+          );
+      final List<String> lines = ConfigGenerator.generate(
+        settings,
+      ).split('\n').where((String l) => l.startsWith('hardfile2=')).toList();
 
       expect(lines, hasLength(4));
-      expect(lines.every((String l) => l.contains(',uae')), isTrue,
-          reason: 'every drive should be on the UAE controller');
+      expect(
+        lines.every((String l) => l.contains(',uae')),
+        isTrue,
+        reason: 'every drive should be on the UAE controller',
+      );
       expect(lines.any((String l) => l.contains(',ide')), isFalse);
     });
 
     test('two drives still use IDE on a machine that has one', () {
-      final EmulatorSettings settings =
-          EmulatorSettings.fromModel(AmigaModel.a1200).copyWith(
-        hardDrives: <String>['/hd/one.hdf', '/hd/two.hdf'],
-      );
-      final List<String> lines = ConfigGenerator.generate(settings)
-          .split('\n')
-          .where((String l) => l.startsWith('hardfile2='))
-          .toList();
+      final EmulatorSettings settings = EmulatorSettings.fromModel(
+        AmigaModel.a1200,
+      ).copyWith(hardDrives: <String>['/hd/one.hdf', '/hd/two.hdf']);
+      final List<String> lines = ConfigGenerator.generate(
+        settings,
+      ).split('\n').where((String l) => l.startsWith('hardfile2=')).toList();
       expect(lines, hasLength(2));
       expect(lines.every((String l) => l.contains(',ide')), isTrue);
     });

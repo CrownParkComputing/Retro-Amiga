@@ -7,8 +7,9 @@ import 'package:uae4arm2026/screens/guided_config_screen.dart';
 void main() {
   test('a WHDLoad setup gets 8MB of Z2 fast RAM', () {
     // Almost every slave expects it; a stock A1200 has none.
-    final EmulatorSettings whdload =
-        WizardMode.whdload.settingsFor(AmigaModel.a1200);
+    final EmulatorSettings whdload = WizardMode.whdload.settingsFor(
+      AmigaModel.a1200,
+    );
     expect(whdload.fastRam, 8);
 
     // And it reaches the config as Z2 fast, not Z3.

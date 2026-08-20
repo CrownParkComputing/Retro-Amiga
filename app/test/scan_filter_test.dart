@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:uae4arm2026/data/file_category.dart';
 import 'package:uae4arm2026/data/media_library.dart';
 
 void main() {
@@ -24,8 +25,10 @@ void main() {
     expect(MediaLibrary.looksLikeModule(write('mod.axel_f', module)), isTrue);
 
     // Too short to hold the tag at all.
-    expect(MediaLibrary.looksLikeModule(write('mod.tiny', <int>[1, 2, 3])),
-        isFalse);
+    expect(
+      MediaLibrary.looksLikeModule(write('mod.tiny', <int>[1, 2, 3])),
+      isFalse,
+    );
   });
 
   test('mod.rs is code, mod.axel_f is a tune', () {
@@ -60,5 +63,10 @@ void main() {
       MediaLibrary.looksLikeKickstart(write('vgabios.bin', <int>[0x55, 0xAA])),
       isFalse,
     );
+  });
+
+  test('legacy DMS and DSK images are not imported into the library', () {
+    expect(FileCategory.fromPath('/drop/old.dms'), isNull);
+    expect(FileCategory.fromPath('/drop/old.dsk'), isNull);
   });
 }

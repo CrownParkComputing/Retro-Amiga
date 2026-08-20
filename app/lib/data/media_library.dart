@@ -1,7 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
-
 
 import 'package:flutter/services.dart';
 
@@ -193,6 +193,14 @@ class MediaLibrary {
 
   static const String _indexFile = 'media_index.json';
 
+  /// A scan is the commit point for media changes. Screens subscribe here so
+  /// renaming or deleting a file in Files immediately updates Music,
+  /// Workbench counts and Settings without each panel inventing its own cache.
+  static final StreamController<MediaIndex> _changes =
+      StreamController<MediaIndex>.broadcast();
+
+  static Stream<MediaIndex> get changes => _changes.stream;
+
   /// Directories worth trying before the user points anywhere. Android keeps
   /// shared storage under /sdcard; iOS has only the app's own Documents, which
   /// is where files dropped in through the Files app land.
@@ -308,7 +316,9 @@ class MediaLibrary {
     final String lower = path.toLowerCase();
     if (_skipAnywhere.any(lower.contains)) return true;
     final int lastSlash = lower.lastIndexOf('/');
-    final String element = lastSlash < 0 ? lower : lower.substring(lastSlash + 1);
+    final String element = lastSlash < 0
+        ? lower
+        : lower.substring(lastSlash + 1);
     if (_skipDirectories.contains(element)) return true;
     if (!atRoot) return false;
     final int slash = lower.lastIndexOf('/');
@@ -353,9 +363,9 @@ class MediaLibrary {
     );
 
     final MediaIndex index = MediaIndex(roots: scanRoots, files: found);
-    AppLog.info('scan',
-        '${found.length} files under ${scanRoots.join(", ")}');
+    AppLog.info('scan', '${found.length} files under ${scanRoots.join(", ")}');
     await _persist(index);
+    if (!_changes.isClosed) _changes.add(index);
     return index;
   }
 
@@ -384,7 +394,17 @@ class MediaLibrary {
 
         // "AMIROMTYPE1", Cloanto's encrypted ROM header.
         const List<int> amiromtype1 = <int>[
-          0x41, 0x4D, 0x49, 0x52, 0x4F, 0x4D, 0x54, 0x59, 0x50, 0x45, 0x31,
+          0x41,
+          0x4D,
+          0x49,
+          0x52,
+          0x4F,
+          0x4D,
+          0x54,
+          0x59,
+          0x50,
+          0x45,
+          0x31,
         ];
         if (head.length >= amiromtype1.length) {
           bool matched = true;
@@ -409,8 +429,19 @@ class MediaLibrary {
   /// the room. Everything not listed here - adf, hdf, lha, rom - names an
   /// Amiga file wherever it is found.
   static const Set<String> _ambiguous = <String>{
-    'img', 'st', 'dsk', 'ima', 'bin', 'iso', 'chd', 'cue', 'ccd', 'mds',
-    'nrg', 'vhd', 'hdi',
+    'img',
+    'st',
+    'dsk',
+    'ima',
+    'bin',
+    'iso',
+    'chd',
+    'cue',
+    'ccd',
+    'mds',
+    'nrg',
+    'vhd',
+    'hdi',
   };
 
   static bool _isAmbiguousExtension(String path) {
@@ -423,16 +454,44 @@ class MediaLibrary {
   /// round, rather than because of its extension.
   static bool _isPrefixNamed(String path) {
     final int slash = path.lastIndexOf('/');
-    final String name =
-        (slash < 0 ? path : path.substring(slash + 1)).toLowerCase();
+    final String name = (slash < 0 ? path : path.substring(slash + 1))
+        .toLowerCase();
     return name.startsWith('mod.') || name.startsWith('med.');
   }
 
   /// Suffixes that mean "this mod. is somebody's source file".
   static const Set<String> _codeSuffixes = <String>{
-    'rs', 'js', 'ts', 'py', 'c', 'h', 'cc', 'cpp', 'hpp', 'go', 'rb', 'php',
-    'java', 'kt', 'dart', 'swift', 'sh', 'md', 'txt', 'json', 'yaml', 'yml',
-    'toml', 'lock', 'info', 'html', 'css', 'xml', 'cmake', 'am', 'in',
+    'rs',
+    'js',
+    'ts',
+    'py',
+    'c',
+    'h',
+    'cc',
+    'cpp',
+    'hpp',
+    'go',
+    'rb',
+    'php',
+    'java',
+    'kt',
+    'dart',
+    'swift',
+    'sh',
+    'md',
+    'txt',
+    'json',
+    'yaml',
+    'yml',
+    'toml',
+    'lock',
+    'info',
+    'html',
+    'css',
+    'xml',
+    'cmake',
+    'am',
+    'in',
   };
 
   /// Whether a file named the Amiga way round - mod.axel_f - is really a tune.
@@ -445,8 +504,7 @@ class MediaLibrary {
   /// as music.
   static bool isNamedModule(String path, int size) {
     final int dot = path.lastIndexOf('.');
-    final String suffix =
-        dot < 0 ? '' : path.substring(dot + 1).toLowerCase();
+    final String suffix = dot < 0 ? '' : path.substring(dot + 1).toLowerCase();
     if (_codeSuffixes.contains(suffix)) return false;
     if (size < 1084) return false;
     return true;
@@ -460,8 +518,18 @@ class MediaLibrary {
   /// called.
   static bool looksLikeModule(File file) {
     const List<String> tags = <String>[
-      'M.K.', 'M!K!', 'M&K!', 'FLT4', 'FLT8', '4CHN', '6CHN', '8CHN',
-      'CD81', 'OKTA', '16CN', '32CN',
+      'M.K.',
+      'M!K!',
+      'M&K!',
+      'FLT4',
+      'FLT8',
+      '4CHN',
+      '6CHN',
+      '8CHN',
+      'CD81',
+      'OKTA',
+      '16CN',
+      '32CN',
     ];
     try {
       final RandomAccessFile handle = file.openSync();
@@ -625,5 +693,40 @@ class MediaLibrary {
     } on Exception {
       return const MediaIndex.empty();
     }
+  }
+
+  /// Renames a user-owned media file in place. The extension is not forced or
+  /// rewritten: module names such as `mod.title` are meaningful on Amiga and
+  /// must remain usable. Callers supply only a basename so a Files action can
+  /// never move a file outside its scanned directory.
+  static Future<MediaFile> rename(MediaFile file, String newName) async {
+    final String name = newName.trim();
+    if (name.isEmpty ||
+        name == '.' ||
+        name == '..' ||
+        name.contains('/') ||
+        name.contains('\\')) {
+      throw const FormatException('Enter a file name without folders.');
+    }
+    final File source = File(file.path);
+    if (!source.existsSync()) {
+      throw FileSystemException('File not found', file.path);
+    }
+    final String targetPath = '${file.directory}/$name';
+    if (targetPath != file.path && File(targetPath).existsSync()) {
+      throw const FileSystemException('A file with that name already exists.');
+    }
+    final File target = await source.rename(targetPath);
+    return MediaFile(
+      path: target.path,
+      category: file.category,
+      size: target.lengthSync(),
+    );
+  }
+
+  /// Deletes one user media file. The UI confirms before calling this method.
+  static Future<void> delete(MediaFile file) async {
+    final File target = File(file.path);
+    if (target.existsSync()) await target.delete();
   }
 }

@@ -25,7 +25,8 @@ class LogEntry {
       '${at.second.toString().padLeft(2, '0')}';
 
   @override
-  String toString() => '$time  ${level.name.toUpperCase().padRight(5)}  '
+  String toString() =>
+      '$time  ${level.name.toUpperCase().padRight(5)}  '
       '${source.padRight(9)}  $message';
 }
 

@@ -3,10 +3,45 @@ import 'package:flutter/material.dart';
 import '../emulator.dart';
 import '../theme/amiga_theme.dart';
 import '../widgets/amiga_logo.dart';
+import 'logs_panel.dart';
 
-/// What this is, and what is running underneath it.
+/// What this is, and what is running underneath it -- with the logs behind
+/// a second tab, because "what went wrong" belongs next to "what is this".
 class AboutPanel extends StatelessWidget {
   const AboutPanel({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 2,
+      child: Column(
+        children: <Widget>[
+          const TabBar(
+            tabs: <Widget>[
+              Tab(text: 'About'),
+              Tab(text: 'Logs'),
+            ],
+            labelColor: AmigaColors.text,
+            unselectedLabelColor: AmigaColors.textDim,
+            indicatorColor: AmigaColors.workbenchOrange,
+            dividerColor: AmigaColors.panelBorder,
+          ),
+          const Expanded(
+            child: TabBarView(
+              children: <Widget>[
+                _AboutBody(),
+                LogsPanel(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AboutBody extends StatelessWidget {
+  const _AboutBody();
 
   @override
   Widget build(BuildContext context) {
@@ -21,7 +56,7 @@ class AboutPanel extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 const Text(
-                  'Amiga-Retro',
+                  'Retro-Amiga',
                   style: TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.w700,
@@ -44,7 +79,8 @@ class AboutPanel extends StatelessWidget {
         const SizedBox(height: 22),
         const _Section(
           title: 'The emulator',
-          body: 'Amiberry, which is WinUAE\'s core with a Linux and handheld '
+          body:
+              'Amiberry, which is WinUAE\'s core with a Linux and handheld '
               'front end. It is vendored and built for each platform in turn, '
               'because they do not agree on much: iOS cannot JIT at all, so '
               'that build compiles the JIT out entirely rather than switching '
@@ -52,14 +88,16 @@ class AboutPanel extends StatelessWidget {
         ),
         _Section(
           title: 'The front end',
-          body: 'Flutter, everywhere - Android, iOS, macOS, Linux and Windows '
+          body:
+              'Flutter, everywhere - Android, iOS, macOS, Linux and Windows '
               'from one codebase. The emulator draws its own screen natively; '
               'nothing is copied through Dart, so the picture costs the same '
               'as it does in Amiberry proper.',
         ),
         _Section(
           title: 'What you need to supply',
-          body: 'A Kickstart ROM, for full compatibility. The app boots '
+          body:
+              'A Kickstart ROM, for full compatibility. The app boots '
               'without one using the bundled AROS ROM, but AROS is a '
               'reimplementation rather than a clone, so most WHDLoad games '
               'and some floppies still want the real thing. Kickstarts are '
@@ -69,7 +107,8 @@ class AboutPanel extends StatelessWidget {
         ),
         _Section(
           title: 'AROS',
-          body: 'The fallback Kickstart is the AROS m68k ROM, an independent '
+          body:
+              'The fallback Kickstart is the AROS m68k ROM, an independent '
               'open reimplementation of AmigaOS, used here under the AROS '
               'Public License. Source and the licence text are at '
               'aros.sourceforge.io. WHDLoad, JST and AmiQuit are Bert Jahn\'s '
@@ -77,7 +116,8 @@ class AboutPanel extends StatelessWidget {
         ),
         _Section(
           title: 'Thanks',
-          body: 'Amiberry, WinUAE, and the people who wrote the demos that '
+          body:
+              'Amiberry, WinUAE, and the people who wrote the demos that '
               'made anyone want a machine like this in the first place.',
         ),
       ],

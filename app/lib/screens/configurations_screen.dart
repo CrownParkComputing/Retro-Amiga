@@ -137,8 +137,9 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
                     spacing: gap,
                     runSpacing: gap,
                     children: <Widget>[
-                      for (final WizardMode m in WizardMode.values
-                          .where((WizardMode m) => m != WizardMode.edit))
+                      for (final WizardMode m in WizardMode.values.where(
+                        (WizardMode m) => m != WizardMode.edit,
+                      ))
                         SizedBox(
                           width: tile,
                           child: Material(
@@ -160,14 +161,15 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
                                       child: Image.asset(
                                         m.artworkPath,
                                         fit: BoxFit.contain,
-                                        errorBuilder: (
-                                          BuildContext c,
-                                          Object e,
-                                          StackTrace? s,
-                                        ) => const Icon(
-                                          Icons.folder_outlined,
-                                          size: 22,
-                                        ),
+                                        errorBuilder:
+                                            (
+                                              BuildContext c,
+                                              Object e,
+                                              StackTrace? s,
+                                            ) => const Icon(
+                                              Icons.folder_outlined,
+                                              size: 22,
+                                            ),
                                       ),
                                     ),
                                     const SizedBox(width: 12),
@@ -252,20 +254,20 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
             // and a shelf where the only visible action is "play" hides the
             // half of the screen's job that is keeping the shelf tidy.
             if (!_loading && _configs.isNotEmpty) ...<Widget>[
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 4, 16, 2),
-                child: Text(
-                  'Tap to play · Long press to edit or delete',
-                  style: TextStyle(fontSize: 11, color: AmigaColors.textDim),
-                ),
-              ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(12, 2, 12, 4),
+                padding: const EdgeInsets.fromLTRB(12, 6, 12, 2),
                 child: AlphabetFilter(
                   initials: _initials,
                   selected: _initial,
                   onSelected: (String? value) =>
                       setState(() => _initial = value),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 2, 16, 2),
+                child: Text(
+                  'Tap to play · Long press to edit or delete',
+                  style: TextStyle(fontSize: 11, color: AmigaColors.textDim),
                 ),
               ),
             ],
@@ -283,12 +285,12 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
                       child: ListView.separated(
                         padding: const EdgeInsets.fromLTRB(12, 2, 12, 96),
                         itemCount: _visible.length,
-                        separatorBuilder:
-                            (BuildContext context, int index) => const Divider(
-                          height: 1,
-                          indent: 56,
-                          color: Color(0x14FFFFFF),
-                        ),
+                        separatorBuilder: (BuildContext context, int index) =>
+                            const Divider(
+                              height: 1,
+                              indent: 56,
+                              color: Color(0x14FFFFFF),
+                            ),
                         itemBuilder: (BuildContext context, int i) => _SetupRow(
                           config: _visible[i],
                           onPlay: () => _play(_visible[i]),
@@ -514,7 +516,7 @@ class _Masthead extends StatelessWidget {
               const AmigaLogo(height: 32),
               const SizedBox(width: 12),
               Text(
-                'Amiga-Retro',
+                'Retro-Amiga',
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.w600,
                 ),

@@ -21,8 +21,9 @@ class HostPaths {
   static Future<String> appSupport() async {
     final String? cached = _appSupport;
     if (cached != null) return cached;
-    final String? path =
-        await _channel.invokeMethod<String>('appSupportDirectory');
+    final String? path = await _channel.invokeMethod<String>(
+      'appSupportDirectory',
+    );
     if (path == null || path.isEmpty) {
       throw StateError('the host returned no application support directory');
     }
@@ -34,8 +35,9 @@ class HostPaths {
   static Future<String> documents() async {
     final String? cached = _documents;
     if (cached != null) return cached;
-    final String? path =
-        await _channel.invokeMethod<String>('documentsDirectory');
+    final String? path = await _channel.invokeMethod<String>(
+      'documentsDirectory',
+    );
     if (path == null || path.isEmpty) {
       throw StateError('the host returned no documents directory');
     }
@@ -65,8 +67,9 @@ class HostPaths {
 
     // documents() is <container>/Documents, so its parent is the container we
     // are running in now.
-    final String container =
-        File(await documents()).parent.path; // trims /Documents
+    final String container = File(
+      await documents(),
+    ).parent.path; // trims /Documents
     final String repaired = '$container/${match.group(1)}';
     if (FileSystemEntity.typeSync(repaired) == FileSystemEntityType.notFound) {
       // Nothing recovered; leave the original so the failure names the path

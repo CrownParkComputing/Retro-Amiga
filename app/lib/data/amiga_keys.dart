@@ -1,3 +1,5 @@
+import 'package:flutter/services.dart';
+
 /// A key on the Amiga keyboard, as the hardware numbers it.
 ///
 /// The code is a raw Amiga key code - the value the keyboard itself puts on
@@ -98,6 +100,115 @@ class AmigaKeys {
       AmigaKey('Y', 0x15),
       AmigaKey('Z', 0x31),
     ],
+  };
+
+  /// A physical host key, as the raw Amiga key code the core takes, or null
+  /// for keys the Amiga does not have.
+  ///
+  /// Physical, not logical: the Amiga keyboard is a matrix, so what matters
+  /// is where the key IS, not what the host's layout says it means. This is
+  /// the shared route for every platform with a real keyboard -- the Linux
+  /// desktop, a Bluetooth keyboard on a phone, an iPad's cover.
+  static int? fromPhysical(PhysicalKeyboardKey key) => _physical[key];
+
+  static final Map<PhysicalKeyboardKey, int> _physical =
+      <PhysicalKeyboardKey, int>{
+    PhysicalKeyboardKey.backquote: 0x00,
+    PhysicalKeyboardKey.digit1: 0x01,
+    PhysicalKeyboardKey.digit2: 0x02,
+    PhysicalKeyboardKey.digit3: 0x03,
+    PhysicalKeyboardKey.digit4: 0x04,
+    PhysicalKeyboardKey.digit5: 0x05,
+    PhysicalKeyboardKey.digit6: 0x06,
+    PhysicalKeyboardKey.digit7: 0x07,
+    PhysicalKeyboardKey.digit8: 0x08,
+    PhysicalKeyboardKey.digit9: 0x09,
+    PhysicalKeyboardKey.digit0: 0x0A,
+    PhysicalKeyboardKey.minus: 0x0B,
+    PhysicalKeyboardKey.equal: 0x0C,
+    PhysicalKeyboardKey.backslash: 0x0D,
+    PhysicalKeyboardKey.keyQ: 0x10,
+    PhysicalKeyboardKey.keyW: 0x11,
+    PhysicalKeyboardKey.keyE: 0x12,
+    PhysicalKeyboardKey.keyR: 0x13,
+    PhysicalKeyboardKey.keyT: 0x14,
+    PhysicalKeyboardKey.keyY: 0x15,
+    PhysicalKeyboardKey.keyU: 0x16,
+    PhysicalKeyboardKey.keyI: 0x17,
+    PhysicalKeyboardKey.keyO: 0x18,
+    PhysicalKeyboardKey.keyP: 0x19,
+    PhysicalKeyboardKey.bracketLeft: 0x1A,
+    PhysicalKeyboardKey.bracketRight: 0x1B,
+    PhysicalKeyboardKey.keyA: 0x20,
+    PhysicalKeyboardKey.keyS: 0x21,
+    PhysicalKeyboardKey.keyD: 0x22,
+    PhysicalKeyboardKey.keyF: 0x23,
+    PhysicalKeyboardKey.keyG: 0x24,
+    PhysicalKeyboardKey.keyH: 0x25,
+    PhysicalKeyboardKey.keyJ: 0x26,
+    PhysicalKeyboardKey.keyK: 0x27,
+    PhysicalKeyboardKey.keyL: 0x28,
+    PhysicalKeyboardKey.semicolon: 0x29,
+    PhysicalKeyboardKey.quote: 0x2A,
+    PhysicalKeyboardKey.keyZ: 0x31,
+    PhysicalKeyboardKey.keyX: 0x32,
+    PhysicalKeyboardKey.keyC: 0x33,
+    PhysicalKeyboardKey.keyV: 0x34,
+    PhysicalKeyboardKey.keyB: 0x35,
+    PhysicalKeyboardKey.keyN: 0x36,
+    PhysicalKeyboardKey.keyM: 0x37,
+    PhysicalKeyboardKey.comma: 0x38,
+    PhysicalKeyboardKey.period: 0x39,
+    PhysicalKeyboardKey.slash: 0x3A,
+    PhysicalKeyboardKey.space: 0x40,
+    PhysicalKeyboardKey.backspace: 0x41,
+    PhysicalKeyboardKey.tab: 0x42,
+    PhysicalKeyboardKey.enter: 0x44,
+    PhysicalKeyboardKey.escape: 0x45,
+    PhysicalKeyboardKey.delete: 0x46,
+    PhysicalKeyboardKey.arrowUp: 0x4C,
+    PhysicalKeyboardKey.arrowDown: 0x4D,
+    PhysicalKeyboardKey.arrowRight: 0x4E,
+    PhysicalKeyboardKey.arrowLeft: 0x4F,
+    PhysicalKeyboardKey.f1: 0x50,
+    PhysicalKeyboardKey.f2: 0x51,
+    PhysicalKeyboardKey.f3: 0x52,
+    PhysicalKeyboardKey.f4: 0x53,
+    PhysicalKeyboardKey.f5: 0x54,
+    PhysicalKeyboardKey.f6: 0x55,
+    PhysicalKeyboardKey.f7: 0x56,
+    PhysicalKeyboardKey.f8: 0x57,
+    PhysicalKeyboardKey.f9: 0x58,
+    PhysicalKeyboardKey.f10: 0x59,
+    // The Amiga keys the host keyboard has no name for: HELP is where End
+    // is, and the Amiga keys sit on the Windows/Super pair.
+    PhysicalKeyboardKey.end: 0x5F,
+    PhysicalKeyboardKey.shiftLeft: 0x60,
+    PhysicalKeyboardKey.shiftRight: 0x61,
+    PhysicalKeyboardKey.capsLock: 0x62,
+    PhysicalKeyboardKey.controlLeft: 0x63,
+    PhysicalKeyboardKey.controlRight: 0x63,
+    PhysicalKeyboardKey.altLeft: 0x64,
+    PhysicalKeyboardKey.altRight: 0x65,
+    PhysicalKeyboardKey.metaLeft: 0x66,
+    PhysicalKeyboardKey.metaRight: 0x67,
+    // Numpad, for the games that use it.
+    PhysicalKeyboardKey.numpad0: 0x0F,
+    PhysicalKeyboardKey.numpad1: 0x1D,
+    PhysicalKeyboardKey.numpad2: 0x1E,
+    PhysicalKeyboardKey.numpad3: 0x1F,
+    PhysicalKeyboardKey.numpad4: 0x2D,
+    PhysicalKeyboardKey.numpad5: 0x2E,
+    PhysicalKeyboardKey.numpad6: 0x2F,
+    PhysicalKeyboardKey.numpad7: 0x3D,
+    PhysicalKeyboardKey.numpad8: 0x3E,
+    PhysicalKeyboardKey.numpad9: 0x3F,
+    PhysicalKeyboardKey.numpadDecimal: 0x3C,
+    PhysicalKeyboardKey.numpadEnter: 0x43,
+    PhysicalKeyboardKey.numpadSubtract: 0x4A,
+    PhysicalKeyboardKey.numpadAdd: 0x5E,
+    PhysicalKeyboardKey.numpadDivide: 0x5C,
+    PhysicalKeyboardKey.numpadMultiply: 0x5D,
   };
 
   /// The key with [code], or null. Used when reading back a saved button: a

@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../data/app_log.dart';
 import '../theme/amiga_theme.dart';
+import '../ffi/amiga_core.dart';
 
 /// What the app has been doing.
 ///
@@ -24,6 +26,45 @@ class _LogsPanelState extends State<LogsPanel> {
   final ScrollController _scroll = ScrollController();
   bool _errorsOnly = false;
 
+  /// The EMULATOR's own log, as opposed to the app's.
+  ///
+  /// With the core running inside this process it writes a log file, and this
+  /// is the only place anyone can read it on the device itself -- logcat needs
+  /// a computer and a cable, and "it just says Starting the Amiga" is not
+  /// something you can debug from the app's own messages. See
+  /// AmigaCore.logfilePath.
+  bool _coreLog = false;
+  String _coreText = '';
+  Timer? _coreTimer;
+
+  Future<void> _readCoreLog() async {
+    final String? path = AmigaCore.open()?.logfilePath;
+    if (path == null) {
+      if (mounted) {
+        setState(() {
+          _coreText = 'The core is not writing a log file. It starts one when '
+              'a game launches.';
+        });
+      }
+      return;
+    }
+    try {
+      final File file = File(path);
+      if (!file.existsSync()) {
+        if (mounted) setState(() => _coreText = 'No log yet: \$path');
+        return;
+      }
+      final List<String> lines = await file.readAsLines();
+      // The tail is what matters; a whole session's log is megabytes.
+      final List<String> tail = lines.length > 400
+          ? lines.sublist(lines.length - 400)
+          : lines;
+      if (mounted) setState(() => _coreText = tail.join('\n'));
+    } catch (e) {
+      if (mounted) setState(() => _coreText = 'Could not read \$path: \$e');
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -34,6 +75,7 @@ class _LogsPanelState extends State<LogsPanel> {
 
   @override
   void dispose() {
+    _coreTimer?.cancel();
     _sub?.cancel();
     _scroll.dispose();
     super.dispose();
@@ -42,9 +84,7 @@ class _LogsPanelState extends State<LogsPanel> {
   List<LogEntry> get _visible {
     final List<LogEntry> all = AppLog.entries;
     if (!_errorsOnly) return all;
-    return all
-        .where((LogEntry e) => e.level != LogLevel.info)
-        .toList();
+    return all.where((LogEntry e) => e.level != LogLevel.info).toList();
   }
 
   static Color _colourFor(LogLevel level) {
@@ -58,10 +98,7 @@ class _LogsPanelState extends State<LogsPanel> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final List<LogEntry> entries = _visible;
-
+  Widget _header(List<LogEntry> entries) {
     return Column(
       children: <Widget>[
         Padding(
@@ -81,16 +118,36 @@ class _LogsPanelState extends State<LogsPanel> {
                 selected: _errorsOnly,
                 onSelected: (bool on) => setState(() => _errorsOnly = on),
               ),
+              const SizedBox(width: 8),
+              FilterChip(
+                label: const Text('Emulator'),
+                selected: _coreLog,
+                onSelected: (bool on) {
+                  setState(() => _coreLog = on);
+                  _coreTimer?.cancel();
+                  if (on) {
+                    _readCoreLog();
+                    // While a game is running the log grows; refreshing beats
+                    // asking the user to leave and come back.
+                    _coreTimer = Timer.periodic(
+                      const Duration(seconds: 2),
+                      (_) => _readCoreLog(),
+                    );
+                  }
+                },
+              ),
               const Spacer(),
               IconButton(
                 tooltip: 'Copy',
                 icon: const Icon(Icons.copy_all_outlined),
-                onPressed: () async {
-                  await Clipboard.setData(
-                    ClipboardData(text: AppLog.asText()),
-                  );
-                  if (!context.mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
+                onPressed: () {
+                  // Whichever log is on screen: copying the app's messages
+                  // while looking at the emulator's would be a trap.
+                  final String text = _coreLog ? _coreText : AppLog.asText();
+                  final ScaffoldMessengerState messenger =
+                      ScaffoldMessenger.of(context);
+                  Clipboard.setData(ClipboardData(text: text));
+                  messenger.showSnackBar(
                     const SnackBar(content: Text('Log copied.')),
                   );
                 },
@@ -104,6 +161,37 @@ class _LogsPanelState extends State<LogsPanel> {
           ),
         ),
         const Divider(height: 1, color: AmigaColors.panelBorder),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final List<LogEntry> entries = _visible;
+    if (_coreLog) {
+      return Column(
+        children: <Widget>[
+          _header(entries),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: SelectableText(
+                _coreText.isEmpty ? 'Reading...' : _coreText,
+                style: const TextStyle(
+                  color: AmigaColors.textDim,
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      children: <Widget>[
+        _header(entries),
         Expanded(
           child: entries.isEmpty
               ? const Center(

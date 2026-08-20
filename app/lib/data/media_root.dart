@@ -105,7 +105,9 @@ class MediaRoot {
       // The parent, because media sits in per-kind subfolders: it is
       // /sdcard/UAE4Arm we want, not /sdcard/UAE4Arm/floppies.
       final int slash = directory.lastIndexOf('/');
-      final String parent = slash <= 0 ? directory : directory.substring(0, slash);
+      final String parent = slash <= 0
+          ? directory
+          : directory.substring(0, slash);
       counts[parent] = (counts[parent] ?? 0) + 1;
     }
     if (counts.isEmpty) return null;
@@ -119,8 +121,9 @@ class MediaRoot {
   }
 
   static Future<Directory> folderFor(FileCategory category) async {
-    final Directory dir =
-        Directory('${await path()}/${folders[category] ?? 'Other'}');
+    final Directory dir = Directory(
+      '${await path()}/${folders[category] ?? 'Other'}',
+    );
     if (!dir.existsSync()) dir.createSync(recursive: true);
     return dir;
   }
@@ -193,8 +196,11 @@ class MediaImporter {
       }
     }
 
-    AppLog.info('import', 'into $root: $moved moved, $inPlace already there'
-        '${failed > 0 ? ', $failed failed' : ''}');
+    AppLog.info(
+      'import',
+      'into $root: $moved moved, $inPlace already there'
+          '${failed > 0 ? ', $failed failed' : ''}',
+    );
     final int extracted = await _extractArchives(index, root);
     if (extracted > 0) {
       AppLog.info('import', '$extracted disk images unpacked from zips');
@@ -276,8 +282,9 @@ class MediaImporter {
           if (owes) {
             // Something unrecognised is still inside: out of the way,
             // but not destroyed.
-            final Directory kept =
-                await MediaRoot.folderFor(FileCategory.archives);
+            final Directory kept = await MediaRoot.folderFor(
+              FileCategory.archives,
+            );
             source.renameSync('${kept.path}/${file.name}');
           } else {
             source.deleteSync();

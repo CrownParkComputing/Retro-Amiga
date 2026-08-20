@@ -14,8 +14,10 @@ File write(Directory dir, String name, List<int> bytes) {
   return file;
 }
 
-List<int> padded(List<int> head, int length) =>
-    <int>[...head, ...List<int>.filled(length - head.length, 0)];
+List<int> padded(List<int> head, int length) => <int>[
+  ...head,
+  ...List<int>.filled(length - head.length, 0),
+];
 
 void main() {
   late Directory dir;
@@ -25,35 +27,50 @@ void main() {
 
   test('accepts a 256K Kickstart', () {
     // 0x1111 identifier, then the 68k reset jump.
-    final File rom =
-        write(dir, 'kick13.rom', padded(<int>[0x11, 0x11, 0x4E, 0xF9], 64));
+    final File rom = write(
+      dir,
+      'kick13.rom',
+      padded(<int>[0x11, 0x11, 0x4E, 0xF9], 64),
+    );
     expect(MediaLibrary.looksLikeKickstart(rom), isTrue);
   });
 
   test('accepts a 512K Kickstart', () {
-    final File rom =
-        write(dir, 'kick40068.rom', padded(<int>[0x11, 0x14, 0x4E, 0xF9], 64));
+    final File rom = write(
+      dir,
+      'kick40068.rom',
+      padded(<int>[0x11, 0x14, 0x4E, 0xF9], 64),
+    );
     expect(MediaLibrary.looksLikeKickstart(rom), isTrue);
   });
 
   test("accepts Cloanto's encrypted ROMs", () {
     // Those carry a text header and are decrypted by the core given a rom.key.
-    final File rom = write(dir, 'amiga-os-310.rom',
-        padded('AMIROMTYPE1'.codeUnits, 64));
+    final File rom = write(
+      dir,
+      'amiga-os-310.rom',
+      padded('AMIROMTYPE1'.codeUnits, 64),
+    );
     expect(MediaLibrary.looksLikeKickstart(rom), isTrue);
   });
 
   test('rejects another emulator\'s .bin ROM', () {
     // The case this exists for: bin is a Kickstart extension and also a
     // Mega Drive, PlayStation and BIOS extension.
-    final File rom =
-        write(dir, 'scph1001.bin', padded(<int>[0x00, 0x00, 0x00, 0x00], 64));
+    final File rom = write(
+      dir,
+      'scph1001.bin',
+      padded(<int>[0x00, 0x00, 0x00, 0x00], 64),
+    );
     expect(MediaLibrary.looksLikeKickstart(rom), isFalse);
   });
 
   test('rejects the right identifier with the wrong reset jump', () {
-    final File rom =
-        write(dir, 'not-a-rom.bin', padded(<int>[0x11, 0x11, 0x00, 0x00], 64));
+    final File rom = write(
+      dir,
+      'not-a-rom.bin',
+      padded(<int>[0x11, 0x11, 0x00, 0x00], 64),
+    );
     expect(MediaLibrary.looksLikeKickstart(rom), isFalse);
   });
 
@@ -63,7 +80,9 @@ void main() {
   });
 
   test('rejects a file that is not there', () {
-    expect(MediaLibrary.looksLikeKickstart(File('${dir.path}/absent.rom')),
-        isFalse);
+    expect(
+      MediaLibrary.looksLikeKickstart(File('${dir.path}/absent.rom')),
+      isFalse,
+    );
   });
 }

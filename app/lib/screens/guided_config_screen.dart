@@ -150,6 +150,7 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
     final String suggestion = _suggestedName;
     if (_name.text != suggestion) _name.text = suggestion;
   }
+
   String? _error;
 
   /// The scan, for picking ROMs without asking. Empty until it loads, which is
@@ -168,13 +169,11 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
 
     EmulatorSettings updated = _settings;
     if (updated.romFile.isEmpty) {
-      final MediaFile? rom =
-          RomPicker.kickstartFor(updated.baseModel, roms);
+      final MediaFile? rom = RomPicker.kickstartFor(updated.baseModel, roms);
       if (rom != null) updated = updated.copyWith(romFile: rom.path);
     }
     if (updated.baseModel.needsExtendedRom && updated.romExtFile.isEmpty) {
-      final MediaFile? ext =
-          RomPicker.extendedRomFor(updated.baseModel, roms);
+      final MediaFile? ext = RomPicker.extendedRomFor(updated.baseModel, roms);
       if (ext != null) updated = updated.copyWith(romExtFile: ext.path);
     }
     if (!identical(updated, _settings) && updated != _settings) {
@@ -307,61 +306,63 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
       body: SafeArea(
         bottom: false,
         child: Column(
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              IconButton(
-                onPressed: () => _go(-1),
-                icon: const Icon(Icons.arrow_back),
-                visualDensity: VisualDensity.compact,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                IconButton(
+                  onPressed: () => _go(-1),
+                  icon: const Icon(Icons.arrow_back),
+                  visualDensity: VisualDensity.compact,
+                ),
+                Expanded(
+                  child: _StepDots(count: route.length, index: index),
+                ),
+                const SizedBox(width: 48),
+              ],
+            ),
+            if (_error != null)
+              Container(
+                width: double.infinity,
+                color: Theme.of(context).colorScheme.errorContainer,
+                padding: const EdgeInsets.all(12),
+                child: Text(
+                  _error!,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onErrorContainer,
+                  ),
+                ),
               ),
-              Expanded(child: _StepDots(count: route.length, index: index)),
-              const SizedBox(width: 48),
-            ],
-          ),
-          if (_error != null)
-            Container(
-              width: double.infinity,
-              color: Theme.of(context).colorScheme.errorContainer,
-              padding: const EdgeInsets.all(12),
-              child: Text(
-                _error!,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onErrorContainer,
+            Expanded(child: _buildStep()),
+            SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: <Widget>[
+                    OutlinedButton(
+                      onPressed: () => _go(-1),
+                      child: Text(index == 0 ? 'Cancel' : 'Back'),
+                    ),
+                    const Spacer(),
+                    if (last)
+                      OutlinedButton(
+                        onPressed: _canAdvance
+                            ? () => _finish(launch: false)
+                            : null,
+                        child: const Text('Save'),
+                      ),
+                    if (last) const SizedBox(width: 12),
+                    FilledButton(
+                      onPressed: _canAdvance
+                          ? () => last ? _finish(launch: true) : _go(1)
+                          : null,
+                      child: Text(last ? 'Save and play' : 'Next'),
+                    ),
+                  ],
                 ),
               ),
             ),
-          Expanded(child: _buildStep()),
-          SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: <Widget>[
-                  OutlinedButton(
-                    onPressed: () => _go(-1),
-                    child: Text(index == 0 ? 'Cancel' : 'Back'),
-                  ),
-                  const Spacer(),
-                  if (last)
-                    OutlinedButton(
-                      onPressed: _canAdvance
-                          ? () => _finish(launch: false)
-                          : null,
-                      child: const Text('Save'),
-                    ),
-                  if (last) const SizedBox(width: 12),
-                  FilledButton(
-                    onPressed: _canAdvance
-                        ? () => last ? _finish(launch: true) : _go(1)
-                        : null,
-                    child: Text(last ? 'Save and play' : 'Next'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
+          ],
         ),
       ),
     );
@@ -377,13 +378,15 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
             // Take the machine's defaults wholesale: chipset, RAM and CPU all
             // move together, and mixing them is how you get a config that
             // boots to a grey screen.
-            _settings = widget.mode.settingsFor(model).copyWith(
-              romFile: _settings.romFile,
-              floppy0: _settings.floppy0,
-              cdImage: _settings.cdImage,
-              hardDrives: _settings.hardDrives,
-              whdloadFilename: _settings.whdloadFilename,
-            );
+            _settings = widget.mode
+                .settingsFor(model)
+                .copyWith(
+                  romFile: _settings.romFile,
+                  floppy0: _settings.floppy0,
+                  cdImage: _settings.cdImage,
+                  hardDrives: _settings.hardDrives,
+                  whdloadFilename: _settings.whdloadFilename,
+                );
           }),
         );
 
@@ -554,10 +557,8 @@ class _MachineStep extends StatelessWidget {
             return Material(
               color: isSelected
                   ? Theme.of(context).colorScheme.primaryContainer
-                  : Theme.of(context)
-                      .colorScheme
-                      .surfaceContainerHighest
-                      .withValues(alpha: 0.35),
+                  : Theme.of(context).colorScheme.surfaceContainerHighest
+                        .withValues(alpha: 0.35),
               borderRadius: BorderRadius.circular(10),
               child: InkWell(
                 borderRadius: BorderRadius.circular(10),
@@ -599,8 +600,7 @@ class _MachineStep extends StatelessWidget {
                           ],
                         ),
                       ),
-                      if (isSelected)
-                        const Icon(Icons.check_circle, size: 20),
+                      if (isSelected) const Icon(Icons.check_circle, size: 20),
                     ],
                   ),
                 ),
@@ -832,7 +832,6 @@ class _SaveStep extends StatelessWidget {
   }
 }
 
-
 /// Both ROMs a CD console needs, on one step.
 ///
 /// The Kickstart and the extended ROM are two files with almost the same name
@@ -923,8 +922,7 @@ class _RomRow extends StatelessWidget {
                   child: MediaChooser(
                     category: FileCategory.roms,
                     selected: selected,
-                    onSelected: (String path) =>
-                        Navigator.of(sheet).pop(path),
+                    onSelected: (String path) => Navigator.of(sheet).pop(path),
                   ),
                 ),
               ),

@@ -123,13 +123,12 @@ enum AmigaModel {
   /// matters brings them, and an RTG A1200 is what AGS and the RTG game builds
   /// actually run on.
   bool get canRtg => switch (this) {
-        AmigaModel.a1200 ||
-        AmigaModel.a2000 ||
-        AmigaModel.a3000 ||
-        AmigaModel.a4000 =>
-          true,
-        _ => false,
-      };
+    AmigaModel.a1200 ||
+    AmigaModel.a2000 ||
+    AmigaModel.a3000 ||
+    AmigaModel.a4000 => true,
+    _ => false,
+  };
 
   /// A CD console needs its own Kickstart and an extended ROM alongside it.
   /// Without the second one it starts and shows nothing.

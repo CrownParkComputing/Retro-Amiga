@@ -55,9 +55,8 @@ class MusicPlayer {
   /// could not read the file or it is not a module.
   static Future<bool> play(String path) async {
     _silencedByUser = false;
-    final bool ok = await _invoke<bool>('musicPlay', <String, Object?>{
-          'path': path,
-        }) ??
+    final bool ok =
+        await _invoke<bool>('musicPlay', <String, Object?>{'path': path}) ??
         false;
     if (ok) _startPolling();
     return ok;
@@ -82,10 +81,12 @@ class MusicPlayer {
   /// Asks the host what it is actually doing, rather than trusting what we
   /// last told it: a tune can end on its own.
   static Future<MusicState> refresh() async {
-    final Map<Object?, Object?>? raw =
-        await _invoke<Map<Object?, Object?>>('musicState');
-    final MusicState state =
-        raw == null ? const MusicState() : MusicState.fromMap(raw);
+    final Map<Object?, Object?>? raw = await _invoke<Map<Object?, Object?>>(
+      'musicState',
+    );
+    final MusicState state = raw == null
+        ? const MusicState()
+        : MusicState.fromMap(raw);
     _emit(state);
     return state;
   }

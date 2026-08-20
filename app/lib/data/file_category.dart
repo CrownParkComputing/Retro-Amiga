@@ -28,9 +28,9 @@ enum FileCategory {
 
   floppies('floppies', 'Floppy Images', <String>{
     // zfile.cpp diskimages[]
-    'adf', 'adz', 'ipf', 'scp', 'fdi', 'dms', 'wrp', 'dsq', 'pkd', 'ima',
+    'adf', 'adz', 'ipf', 'scp', 'fdi', 'wrp', 'dsq', 'pkd', 'ima',
     // raw types disk.cpp will take
-    'img', 'st', 'dsk',
+    'img', 'st',
   }),
 
   hardDrives('harddrives', 'Hard Drives', <String>{'hdf', 'hdz', 'vhd', 'hdi'}),

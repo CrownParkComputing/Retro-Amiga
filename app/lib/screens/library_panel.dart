@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../data/amiga_model.dart';
+import '../data/app_prefs.dart';
 import '../data/config_store.dart';
 import '../data/emulator_settings.dart';
 import '../data/file_category.dart';
 import '../data/media_library.dart';
+import '../data/music_player.dart';
 import '../widgets/alphabet_filter.dart';
 import '../emulator.dart';
 import '../theme/amiga_theme.dart';
@@ -35,13 +39,15 @@ class _LibraryPanelState extends State<LibraryPanel> {
   /// ones you have decides which machines you can set up at all, and an A1200
   /// or a CD32 needs a different ROM from an A500.
   ///
-  /// Music is not here - it has its own panel with a player.
+  /// Music is included here too: Music is the player, Files is the place to
+  /// manage local files.
   static const List<FileCategory> _tabs = <FileCategory>[
     FileCategory.floppies,
     FileCategory.whdloadGames,
     FileCategory.hardDrives,
     FileCategory.cdImages,
     FileCategory.roms,
+    FileCategory.music,
   ];
 
   /// null means "All".
@@ -55,11 +61,22 @@ class _LibraryPanelState extends State<LibraryPanel> {
   String? _error;
   List<MediaFile> _files = <MediaFile>[];
   List<SavedConfig> _configs = <SavedConfig>[];
+  StreamSubscription<MediaIndex>? _mediaChanges;
 
   @override
   void initState() {
     super.initState();
+    _mediaChanges = MediaLibrary.changes.listen((MediaIndex index) {
+      if (!mounted) return;
+      setState(() => _files = index.files);
+    });
     _load();
+  }
+
+  @override
+  void dispose() {
+    _mediaChanges?.cancel();
+    super.dispose();
   }
 
   Future<void> _load({bool rescan = false}) async {
@@ -71,8 +88,9 @@ class _LibraryPanelState extends State<LibraryPanel> {
       // The cached index is what makes opening this panel instant; a rescan is
       // an explicit act, from the button. An empty cache means the scan never
       // ran, so fall through to one rather than showing a bare panel.
-      MediaIndex index =
-          rescan ? await MediaLibrary.scan() : await MediaLibrary.cached();
+      MediaIndex index = rescan
+          ? await MediaLibrary.scan()
+          : await MediaLibrary.cached();
       if (!rescan && index.files.isEmpty) {
         index = await MediaLibrary.scan();
       }
@@ -109,8 +127,7 @@ class _LibraryPanelState extends State<LibraryPanel> {
       AlphabetFilter.from(_matching.map((MediaFile f) => f.title));
 
   List<MediaFile> get _visible {
-    final String? initial =
-        _initials.contains(_initial) ? _initial : null;
+    final String? initial = _initials.contains(_initial) ? _initial : null;
     final List<MediaFile> matching = _matching;
     if (initial == null) return matching;
     return matching
@@ -122,8 +139,6 @@ class _LibraryPanelState extends State<LibraryPanel> {
   List<MediaFile> get _matching {
     final String needle = _search.trim().toLowerCase();
     return _files.where((MediaFile file) {
-      // Music has its own panel, so it never appears here.
-      if (file.category == FileCategory.music) return false;
       // Archives are not listed at all. A zip is not Amiga media until
       // something opens it, and on a handheld the great majority are other
       // machines' games - 1800 of them here, against 115 Amiga files. They
@@ -138,9 +153,10 @@ class _LibraryPanelState extends State<LibraryPanel> {
       if (_selected != null && file.category != _selected) return false;
       if (needle.isEmpty) return true;
       return file.name.toLowerCase().contains(needle);
-    }).toList()
-      ..sort((MediaFile a, MediaFile b) =>
-          a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+    }).toList()..sort(
+      (MediaFile a, MediaFile b) =>
+          a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+    );
   }
 
   @override
@@ -148,16 +164,18 @@ class _LibraryPanelState extends State<LibraryPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        _tabRow(),
-        _searchRow(),
+        // Letters first, as on the C64 shelf: the jump-to strip is the thing
+        // you reach for most, so it sits at the top where it is easiest to hit.
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
           child: AlphabetFilter(
             initials: _initials,
             selected: _initial,
             onSelected: (String? value) => setState(() => _initial = value),
           ),
         ),
+        _tabRow(),
+        _searchRow(),
         const Divider(height: 1, color: AmigaColors.panelBorder),
         Expanded(child: _body()),
       ],
@@ -167,15 +185,16 @@ class _LibraryPanelState extends State<LibraryPanel> {
   Widget _tabRow() {
     // Matches what "All" actually shows, which is Amiga media only.
     final int total = _files
-        .where((MediaFile f) =>
-            f.category != FileCategory.roms &&
-            f.category != FileCategory.music &&
-            f.category != FileCategory.archives)
+        .where(
+          (MediaFile f) =>
+              f.category != FileCategory.roms &&
+              f.category != FileCategory.archives,
+        )
         .length;
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.fromLTRB(10, 10, 10, 4),
+      padding: const EdgeInsets.fromLTRB(10, 4, 10, 4),
       child: Row(
         children: <Widget>[
           _TabPill(
@@ -262,6 +281,11 @@ class _LibraryPanelState extends State<LibraryPanel> {
           setup: _setupFor(file),
           onPlay: _play,
           onSetUp: () => _setUp(file),
+          onPlayMusic: file.category == FileCategory.music
+              ? () => _playMusic(file)
+              : null,
+          onRename: () => _rename(file),
+          onDelete: () => _delete(file),
         );
       },
     );
@@ -294,6 +318,108 @@ class _LibraryPanelState extends State<LibraryPanel> {
     if (mounted) _load();
   }
 
+  Future<void> _playMusic(MediaFile file) async {
+    final bool ok = await MusicPlayer.play(file.path);
+    if (!mounted || ok) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('${file.name} would not play.')));
+  }
+
+  Future<void> _rename(MediaFile file) async {
+    if (_setupFor(file) != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Remove this file from its setup before renaming it.'),
+        ),
+      );
+      return;
+    }
+    final TextEditingController controller = TextEditingController(
+      text: file.name,
+    );
+    final String? name = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('Rename file'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'File name'),
+          onSubmitted: (String value) => Navigator.of(context).pop(value),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(controller.text),
+            child: const Text('Rename'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null || name.trim() == file.name) return;
+    try {
+      await MediaLibrary.rename(file, name);
+      await _load(rescan: true);
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not rename file: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _delete(MediaFile file) async {
+    if (_setupFor(file) != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Remove this file from its setup before deleting it.'),
+        ),
+      );
+      return;
+    }
+    final bool confirmDelete = await AppPrefs.confirmFileDelete();
+    if (!mounted) return;
+    if (confirmDelete) {
+      final bool? confirmed = await showDialog<bool>(
+        context: context,
+        builder: (BuildContext context) => AlertDialog(
+          title: const Text('Delete file?'),
+          content: Text('Delete “${file.name}”? This cannot be undone.'),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: AmigaColors.tickRed,
+              ),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+    try {
+      await MediaLibrary.delete(file);
+      await _load(rescan: true);
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not delete file: $error')),
+        );
+      }
+    }
+  }
+
   static WizardMode _modeFor(FileCategory category) {
     switch (category) {
       case FileCategory.floppies:
@@ -318,11 +444,9 @@ class _LibraryPanelState extends State<LibraryPanel> {
     // Zorro III card is what those builds are made for. Without it they run
     // and draw nothing.
     final EmulatorSettings base = EmulatorSettings.looksLikeRtg(file.name)
-        ? EmulatorSettings.fromModel(AmigaModel.a1200).copyWith(
-            useRtg: true,
-            z3Ram: 64,
-            fastRam: 8,
-          )
+        ? EmulatorSettings.fromModel(
+            AmigaModel.a1200,
+          ).copyWith(useRtg: true, z3Ram: 64, fastRam: 8)
         : const EmulatorSettings();
     switch (file.category) {
       case FileCategory.floppies:
@@ -348,12 +472,18 @@ class _FileRow extends StatelessWidget {
     required this.setup,
     required this.onPlay,
     required this.onSetUp,
+    required this.onPlayMusic,
+    required this.onRename,
+    required this.onDelete,
   });
 
   final MediaFile file;
   final SavedConfig? setup;
   final void Function(SavedConfig) onPlay;
   final VoidCallback onSetUp;
+  final VoidCallback? onPlayMusic;
+  final VoidCallback onRename;
+  final VoidCallback onDelete;
 
   static const Map<FileCategory, String> _badges = <FileCategory, String>{
     FileCategory.floppies: 'ADF',
@@ -395,12 +525,17 @@ class _FileRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final SavedConfig? config = setup;
     final bool ready = config != null;
+    final bool isMusic = file.category == FileCategory.music;
 
     return ListTile(
       dense: true,
-      // The whole row does whatever the button says, so a row that cannot run
-      // yet opens the wizard rather than failing quietly.
-      onTap: ready ? () => onPlay(config) : onSetUp,
+      // Music starts directly; everything else either plays its saved setup
+      // or opens the wizard rather than failing quietly.
+      onTap: isMusic && onPlayMusic != null
+          ? onPlayMusic
+          : ready
+          ? () => onPlay(config)
+          : onSetUp,
       leading: Container(
         width: 42,
         height: 26,
@@ -441,23 +576,45 @@ class _FileRow extends StatelessWidget {
           color: ready ? AmigaColors.tickGreen : AmigaColors.textDim,
         ),
       ),
-      trailing: ready
-          ? FilledButton.icon(
-              onPressed: () => onPlay(config),
-              icon: const Icon(Icons.play_arrow, size: 18),
-              label: const Text('Play'),
-              style: FilledButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-              ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          if (isMusic && onPlayMusic != null)
+            IconButton(
+              tooltip: 'Play',
+              onPressed: onPlayMusic,
+              icon: const Icon(Icons.play_arrow),
+              visualDensity: VisualDensity.compact,
             )
-          : OutlinedButton.icon(
+          else if (!isMusic && ready)
+            IconButton(
+              tooltip: 'Play',
+              onPressed: () => onPlay(config),
+              icon: const Icon(Icons.play_arrow),
+              visualDensity: VisualDensity.compact,
+            )
+          else if (!isMusic)
+            IconButton(
+              tooltip: 'Set up',
               onPressed: onSetUp,
-              icon: const Icon(Icons.tune, size: 16),
-              label: const Text('Set up'),
-              style: OutlinedButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-              ),
+              icon: const Icon(Icons.tune),
+              visualDensity: VisualDensity.compact,
             ),
+          IconButton(
+            tooltip: 'Rename',
+            onPressed: onRename,
+            icon: const Icon(Icons.drive_file_rename_outline),
+            visualDensity: VisualDensity.compact,
+          ),
+          IconButton(
+            tooltip: 'Delete',
+            onPressed: onDelete,
+            icon: const Icon(Icons.delete_outline),
+            color: AmigaColors.tickRed,
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
+      ),
     );
   }
 }
@@ -499,8 +656,10 @@ class _TabPill extends StatelessWidget {
                 ),
                 const SizedBox(width: 6),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 1,
+                  ),
                   decoration: BoxDecoration(
                     color: selected
                         ? Colors.white.withValues(alpha: 0.22)

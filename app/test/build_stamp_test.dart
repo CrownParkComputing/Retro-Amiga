@@ -13,8 +13,8 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (MethodCall call) async {
-      return call.method == 'appBuildStamp' ? stamp : null;
-    });
+          return call.method == 'appBuildStamp' ? stamp : null;
+        });
   });
 
   test('a redeployed build shows the walkthrough again', () async {

@@ -69,8 +69,11 @@ class _ResumePanelState extends State<ResumePanel> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              Icon(Icons.play_circle_outline,
-                  size: 40, color: AmigaColors.textDim),
+              Icon(
+                Icons.play_circle_outline,
+                size: 40,
+                color: AmigaColors.textDim,
+              ),
               SizedBox(height: 12),
               Text(
                 'Nothing to resume',

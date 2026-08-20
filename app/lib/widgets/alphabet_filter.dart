@@ -44,9 +44,9 @@ class AlphabetFilter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Below a handful of letters the strip is noise: everything is on screen
-    // already and there is nothing to jump to.
-    if (initials.length < 3) return const SizedBox.shrink();
+    // Always drawn, even for one letter: a strip that comes and goes with the
+    // list's length moves the rows under your thumb, and the C64 front end
+    // keeps it fixed for the same reason.
 
     return SizedBox(
       height: 30,
@@ -72,11 +72,7 @@ class AlphabetFilter extends StatelessWidget {
 }
 
 class _Chip extends StatelessWidget {
-  const _Chip({
-    required this.label,
-    required this.active,
-    required this.onTap,
-  });
+  const _Chip({required this.label, required this.active, required this.onTap});
 
   final String label;
   final bool active;

@@ -32,12 +32,16 @@ void main() {
     });
 
     test('falls back to the defaults rather than throwing on rubbish', () {
-      expect(PadLayout.decode('not json').stick.dx, PadLayout.defaults.stick.dx);
+      expect(
+        PadLayout.decode('not json').stick.dx,
+        PadLayout.defaults.stick.dx,
+      );
       expect(PadLayout.decode('').customButtons, isEmpty);
       expect(PadLayout.decode(null).buttons.dy, PadLayout.defaults.buttons.dy);
       // A layout whose entries are the wrong shape keeps whatever it can.
-      final PadLayout partial =
-          PadLayout.decode('{"stick":[0.4,0.4],"custom":[{"key":"nope"}]}');
+      final PadLayout partial = PadLayout.decode(
+        '{"stick":[0.4,0.4],"custom":[{"key":"nope"}]}',
+      );
       expect(partial.stick.dx, closeTo(0.4, 1e-9));
       expect(partial.customButtons, isEmpty);
     });
@@ -48,8 +52,10 @@ void main() {
       // A layout saved before the CD32 pad existed has no style at all, and
       // must not lose the caller's guess by defaulting to the joystick.
       expect(
-        PadLayout.decode('{"stick":[0.2,0.2]}', fallbackStyle: PadStyle.cd32)
-            .style,
+        PadLayout.decode(
+          '{"stick":[0.2,0.2]}',
+          fallbackStyle: PadStyle.cd32,
+        ).style,
         PadStyle.cd32,
       );
       // Nothing saved: the machine decides.
@@ -60,9 +66,10 @@ void main() {
       // A saved choice outranks the machine, so choosing the joystick for a
       // CD32 game sticks.
       expect(
-        PadLayout.decode(const PadLayout().encode(),
-                fallbackStyle: PadStyle.cd32)
-            .style,
+        PadLayout.decode(
+          const PadLayout().encode(),
+          fallbackStyle: PadStyle.cd32,
+        ).style,
         PadStyle.joystick,
       );
     });

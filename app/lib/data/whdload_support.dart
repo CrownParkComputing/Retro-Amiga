@@ -168,8 +168,10 @@ class WhdloadSupport {
       count = kickstarts
           .listSync()
           .whereType<File>()
-          .where((File f) =>
-              !f.path.toLowerCase().endsWith('.rtb') && f.lengthSync() > 1024)
+          .where(
+            (File f) =>
+                !f.path.toLowerCase().endsWith('.rtb') && f.lengthSync() > 1024,
+          )
           .length;
     }
 
@@ -186,7 +188,8 @@ class WhdloadSupport {
         ),
         WhdloadRequirement(
           name: 'WHDLoad',
-          detail: 'The loader itself, copied into C: on the boot drive. '
+          detail:
+              'The loader itself, copied into C: on the boot drive. '
               'Without it a game starts and AmigaDOS says "unknown command".',
           path: loader.path,
           present: hasLoader,
@@ -196,13 +199,14 @@ class WhdloadSupport {
           detail: count > 0
               ? '$count in place, named the way the booter expects.'
               : 'Copied from your own ROMs and renamed - a game asks for the '
-                  'Kickstart its slave was built against.',
+                    'Kickstart its slave was built against.',
           path: kickstarts.path,
           present: count > 0,
         ),
         WhdloadRequirement(
           name: 'Game database',
-          detail: 'Per-game settings. Without it every game gets defaults, '
+          detail:
+              'Per-game settings. Without it every game gets defaults, '
               'and some need more memory or a different CPU than the '
               'defaults give.',
           path: database.path,
@@ -303,8 +307,10 @@ class WhdloadSupport {
     if (result.ready) {
       AppLog.info('whdload', 'ready ($roms Kickstarts installed)');
     } else {
-      AppLog.warn('whdload',
-          'not ready: ${result.missing.map((WhdloadRequirement r) => r.name).join(", ")} missing');
+      AppLog.warn(
+        'whdload',
+        'not ready: ${result.missing.map((WhdloadRequirement r) => r.name).join(", ")} missing',
+      );
     }
     return result;
   }
@@ -360,8 +366,9 @@ class WhdloadSupport {
       // The relocation tables, next to where the ROMs get placed. WHDLoad's
       // kick-emulation needs the pair - kickNNNNN.XNNN plus its .RTB - and
       // the tables are the half that may legally ship with the app.
-      final Directory kickstarts =
-          Directory('${dir.path}/save-data/Kickstarts');
+      final Directory kickstarts = Directory(
+        '${dir.path}/save-data/Kickstarts',
+      );
       if (!kickstarts.existsSync()) kickstarts.createSync(recursive: true);
       for (final String name in <String>[
         'kick33180.A500.RTB',
@@ -381,8 +388,9 @@ class WhdloadSupport {
       if (!gameData.existsSync()) gameData.createSync(recursive: true);
       final File database = File('${gameData.path}/whdload_db.xml');
       if (!database.existsSync()) {
-        final ByteData data =
-            await rootBundle.load('assets/whdboot/whdload_db.xml');
+        final ByteData data = await rootBundle.load(
+          'assets/whdboot/whdload_db.xml',
+        );
         database.writeAsBytesSync(data.buffer.asUint8List(), flush: true);
       }
       return true;

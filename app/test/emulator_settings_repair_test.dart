@@ -14,8 +14,8 @@ void main() {
     final Directory dir = Directory.systemTemp.createTempSync('settings');
     final Directory documents = Directory('${dir.path}/Documents')
       ..createSync(recursive: true);
-    final Directory settings =
-        Directory('${documents.path}/Amiberry/Settings')..createSync(recursive: true);
+    final Directory settings = Directory('${documents.path}/Amiberry/Settings')
+      ..createSync(recursive: true);
     final File conf = File('${settings.path}/amiberry.conf')
       ..writeAsStringSync('''
 whdboot_path=/private/var/mobile/Containers/Data/Application/57C79B76-DAA1-46EB-9FC3-57CAF1925A7C/Documents/Amiberry/WHDBoot/
@@ -24,8 +24,10 @@ gui_theme=default
 ''');
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(const MethodChannel('uae4arm2026/emulator'),
-            (MethodCall call) async => documents.path);
+        .setMockMethodCallHandler(
+          const MethodChannel('uae4arm2026/emulator'),
+          (MethodCall call) async => documents.path,
+        );
 
     await ConfigStore.repairEmulatorSettings();
 

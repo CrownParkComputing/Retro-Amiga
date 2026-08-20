@@ -1,5 +1,4 @@
-import 'dart:io';
-
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 
@@ -9,9 +8,7 @@ import '../data/file_category.dart';
 import '../data/amiga_model.dart';
 import '../data/media_library.dart';
 import '../data/media_root.dart';
-import '../emulator.dart';
 import '../theme/amiga_theme.dart';
-import 'pad_designer_screen.dart';
 
 /// Where things live and how they get there, after setup has run.
 ///
@@ -30,6 +27,8 @@ class _SettingsPanelState extends State<SettingsPanel> {
   MediaIndex _index = const MediaIndex.empty();
   bool _busy = false;
   String? _notice;
+  bool _confirmFileDelete = true;
+  StreamSubscription<MediaIndex>? _mediaChanges;
 
   List<AgsInstall> _ags = <AgsInstall>[];
 
@@ -54,7 +53,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
       _ags = found;
       _notice = found.isEmpty
           ? 'No AGS set found. It is a folder of four or more HDF files - '
-              'use Browse if it is somewhere unusual.'
+                'use Browse if it is somewhere unusual.'
           : null;
     });
   }
@@ -103,8 +102,10 @@ class _SettingsPanelState extends State<SettingsPanel> {
     final AgsInstall? install = AgsSetup.inspect(folder.trim());
     if (!mounted) return;
     if (install == null) {
-      setState(() => _notice =
-          'No hard drives in ${folder.trim()} - an AGS set is four or more.');
+      setState(
+        () => _notice =
+            'No hard drives in ${folder.trim()} - an AGS set is four or more.',
+      );
       return;
     }
     setState(() => _ags = <AgsInstall>[install]);
@@ -113,17 +114,33 @@ class _SettingsPanelState extends State<SettingsPanel> {
   @override
   void initState() {
     super.initState();
+    _mediaChanges = MediaLibrary.changes.listen((MediaIndex index) {
+      if (mounted) setState(() => _index = index);
+    });
     _load();
+  }
+
+  @override
+  void dispose() {
+    _mediaChanges?.cancel();
+    super.dispose();
   }
 
   Future<void> _load() async {
     final String root = await MediaRoot.path();
     final MediaIndex index = await MediaLibrary.cached();
+    final bool confirmFileDelete = await AppPrefs.confirmFileDelete();
     if (!mounted) return;
     setState(() {
       _root = root;
       _index = index;
+      _confirmFileDelete = confirmFileDelete;
     });
+  }
+
+  Future<void> _setConfirmFileDelete(bool value) async {
+    setState(() => _confirmFileDelete = value);
+    await AppPrefs.setConfirmFileDelete(value: value);
   }
 
   Future<void> _run(Future<String> Function() action) async {
@@ -145,7 +162,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
     return ListView(
       padding: const EdgeInsets.all(14),
       children: <Widget>[
-        const _Header('Media'),
+        const SettingsHeader('Media'),
         Card(
           color: AmigaColors.card,
           child: Column(
@@ -183,50 +200,20 @@ class _SettingsPanelState extends State<SettingsPanel> {
                   child: const Text('Run'),
                 ),
               ),
-            ],
-          ),
-        ),
-
-        const _Header('Controls'),
-        Card(
-          color: AmigaColors.card,
-          child: Column(
-            children: <Widget>[
-              ListTile(
-                leading: const Icon(Icons.gamepad_outlined),
-                title: const Text('On-screen pad'),
+              SwitchListTile(
+                secondary: const Icon(Icons.delete_sweep_outlined),
+                title: const Text('Confirm before deleting files'),
                 subtitle: const Text(
-                  'Where the stick and buttons sit, joystick or CD32 pad, and '
-                  'any extra keys you want under a thumb.',
+                  'Ask before permanently deleting local media from Files.',
                 ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => Navigator.of(context).push<void>(
-                  MaterialPageRoute<void>(
-                    builder: (BuildContext context) => const PadDesignerScreen(),
-                  ),
-                ),
+                value: _confirmFileDelete,
+                onChanged: _setConfirmFileDelete,
               ),
-              // The mapping screen is the Android Activity's - it has to see
-              // raw controller events, which is native work that iOS has no
-              // counterpart for yet. A settings row that silently does
-              // nothing is worse than no row.
-              if (Platform.isAndroid)
-                ListTile(
-                  leading: const Icon(Icons.videogame_asset_outlined),
-                  title: const Text('Controller buttons'),
-                  subtitle: const Text(
-                    'Which button on a real controller is red, blue, green and '
-                    'yellow. A CD32 config uses all four; anything else uses the '
-                    'first two as fire.',
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: Emulator.openControllerMapping,
-                ),
             ],
           ),
         ),
 
-        const _Header('AGS'),
+        const SettingsHeader('AGS'),
         Card(
           color: AmigaColors.card,
           child: Column(
@@ -265,8 +252,9 @@ class _SettingsPanelState extends State<SettingsPanel> {
                     style: const TextStyle(fontSize: 11),
                   ),
                   trailing: TextButton(
-                    onPressed:
-                        _busy ? null : () => _run(() => _setUpAgs(install)),
+                    onPressed: _busy
+                        ? null
+                        : () => _run(() => _setUpAgs(install)),
                     child: const Text('Set up'),
                   ),
                 ),
@@ -292,8 +280,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
   }
 
   Future<void> _chooseRoot() async {
-    final TextEditingController controller =
-        TextEditingController(text: _root);
+    final TextEditingController controller = TextEditingController(text: _root);
     final String? chosen = await showDialog<String>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
@@ -325,8 +312,9 @@ class _SettingsPanelState extends State<SettingsPanel> {
   }
 }
 
-class _Header extends StatelessWidget {
-  const _Header(this.title);
+/// A section heading, shared by the setting panels.
+class SettingsHeader extends StatelessWidget {
+  const SettingsHeader(this.title, {super.key});
 
   final String title;
 

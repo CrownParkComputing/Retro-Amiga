@@ -8,6 +8,10 @@ environment:
 
 dependencies:
   archive: ^4.0.9
+  # The in-process core: the launcher calls libuae4arm's plain-C host API
+  # directly, so the emulator can run inside this app rather than in a second
+  # full-screen Activity. See lib/ffi/amiga_core.dart.
+  ffi: ^2.2.0
   file_picker: ^8.1.7
   flutter:
     sdk: flutter

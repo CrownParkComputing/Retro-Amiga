@@ -99,7 +99,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       _whdloadNotice = status.bootArchiveInstalled
           ? null
           : 'No WHDLoad boot archive on this device. Copy boot-data.zip '
-              '(or your whdload boot zip) onto it and scan again.';
+                '(or your whdload boot zip) onto it and scan again.';
     });
   }
 
@@ -174,8 +174,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       // chosen one. A device that has been running the old launcher keeps its
       // library where it is, and the import then has nothing to move.
       String root = await MediaRoot.path();
-      final String? suggestion =
-          MediaRoot.adoptsExistingCollection ? MediaRoot.suggestFrom(index) : null;
+      final String? suggestion = MediaRoot.adoptsExistingCollection
+          ? MediaRoot.suggestFrom(index)
+          : null;
       if (suggestion != null && root == await MediaRoot.defaultPath()) {
         root = suggestion;
         await MediaRoot.setPath(root);
@@ -230,7 +231,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 const AmigaLogo(height: 30),
                 const SizedBox(width: 12),
                 Text(
-                  'Amiga-Retro',
+                  'Retro-Amiga',
                   style: Theme.of(context).textTheme.headlineSmall,
                 ),
               ],
@@ -243,7 +244,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               'Kickstart ROMs, floppies, hard drives, CD images and WHDLoad '
               'archives. You supply your own: drop them - zipped is fine - '
               'into this app\'s folder in the Files app '
-              '(On My iPad > Amiga-Retro), then Scan.',
+              '(On My iPad > Retro-Amiga), then Scan.',
             ),
             const SizedBox(height: 12),
             if (_scanning)
@@ -332,11 +333,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             Text(
               MediaRoot.canChoose
                   ? 'Everything is filed here, in a folder per kind. It can be '
-                      'anywhere you can write - a collection you already have '
-                      'stays put, and survives this app being uninstalled.'
+                        'anywhere you can write - a collection you already have '
+                        'stays put, and survives this app being uninstalled.'
                   : 'iOS only lets the app read its own Documents folder, so '
-                      'that is where media lives. It is reachable from the '
-                      'Files app.',
+                        'that is where media lives. It is reachable from the '
+                        'Files app.',
             ),
             const SizedBox(height: 12),
             Card(
@@ -359,9 +360,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       _imported == null
                           ? 'File everything into it'
                           : '${_imported!.moved} moved, '
-                              '${_imported!.alreadyInPlace} already in place'
-                              '${_imported!.extracted > 0 ? ', ${_imported!.extracted} unzipped' : ''}'
-                              '${_imported!.failed > 0 ? ', ${_imported!.failed} failed' : ''}',
+                                '${_imported!.alreadyInPlace} already in place'
+                                '${_imported!.extracted > 0 ? ', ${_imported!.extracted} unzipped' : ''}'
+                                '${_imported!.failed > 0 ? ', ${_imported!.failed} failed' : ''}',
                     ),
                     subtitle: const Text(
                       'Moves what is elsewhere into Floppies, HardDrives, '
@@ -390,54 +391,59 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             // to it. Rather than show a step that can only ever say "not
             // found", iOS does not offer one.
             if (Platform.isAndroid) ...<Widget>[
-            const _SectionHeader('3', 'WHDLoad support'),
-            const SizedBox(height: 8),
-            const Text(
-              'WHDLoad games are .lha archives that need WHDLoad itself to '
-              'boot. The core wants those files in one place, and a Kickstart '
-              'under the name it expects.',
-            ),
-            const SizedBox(height: 12),
-            Card(
-              child: ListTile(
-                leading: Icon(
-                  _whdload.ready ? Icons.check_circle : Icons.inventory_2_outlined,
-                  color: _whdload.ready
-                      ? Theme.of(context).colorScheme.primary
-                      : null,
-                ),
-                title: Text(
-                  _whdload.ready
-                      ? 'WHDLoad is ready'
-                      : _whdload.bootArchiveInstalled
-                          ? 'Boot files installed, no Kickstart yet'
-                          : 'Not installed',
-                ),
-                subtitle: Text(
-                  _whdloadNotice ??
-                      (_whdload.ready
-                          ? 'Boot archive installed, '
-                              '${_whdload.kickstartCount} Kickstart'
-                              '${_whdload.kickstartCount == 1 ? '' : 's'} in place.'
-                          : 'Installs from a boot archive already on this '
-                              'device.'),
-                ),
-                trailing: _installingWhdload
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : TextButton(
-                        onPressed: _scanning ? null : _installWhdload,
-                        child: Text(_whdload.ready ? 'Reinstall' : 'Install'),
-                      ),
+              const _SectionHeader('3', 'WHDLoad support'),
+              const SizedBox(height: 8),
+              const Text(
+                'WHDLoad games are .lha archives that need WHDLoad itself to '
+                'boot. The core wants those files in one place, and a Kickstart '
+                'under the name it expects.',
               ),
-            ),
-            const SizedBox(height: 24),
+              const SizedBox(height: 12),
+              Card(
+                child: ListTile(
+                  leading: Icon(
+                    _whdload.ready
+                        ? Icons.check_circle
+                        : Icons.inventory_2_outlined,
+                    color: _whdload.ready
+                        ? Theme.of(context).colorScheme.primary
+                        : null,
+                  ),
+                  title: Text(
+                    _whdload.ready
+                        ? 'WHDLoad is ready'
+                        : _whdload.bootArchiveInstalled
+                        ? 'Boot files installed, no Kickstart yet'
+                        : 'Not installed',
+                  ),
+                  subtitle: Text(
+                    _whdloadNotice ??
+                        (_whdload.ready
+                            ? 'Boot archive installed, '
+                                  '${_whdload.kickstartCount} Kickstart'
+                                  '${_whdload.kickstartCount == 1 ? '' : 's'} in place.'
+                            : 'Installs from a boot archive already on this '
+                                  'device.'),
+                  ),
+                  trailing: _installingWhdload
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : TextButton(
+                          onPressed: _scanning ? null : _installWhdload,
+                          child: Text(_whdload.ready ? 'Reinstall' : 'Install'),
+                        ),
+                ),
+              ),
+              const SizedBox(height: 24),
             ],
 
-            _SectionHeader(Platform.isAndroid ? '4' : '3', 'Pick your usual Amiga'),
+            _SectionHeader(
+              Platform.isAndroid ? '4' : '3',
+              'Pick your usual Amiga',
+            ),
             const SizedBox(height: 8),
             const Text('New setups start from this machine.'),
             const SizedBox(height: 12),
@@ -446,7 +452,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: AmigaModel.values.length,
-                separatorBuilder: (BuildContext c, int i) => const SizedBox(width: 12),
+                separatorBuilder: (BuildContext c, int i) =>
+                    const SizedBox(width: 12),
                 itemBuilder: (BuildContext context, int i) {
                   final AmigaModel model = AmigaModel.values[i];
                   final bool isSelected = model == _model;
@@ -544,7 +551,6 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-
 /// Where media should live. A text field rather than a folder picker: the
 /// picker Android offers returns a content:// tree the emulator core cannot
 /// open, since the core takes plain paths.
@@ -558,8 +564,9 @@ class _RootDialog extends StatefulWidget {
 }
 
 class _RootDialogState extends State<_RootDialog> {
-  late final TextEditingController _controller =
-      TextEditingController(text: widget.initial);
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initial,
+  );
 
   @override
   void dispose() {
@@ -595,10 +602,7 @@ class _RootDialogState extends State<_RootDialog> {
           ])
             TextButton(
               onPressed: () => _controller.text = path,
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(path),
-              ),
+              child: Align(alignment: Alignment.centerLeft, child: Text(path)),
             ),
         ],
       ),

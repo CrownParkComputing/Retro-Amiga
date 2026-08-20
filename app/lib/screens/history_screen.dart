@@ -9,12 +9,12 @@ class HistoryScreen extends StatelessWidget {
 
   static const List<(String, List<HistoryEntry>)> _tabs =
       <(String, List<HistoryEntry>)>[
-    ('The machines', AmigaHistory.machines),
-    ('How it happened', AmigaHistory.story),
-    ('Twenty greats', AmigaHistory.greats),
-    ('Composers', AmigaHistory.composers),
-    ('Worth knowing', AmigaHistory.notable),
-  ];
+        ('The machines', AmigaHistory.machines),
+        ('How it happened', AmigaHistory.story),
+        ('Twenty greats', AmigaHistory.greats),
+        ('Composers', AmigaHistory.composers),
+        ('Worth knowing', AmigaHistory.notable),
+      ];
 
   @override
   Widget build(BuildContext context) {

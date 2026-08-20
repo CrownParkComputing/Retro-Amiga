@@ -37,7 +37,7 @@ class AmigaRetroApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Amiga-Retro',
+      title: 'Retro-Amiga',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,

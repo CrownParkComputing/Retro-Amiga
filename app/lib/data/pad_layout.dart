@@ -123,30 +123,34 @@ class PadLayout {
     Offset2? transport,
     List<PadButton>? customButtons,
     PadStyle? style,
-  }) =>
-      PadLayout(
-        stick: stick ?? this.stick,
-        buttons: buttons ?? this.buttons,
-        transport: transport ?? this.transport,
-        customButtons: customButtons ?? this.customButtons,
-        style: style ?? this.style,
-      );
+  }) => PadLayout(
+    stick: stick ?? this.stick,
+    buttons: buttons ?? this.buttons,
+    transport: transport ?? this.transport,
+    customButtons: customButtons ?? this.customButtons,
+    style: style ?? this.style,
+  );
 
   String encode() => jsonEncode(<String, Object?>{
-        'stick': stick.toJson(),
-        'buttons': buttons.toJson(),
-        'transport': transport.toJson(),
-        'custom': customButtons.map((PadButton b) => b.toJson()).toList(),
-        'style': style.name,
-      });
+    'stick': stick.toJson(),
+    'buttons': buttons.toJson(),
+    'transport': transport.toJson(),
+    'custom': customButtons.map((PadButton b) => b.toJson()).toList(),
+    'style': style.name,
+  });
 
   /// Anything unreadable falls back to the defaults rather than throwing: a
   /// corrupt layout file must not be the reason a game has no controls.
-  static PadLayout decode(String? text, {PadStyle fallbackStyle = PadStyle.joystick}) {
+  static PadLayout decode(
+    String? text, {
+    PadStyle fallbackStyle = PadStyle.joystick,
+  }) {
     // No layout yet means a machine we have not been asked about, so the
     // caller's guess stands: a CD32 game gets the CD32 pad without anyone
     // having to go and choose it.
-    if (text == null || text.isEmpty) return defaults.copyWith(style: fallbackStyle);
+    if (text == null || text.isEmpty) {
+      return defaults.copyWith(style: fallbackStyle);
+    }
     try {
       final Object? raw = jsonDecode(text);
       if (raw is! Map<String, Object?>) {
@@ -192,9 +196,9 @@ class Offset2 {
   static const double maximum = 0.94;
 
   Offset2 clamped() => Offset2(
-        dx.clamp(minimum, maximum).toDouble(),
-        dy.clamp(minimum, maximum).toDouble(),
-      );
+    dx.clamp(minimum, maximum).toDouble(),
+    dy.clamp(minimum, maximum).toDouble(),
+  );
 
   Offset2 shifted(double x, double y) => Offset2(dx + x, dy + y).clamped();
 

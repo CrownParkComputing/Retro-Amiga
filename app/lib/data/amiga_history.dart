@@ -106,26 +106,80 @@ class AmigaHistory {
   ];
 
   static const List<HistoryEntry> greats = <HistoryEntry>[
-    HistoryEntry('Shadow of the Beast', 'Thirteen layers of parallax and a Roberts soundtrack. Psygnosis, 1989.'),
-    HistoryEntry('Lemmings', 'DMA Design, 1991. A hundred lemmings, one mouse, and the best puzzle design of the decade.'),
-    HistoryEntry('Another World', 'Eric Chahi\'s rotoscoped polygons, 1991. Almost no HUD, almost no text.'),
-    HistoryEntry('Sensible Soccer', 'Sensible Software, 1992. Tiny players, huge pitch, still the fastest football game made.'),
-    HistoryEntry('Speedball 2', 'The Bitmap Brothers, 1990. "ICE CREAM! ICE CREAM!"'),
-    HistoryEntry('Turrican II', 'Factor 5, 1991. Enormous levels and Chris Huelsbeck\'s finest hour.'),
-    HistoryEntry('Cannon Fodder', 'Sensible Software, 1993. "War has never been so much fun", and it meant it.'),
-    HistoryEntry('Monkey Island 2', 'LucasArts, 1991. The Amiga version has the MOD score.'),
-    HistoryEntry('Xenon 2: Megablast', 'The Bitmap Brothers, 1989, with Bomb the Bass on the soundtrack.'),
-    HistoryEntry('Lotus Turbo Challenge 2', 'Magnetic Fields, 1991. Split-screen at fifty frames a second.'),
+    HistoryEntry(
+      'Shadow of the Beast',
+      'Thirteen layers of parallax and a Roberts soundtrack. Psygnosis, 1989.',
+    ),
+    HistoryEntry(
+      'Lemmings',
+      'DMA Design, 1991. A hundred lemmings, one mouse, and the best puzzle design of the decade.',
+    ),
+    HistoryEntry(
+      'Another World',
+      'Eric Chahi\'s rotoscoped polygons, 1991. Almost no HUD, almost no text.',
+    ),
+    HistoryEntry(
+      'Sensible Soccer',
+      'Sensible Software, 1992. Tiny players, huge pitch, still the fastest football game made.',
+    ),
+    HistoryEntry(
+      'Speedball 2',
+      'The Bitmap Brothers, 1990. "ICE CREAM! ICE CREAM!"',
+    ),
+    HistoryEntry(
+      'Turrican II',
+      'Factor 5, 1991. Enormous levels and Chris Huelsbeck\'s finest hour.',
+    ),
+    HistoryEntry(
+      'Cannon Fodder',
+      'Sensible Software, 1993. "War has never been so much fun", and it meant it.',
+    ),
+    HistoryEntry(
+      'Monkey Island 2',
+      'LucasArts, 1991. The Amiga version has the MOD score.',
+    ),
+    HistoryEntry(
+      'Xenon 2: Megablast',
+      'The Bitmap Brothers, 1989, with Bomb the Bass on the soundtrack.',
+    ),
+    HistoryEntry(
+      'Lotus Turbo Challenge 2',
+      'Magnetic Fields, 1991. Split-screen at fifty frames a second.',
+    ),
     HistoryEntry('Alien Breed', 'Team17, 1991. Aliens, top-down, two-player.'),
     HistoryEntry('Worms', 'Team17, 1995, and it started here.'),
-    HistoryEntry('Frontier: Elite II', 'David Braben, 1993. A galaxy on two floppies.'),
-    HistoryEntry('Chaos Engine', 'The Bitmap Brothers, 1993. Steampunk before the word.'),
-    HistoryEntry('Pinball Dreams', 'Digital Illusions, 1992. Sixty frames, hardware scrolling, perfect physics.'),
-    HistoryEntry('Superfrog', 'Team17, 1993, and the intro is still worth watching.'),
-    HistoryEntry('Flashback', 'Delphine, 1993. Another World\'s successor, with more game in it.'),
-    HistoryEntry('Ruff\'n\'Tumble', 'Renegade, 1994. The best pure platformer on the machine, and late.'),
-    HistoryEntry('Stunt Car Racer', 'Geoff Crammond, 1989. Filled polygons and a rollercoaster.'),
-    HistoryEntry('Defender of the Crown', 'Cinemaware, 1986. The game that showed people what the machine could draw.'),
+    HistoryEntry(
+      'Frontier: Elite II',
+      'David Braben, 1993. A galaxy on two floppies.',
+    ),
+    HistoryEntry(
+      'Chaos Engine',
+      'The Bitmap Brothers, 1993. Steampunk before the word.',
+    ),
+    HistoryEntry(
+      'Pinball Dreams',
+      'Digital Illusions, 1992. Sixty frames, hardware scrolling, perfect physics.',
+    ),
+    HistoryEntry(
+      'Superfrog',
+      'Team17, 1993, and the intro is still worth watching.',
+    ),
+    HistoryEntry(
+      'Flashback',
+      'Delphine, 1993. Another World\'s successor, with more game in it.',
+    ),
+    HistoryEntry(
+      'Ruff\'n\'Tumble',
+      'Renegade, 1994. The best pure platformer on the machine, and late.',
+    ),
+    HistoryEntry(
+      'Stunt Car Racer',
+      'Geoff Crammond, 1989. Filled polygons and a rollercoaster.',
+    ),
+    HistoryEntry(
+      'Defender of the Crown',
+      'Cinemaware, 1986. The game that showed people what the machine could draw.',
+    ),
   ];
 
   static const List<HistoryEntry> composers = <HistoryEntry>[

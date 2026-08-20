@@ -40,10 +40,10 @@ class AgsInstall {
   /// Boot drive, content drives, then the shared folder: the order the config
   /// mounts them, DH0 upwards.
   List<String> get allMounts => <String>[
-        bootDrive,
-        ...drives,
-        if (sharedFolder.isNotEmpty) sharedFolder,
-      ];
+    bootDrive,
+    ...drives,
+    if (sharedFolder.isNotEmpty) sharedFolder,
+  ];
 
   int get driveCount => 1 + drives.length;
 }
@@ -76,7 +76,8 @@ class AgsSetup {
       for (final FileSystemEntity entry in dir.listSync(followLinks: false)) {
         final String name = entry.path.split('/').last;
         final String lower = name.toLowerCase();
-        if (entry is File && (lower.endsWith('.hdf') || lower.endsWith('.hdz'))) {
+        if (entry is File &&
+            (lower.endsWith('.hdf') || lower.endsWith('.hdz'))) {
           hdfs.add(entry.path);
         } else if (entry is Directory &&
             (lower == 'shared' || lower == 'share')) {
@@ -144,12 +145,14 @@ class AgsSetup {
     );
 
     return found
-        .map((Map<String, Object> m) => AgsInstall(
-              folder: m['folder']! as String,
-              bootDrive: m['boot']! as String,
-              drives: (m['drives']! as List<Object?>).cast<String>(),
-              sharedFolder: m['shared']! as String,
-            ))
+        .map(
+          (Map<String, Object> m) => AgsInstall(
+            folder: m['folder']! as String,
+            bootDrive: m['boot']! as String,
+            drives: (m['drives']! as List<Object?>).cast<String>(),
+            sharedFolder: m['shared']! as String,
+          ),
+        )
         .toList();
   }
 
@@ -169,7 +172,9 @@ class AgsSetup {
           final String name = entry.path.split('/').last.toLowerCase();
           if (name.contains('ags')) {
             folders.add(entry.path);
-          } else if (root == '/storage' && name != 'emulated' && name != 'self') {
+          } else if (root == '/storage' &&
+              name != 'emulated' &&
+              name != 'self') {
             // A card or a USB drive. An AGS set on one is usually at the root
             // or one folder in - "AGS_UAE", or "Amiga/AGS_UAE" - so both are
             // looked at, and any folder holding enough hard drives counts even
@@ -187,16 +192,19 @@ class AgsSetup {
       final AgsInstall? install = inspect(folder);
       if (install != null) found.add(install);
     }
-    found.sort((AgsInstall a, AgsInstall b) =>
-        b.driveCount.compareTo(a.driveCount));
+    found.sort(
+      (AgsInstall a, AgsInstall b) => b.driveCount.compareTo(a.driveCount),
+    );
 
     return found
-        .map((AgsInstall i) => <String, Object>{
-              'folder': i.folder,
-              'boot': i.bootDrive,
-              'drives': i.drives,
-              'shared': i.sharedFolder,
-            })
+        .map(
+          (AgsInstall i) => <String, Object>{
+            'folder': i.folder,
+            'boot': i.bootDrive,
+            'drives': i.drives,
+            'shared': i.sharedFolder,
+          },
+        )
         .toList();
   }
 
@@ -252,10 +260,7 @@ class AgsSetup {
   }
 
   /// Writes the config and returns the file.
-  static Future<File> createConfig(
-    AgsInstall install,
-    String romFile,
-  ) async {
+  static Future<File> createConfig(AgsInstall install, String romFile) async {
     final File file = await ConfigStore.save(
       settingsFor(install, romFile),
       install.name.toLowerCase().contains('ags')
@@ -265,8 +270,8 @@ class AgsSetup {
     AppLog.info(
       'ags',
       '${install.driveCount} drives'
-      '${install.sharedFolder.isEmpty ? '' : ' and a shared folder'}'
-      ' from ${install.folder}',
+          '${install.sharedFolder.isEmpty ? '' : ' and a shared folder'}'
+          ' from ${install.folder}',
     );
     return file;
   }
