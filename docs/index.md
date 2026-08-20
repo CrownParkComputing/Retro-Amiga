@@ -60,7 +60,7 @@ AGS collections.
 🎮 **Controls that just work** — gamepad, touchscreen joystick, or the on-screen CD32 pad
 with all seven buttons. Set your controller once and every saved game picks it up.
 
-🎵 **Demoscene music built in** — tracker tunes playing while you browse.
+🎵 **Demoscene music from your library** — local tracker tunes playing while you browse.
 
 🔴⚪ **The Boing ball** — rolling in whatever direction it's travelling, equaliser pulsing
 along to the music. Poke it. It bounces.
@@ -85,8 +85,10 @@ keep coming on modest hardware.
 UAE4ARM 2026 ships **no copyrighted Amiga software** — no Kickstart ROMs, no games, no disk
 images. You bring your own.
 
-The mod music bundled with the app is **demoscene work**, included as a nod to the scene that
-made the Amiga what it was.
+The app does not put copyrighted music in the source repository or package it into the
+download. Put your legally obtained tracker modules in the app's local media folder
+(`Amiga-Retro/Music` on desktop, `Retro-Amiga/Music` on iOS); the Files page scans them, plays
+them, and lets you rename or delete them without touching the GitHub source tree.
 
 ---
 

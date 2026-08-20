@@ -2,6 +2,7 @@ package com.uae4arm2026;
 
 import android.app.Activity;
 import android.util.Log;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
@@ -62,8 +63,26 @@ final class EmulatorOverlay {
 		boolean onToggleKeyboard();
 		void onInsertDisk(int drive);
 
-		/** Pause means "stop playing": save where we are and go back. */
-		void onPauseToWorkbench();
+		/** Pause means "stop playing": save where we are and go back.
+		 *  [section] names the workbench panel to open on arrival, or null to
+		 *  land wherever the launcher last was -- the in-game rail passes one,
+		 *  the pause button does not. */
+		void onPauseToWorkbench(String section);
+
+		/**
+		 * Where the Amiga's picture goes, in device pixels.
+		 *
+		 * The overlay draws the launcher's chrome -- the rail down the left,
+		 * the status strip along the bottom -- and SDL's surface is moved into
+		 * the rectangle that is left, instead of filling the display with the
+		 * chrome floating on top of it. Every other Retro-* front end renders
+		 * the machine in a panel; this is how this one does, given that the
+		 * picture belongs to SDL and not to Flutter.
+		 *
+		 * Width or height of zero means "the whole display", which is what a
+		 * chrome-less full-screen session is.
+		 */
+		void onViewport(int left, int top, int width, int height);
 
 		/** Raw Amiga key code, for the buttons the player added themselves. */
 		void onKey(int code, boolean pressed);
@@ -79,6 +98,7 @@ final class EmulatorOverlay {
 		 *  has to be told which, or a seven-button pad reports into a port
 		 *  that understands two of them. */
 		void onPortMode(int mode);
+		void onOnScreenController(int mode);
 
 		/** Whether the running config is a CD32, which picks the pad that is
 		 *  drawn before the player has chosen one. */
@@ -149,7 +169,7 @@ final class EmulatorOverlay {
 							result.success(true);
 							break;
 						case "pauseToWorkbench":
-							listener.onPauseToWorkbench();
+							listener.onPauseToWorkbench(call.argument("section"));
 							result.success(true);
 							break;
 						case "toggleKeyboard":
@@ -179,8 +199,20 @@ final class EmulatorOverlay {
 						case "floppyCount":
 							result.success(listener.floppyCount());
 							break;
+						case "viewport":
+							listener.onViewport(
+								arg(call.argument("left"), 0),
+								arg(call.argument("top"), 0),
+								arg(call.argument("width"), 0),
+								arg(call.argument("height"), 0));
+							result.success(true);
+							break;
 						case "portMode":
 							listener.onPortMode(arg(call.argument("mode"), 3));
+							result.success(true);
+							break;
+						case "onScreenController":
+							listener.onOnScreenController(arg(call.argument("mode"), 0));
 							result.success(true);
 							break;
 						case "isCd32":
@@ -205,6 +237,11 @@ final class EmulatorOverlay {
 			// FlutterView paints an opaque background and hides the emulator.
 			final FlutterSurfaceView surfaceView = new FlutterSurfaceView(activity, true);
 			view = new FlutterView(activity, surfaceView);
+			// The overlay needs touch hit-testing but must never become the focused
+			// host view: SDL's surface owns hardware key/gamepad focus.
+			view.setFocusable(false);
+			view.setFocusableInTouchMode(false);
+			view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
 			view.attachToFlutterEngine(engine);
 
 			activity.addContentView(view, new FrameLayout.LayoutParams(

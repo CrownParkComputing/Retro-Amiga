@@ -61,6 +61,15 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            // SDL registers its Java native methods by name at library load
+            // time. Keep the release bridge unshrunk: removing an apparently
+            // unused native declaration makes ART abort before the game starts.
+            isMinifyEnabled = false
+            isShrinkResources = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 }

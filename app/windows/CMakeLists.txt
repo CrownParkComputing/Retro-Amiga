@@ -6,6 +6,11 @@ project(uae4arm2026 LANGUAGES CXX)
 # the on-disk name of your application.
 set(BINARY_NAME "uae4arm2026")
 
+# Build the core with -DUAE4ARM_CORE_LIBRARY=ON and point the Flutter bundle at
+# its DLL. The runner loads this next to the executable at launch.
+set(UAE4ARM_CORE_LIBRARY "${CMAKE_CURRENT_SOURCE_DIR}/../../build-windows/uae4arm.dll"
+    CACHE FILEPATH "Path to the UAE4ARM shared core DLL")
+
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
 cmake_policy(VERSION 3.14...3.25)
@@ -74,6 +79,13 @@ set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")
 
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
+
+if(EXISTS "${UAE4ARM_CORE_LIBRARY}")
+  install(FILES "${UAE4ARM_CORE_LIBRARY}"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
+else()
+  message(WARNING "UAE4ARM core not found at ${UAE4ARM_CORE_LIBRARY}; Windows launch will be unavailable")
+endif()
 
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   COMPONENT Runtime)

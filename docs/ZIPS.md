@@ -1,7 +1,7 @@
 # The reference zips
 
 The app's whole setup is zips dropped into its folder (Files → On My iPad →
-Amiga-Retro), imported by the wizard's Scan or by any later launch. These are
+Retro-Amiga), imported by the wizard's Scan or by any later launch. These are
 the reference set, kept in `~/Documents/retro-zips` on the build machine -
 none of them live in the repo - so a fresh device can be provisioned in one
 drag:

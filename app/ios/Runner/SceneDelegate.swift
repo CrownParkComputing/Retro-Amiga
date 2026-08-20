@@ -109,8 +109,24 @@ class SceneDelegate: FlutterSceneDelegate {
 
     channel.setMethodCallHandler { call, result in
       switch call.method {
+      case "openControllerMapping":
+        // iOS runs the emulator with a native control strip in the same window
+        // and does not expose a separate controller-mapping screen.
+        result(nil)
+
       case "platformName":
         result("ios")
+
+      case "hasAllFilesAccess":
+        // iOS has app-scoped media permissions; scoped file access here is
+        // handled by Files.app visibility and does not require an explicit
+        // toggle the way Android does.
+        result(true)
+
+      case "requestAllFilesAccess":
+        // No in-app one-shot request exists for iOS parity with the launch
+        // flow expects a boolean response, so treat this as already allowed.
+        result(true)
 
       // Something that changes every time a build is installed, so the
       // launcher can tell a new deploy from an ordinary start and show the

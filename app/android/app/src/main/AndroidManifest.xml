@@ -49,7 +49,7 @@
     </queries>
 
     <application
-        android:label="Amiga-Retro"
+        android:label="Retro-Amiga"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:banner="@drawable/tv_banner"
@@ -85,7 +85,7 @@
         <activity android:name="com.uae4arm2026.Uae4ArmEmulatorActivity"
             android:process=":sdl"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode|navigation"
-            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+            android:theme="@style/EmulatorTheme"
             android:enableOnBackInvokedCallback="true"
             android:exported="true">
             <meta-data android:name="SDL_MAIN_LIBRARY_NAMES" android:value="uae4arm" />

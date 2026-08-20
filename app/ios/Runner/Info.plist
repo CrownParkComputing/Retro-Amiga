@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Amiga-Retro</string>
+	<string>Retro-Amiga</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIconFiles</key>
@@ -46,7 +46,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Amiga-Retro</string>
+	<string>Retro-Amiga</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -102,11 +102,11 @@
 	     rejects the upload without them (warning 90683). A linked framework
 	     is enough; whether the app uses it is irrelevant. -->
 	<key>NSCameraUsageDescription</key>
-	<string>Amiga-Retro does not use the camera. This permission is only requested if you choose to import a file from a source that offers the camera.</string>
+	<string>Retro-Amiga does not use the camera. This permission is only requested if you choose to import a file from a source that offers the camera.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Amiga-Retro only reads a file you select yourself when importing disk images, Kickstart ROMs or WHDLoad archives. Nothing is read from your library without you picking it.</string>
+	<string>Retro-Amiga only reads a file you select yourself when importing disk images, Kickstart ROMs or WHDLoad archives. Nothing is read from your library without you picking it.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Amiga-Retro does not use your location and never requests it. This entry is required because a bundled file-picker component links against the location framework.</string>
+	<string>Retro-Amiga does not use your location and never requests it. This entry is required because a bundled file-picker component links against the location framework.</string>
 	<!-- ITMS-90683 on the first upload named this key specifically. SDL, which
 	     the Amiberry core is built on, links CoreBluetooth to discover game
 	     controllers. As with the three above, a linked framework is enough:
@@ -114,7 +114,7 @@
 	     pairs controllers in Settings rather than in the app, so in practice
 	     the prompt should never appear; the string is required regardless. -->
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Amiga-Retro uses Bluetooth only to detect game controllers you have already paired with your iPad. It never scans for, connects to, or collects data from any other device.</string>
+	<string>Retro-Amiga uses Bluetooth only to detect game controllers you have already paired with your iPad. It never scans for, connects to, or collects data from any other device.</string>
 	<!-- Declared so testers are not gated on answering the encryption
 	     question by hand on every build. The app uses no encryption beyond
 	     the platform's own HTTPS. -->

@@ -28,6 +28,7 @@ import java.util.List;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.LinearLayout;
+import android.widget.RelativeLayout;
 import android.os.Handler;
 import android.os.Looper;
 
@@ -577,6 +578,35 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 		}
 	}
 
+	/**
+	 * Moves SDL's surface into the rectangle the overlay left for it.
+	 *
+	 * mSurface is a plain SurfaceView inside SDLActivity's RelativeLayout, so
+	 * this is ordinary layout -- no SDL API involved. SDL sees a
+	 * surfaceChanged with the new size and reconfigures its renderer, which is
+	 * the same path a window resize takes on desktop.
+	 *
+	 * Zero width or height restores full screen. That is not a special case
+	 * bolted on: it is what the overlay asks for when the rail and the strip
+	 * are hidden, and what must happen if the overlay never starts at all.
+	 */
+	private void applyViewport(int left, int top, int width, int height) {
+		final View surface = mSurface;
+		if (surface == null) return;
+		final RelativeLayout.LayoutParams params;
+		if (width <= 0 || height <= 0) {
+			params = new RelativeLayout.LayoutParams(
+				ViewGroup.LayoutParams.MATCH_PARENT,
+				ViewGroup.LayoutParams.MATCH_PARENT);
+		} else {
+			params = new RelativeLayout.LayoutParams(width, height);
+			params.leftMargin = left;
+			params.topMargin = top;
+		}
+		surface.setLayoutParams(params);
+		surface.requestLayout();
+	}
+
 	private void returnToLauncher() {
 		captureSaveState();
 		HostSupport.writeCleanExitMarker(this);
@@ -758,7 +788,10 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 				== android.view.InputDevice.SOURCE_GAMEPAD;
 			boolean joystick = (sources & android.view.InputDevice.SOURCE_JOYSTICK)
 				== android.view.InputDevice.SOURCE_JOYSTICK;
-			if (gamepad && joystick) return true;
+			// Android handhelds commonly advertise a controller as only GAMEPAD
+			// or only JOYSTICK. Requiring both incorrectly hides the real pad and
+			// leaves the touch controls selected from the first frame.
+			if (gamepad || joystick) return true;
 		}
 		return false;
 	}
@@ -1075,8 +1108,16 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 			// returnToLauncher writes a save state on the way out, which is
 			// what makes Resume put the game back exactly here - a pause in
 			// the only sense anyone wants one.
-			@Override public void onPauseToWorkbench() {
-				runOnUiThread(Uae4ArmEmulatorActivity.this::returnToLauncher);
+			@Override public void onPauseToWorkbench(String section) {
+				runOnUiThread(() -> {
+					HostSupport.writeSectionRequest(
+						Uae4ArmEmulatorActivity.this, section);
+					returnToLauncher();
+				});
+			}
+
+			@Override public void onViewport(int left, int top, int width, int height) {
+				runOnUiThread(() -> applyViewport(left, top, width, height));
 			}
 
 			@Override public boolean onToggleKeyboard() {
@@ -1118,6 +1159,10 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 				nativeSetExternalControllerMode(mode);
 			}
 
+			@Override public void onOnScreenController(int mode) {
+				nativeSetOnScreenController(mode);
+			}
+
 			@Override public boolean isCd32() {
 				return configIsCd32();
 			}
@@ -1141,6 +1186,11 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 		// failure would mean no strip at all: neither the Flutter one, which
 		// is not running, nor the Java fallback, which checks this field.
 		flutterOverlay = started ? overlay : null;
+		if (started && mSurface != null) {
+			// Keep SDL's surface as the focused view so physical keyboard and
+			// gamepad events reach the emulator instead of the transparent overlay.
+			mSurface.requestFocus();
+		}
 	}
 
 	@Override

@@ -9,6 +9,12 @@ set(BINARY_NAME "uae4arm2026")
 # https://wiki.gnome.org/HowDoI/ChooseApplicationID
 set(APPLICATION_ID "com.uae4arm2026.uae4arm2026")
 
+# Build the core separately with -DUAE4ARM_CORE_LIBRARY=ON, then point this
+# runner at the resulting shared library. Keeping it beside the Flutter bundle
+# lets the runner load the same host bridge used on mobile.
+set(UAE4ARM_CORE_LIBRARY "${CMAKE_CURRENT_SOURCE_DIR}/../../build-linux/libuae4arm.so"
+    CACHE FILEPATH "Path to the UAE4ARM shared core")
+
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
 cmake_policy(SET CMP0063 NEW)
@@ -93,6 +99,13 @@ set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}/lib")
 
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
+
+if(EXISTS "${UAE4ARM_CORE_LIBRARY}")
+  install(FILES "${UAE4ARM_CORE_LIBRARY}"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
+else()
+  message(WARNING "UAE4ARM core not found at ${UAE4ARM_CORE_LIBRARY}; Linux launch will be unavailable")
+endif()
 
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   COMPONENT Runtime)

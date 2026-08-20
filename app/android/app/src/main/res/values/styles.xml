@@ -21,4 +21,11 @@
     <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>
     </style>
+    <!-- The emulator Activity. Black, not the system window background:
+         the overlay leaves the picture's pane transparent so SDL shows
+         through, and every pixel of the window the chrome does NOT cover
+         would otherwise be a grey band under the Amiga. -->
+    <style name="EmulatorTheme" parent="@android:style/Theme.NoTitleBar.Fullscreen">
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
 </resources>

@@ -108,6 +108,28 @@ public final class HostSupport {
 	 * Records that emulation ended on purpose, so the launcher does not treat
 	 * the next start as a recovery from a crash.
 	 */
+	/**
+	 * Which workbench panel to open when the launcher comes back.
+	 *
+	 * The in-game rail runs in the overlay's own Flutter engine, which has no
+	 * way to reach into the launcher's -- they are two engines in one process.
+	 * A file is how everything else here crosses that gap (see the clean-exit
+	 * and session markers), and it survives the launcher being killed while a
+	 * game ran, which a static field would not.
+	 */
+	public static void writeSectionRequest(Context context, String section) {
+		if (section == null || section.isEmpty()) return;
+		try {
+			final File request = new File(context.getFilesDir(), "workbench_section");
+			try (java.io.FileOutputStream out = new java.io.FileOutputStream(request)) {
+				out.write(section.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+			}
+		} catch (Exception e) {
+			// Not fatal: the launcher opens where it last was instead.
+			Log.w(TAG, "could not record the requested workbench section", e);
+		}
+	}
+
 	public static void writeCleanExitMarker(Context context) {
 		try {
 			final File marker = new File(context.getFilesDir(), "clean_exit");

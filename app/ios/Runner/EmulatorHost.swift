@@ -136,7 +136,7 @@ final class EmulatorHost {
     hasRun = true
     let run = unsafeBitCast(runSymbol, to: RunFn.self)
     // argv[0] is the program name, as the core's option parser expects.
-    let argv: [String] = ["Amiga-Retro"] + args
+    let argv: [String] = ["Retro-Amiga"] + args
     startWhenIdle(run: run, argv: argv, attemptsLeft: 50)
   }
 

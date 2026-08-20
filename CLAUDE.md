@@ -4,8 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Amiga-Retro (working name uae4arm2026): a multiplatform Amiga emulator — a
-Flutter launcher (`app/`) over a stripped, vendored Amiberry core (`src/`).
+Retro-Amiga (formerly working name uae4arm2026, folder renamed 2026-08-20):
+a multiplatform Amiga emulator — a Flutter launcher (`app/`) over a stripped,
+vendored Amiberry core (`src/`).
 Targets Android, iOS, and Linux desktop. The core has **no GUI of its own**:
 ImGui, the core-drawn on-screen pad and the core virtual keyboard are all
 deleted; every control surface is the host's.
@@ -130,7 +131,7 @@ and expect it to survive.
 ### Android identity
 
 `applicationId` is `com.uae4arm2026` and must stay (store package + signing
-key); the display name is the manifest `android:label` (`Amiga-Retro`). iOS
+key); the display name is the manifest `android:label` (`Retro-Amiga`). iOS
 uses its own bundle id (`com.crownparkcomputing.amigaretro`) — that split is
 deliberate.
 
