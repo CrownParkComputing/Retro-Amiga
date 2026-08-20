@@ -23,7 +23,7 @@
 enum WorkbenchSection {
   // The C64 rail's shape, so the family reads as one: what you play at the
   // top, how the machine is set up in the middle, the extras at the bottom.
-  setups('Configs', '🎮', 0),
+  setups('Games', '🎮', 0),
   resume('Resume', '🚀', 0),
   files('Files', '📂', 1),
   video('Video', '📺', 1),

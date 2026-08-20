@@ -464,6 +464,11 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
         active: _paused,
         onPressed: () {
           setState(() => _paused = !_paused);
+          if (_paused) {
+            // Pausing IS the snapshot, as on the C64: the moment you step
+            // away is the moment worth being able to come back to.
+            core.saveSession();
+          }
           core.setPaused(_paused);
         },
       ),

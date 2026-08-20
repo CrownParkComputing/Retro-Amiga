@@ -208,6 +208,43 @@ class AmigaCore {
     );
   }
 
+  late final void Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>)
+      _setSession = _lib.lookupFunction<
+          Void Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>),
+          void Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>)>(
+    'uae4arm_host_set_session',
+  );
+  late final bool Function() _saveSession =
+      _lib.lookupFunction<Bool Function(), bool Function()>(
+    'uae4arm_host_save_session',
+  );
+
+  /// Tells the core where this session's snapshot belongs, so [saveSession]
+  /// has somewhere to put it and the Resume shelf has something to list.
+  void setSession(String statePath, String configPath, String title) {
+    final s = statePath.toNativeUtf8();
+    final c = configPath.toNativeUtf8();
+    final t = title.toNativeUtf8();
+    try {
+      _setSession(s, c, t);
+    } finally {
+      calloc.free(s);
+      calloc.free(c);
+      calloc.free(t);
+    }
+  }
+
+  /// Writes the session's save state and records it on the Resume shelf.
+  /// False when no session was set - a bare Workbench boot has no place to
+  /// go back to, and that is fine.
+  bool saveSession() {
+    try {
+      return _saveSession();
+    } on ArgumentError {
+      return false;
+    }
+  }
+
   /// Quits the core and waits until its run loop has actually returned.
   Future<void> stopAndWait() async {
     if (!_running) return;

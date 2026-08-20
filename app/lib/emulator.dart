@@ -9,6 +9,7 @@ import 'data/config_store.dart';
 import 'data/whdload_support.dart';
 
 import 'data/app_log.dart';
+import 'data/host_paths.dart';
 import 'data/music_player.dart';
 import 'data/session.dart';
 
@@ -60,6 +61,18 @@ class Emulator {
       AppLog.info('launch', 'in-process core');
       playing.value = false;
       await core.start(args);
+      // Where pausing puts its snapshot: states/<config name>.uss, the same
+      // rule every host uses, so the Resume shelf reads one index. A launch
+      // with no config - a bare model boot - has no session to come back to.
+      final int at = args.indexOf('--config');
+      if (at >= 0 && at + 1 < args.length) {
+        final String configPath = args[at + 1];
+        String name = configPath.split('/').last;
+        final int dot = name.lastIndexOf('.');
+        if (dot > 0) name = name.substring(0, dot);
+        final String support = await HostPaths.appSupport();
+        core.setSession('$support/states/$name.uss', configPath, name);
+      }
       playing.value = true;
       return;
     }
@@ -78,6 +91,9 @@ class Emulator {
   static void stopInProcess() {
     final AmigaCore? core = inProcessCore;
     if (core == null || !core.isRunning) return;
+    // Leaving keeps your place, the way the C64 front end's pause does: the
+    // snapshot is written before the machine goes down, and Resume offers it.
+    core.saveSession();
     core.quit();
     playing.value = false;
   }
