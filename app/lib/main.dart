@@ -10,6 +10,8 @@ import 'overlay_main.dart' show emulatorOverlayMain;
 
 import 'dart:async';
 
+import 'data/error_log.dart';
+
 import 'data/app_prefs.dart';
 import 'data/startup_import.dart';
 import 'data/whdload_support.dart';
@@ -22,6 +24,10 @@ const Object _overlayEntryPoint = emulatorOverlayMain;
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // Before anything that can fail: a release build shows no error screen, so
+  // without this a layout failure reaches the tester as "white screen" and
+  // nothing is written down anywhere. See ErrorLog.
+  ErrorLog.install();
   // The boot files WHDLoad needs are assets, so put them in place before
   // anything asks whether they are there. Otherwise the first thing a new
   // install says about WHDLoad is "not ready" - about files it is carrying.
