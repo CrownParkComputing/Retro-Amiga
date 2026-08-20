@@ -78,6 +78,7 @@
 #include "sana2.h"
 #include "gui_handling_platform.h"
 #include "gui/gui_handling.h"
+#include "uae4arm_host.h"
 #include "android_keyboard_bridge.h"
 #include "imgui_osk.h"
 #ifdef __ANDROID__

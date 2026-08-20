@@ -20,13 +20,52 @@
 #include "savestate.h"
 #include "uae.h"
 
+#include <algorithm>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <vector>
+
+#if defined(__linux__) || defined(_WIN32)
+#include <SDL3/SDL.h>
+#endif
+
 extern void uae_restart(struct uae_prefs* p, int opengui, const TCHAR* cfgfile);
 extern int amiberry_main(int argc, char* argv[]);
 extern void apply_android_controller_remap(const int* sdl_to_target, int count);
 
 static uae4arm_host_callbacks host_callbacks;
 
+/* When a host temporarily enables its touch pad, remember the user's real
+   port assignment so hiding the pad gives the port back exactly as it was. */
+static bool onscreen_port1_override = false;
+static int saved_port1_id = 0;
+static int saved_port1_mode = JSEM_MODE_DEFAULT;
+static int pending_external_controller_mode = -1;
+static bool pending_desktop_fullscreen = false;
+static std::string session_state_path;
+static std::string session_config_path;
+static std::string session_title;
+
+static int pad_device(int pad);
+
 extern void reset_parse_cmdline();
+
+extern bool get_logfile_enabled();
+extern void set_logfile_enabled(bool enabled);
+
+void uae4arm_host_set_logfile_enabled(bool enabled)
+{
+	set_logfile_enabled(enabled);
+}
+
+const char* uae4arm_host_logfile_path(void)
+{
+	static std::string path;
+	path = get_logfile_enabled() ? get_logfile_path() : std::string();
+	return path.c_str();
+}
 
 int uae4arm_host_run(int argc, char** argv)
 {
@@ -50,6 +89,10 @@ void uae4arm_host_set_callbacks(const uae4arm_host_callbacks* callbacks)
 
 void uae4arm_host_show_menu(int shortcut)
 {
+	/* Every control the old desktop message box offered - pause, quit -
+	   lives on the host GUI's own strip now, on every platform. A native
+	   dialog here was a second UI, and on Linux it was a zenity process
+	   that could outlive the run and hang quit. */
 	if (host_callbacks.show_menu)
 		host_callbacks.show_menu(shortcut);
 }
@@ -110,15 +153,64 @@ int uae4arm_host_get_floppy_count(void)
 void uae4arm_host_set_onscreen_controller(int mode)
 {
 	write_log("host: on-screen controller mode %d requested\n", mode);
-	changed_prefs.onscreen_joystick = (mode == 1);
-	changed_prefs.onscreen_cd32pad = (mode == 2);
+	if (mode == 0) {
+		changed_prefs.onscreen_joystick = false;
+		changed_prefs.onscreen_cd32pad = false;
+		if (onscreen_port1_override) {
+			changed_prefs.jports[1].id = saved_port1_id;
+			changed_prefs.jports[1].mode = saved_port1_mode;
+			onscreen_port1_override = false;
+		}
+		set_config_changed();
+		return;
+	}
+
+	const int pad = mode == 2 ? UAE4ARM_HOST_PAD_CD32 : UAE4ARM_HOST_PAD_JOYSTICK;
+	const int device = pad_device(pad);
+	if (device < 0)
+		return;
+	if (!onscreen_port1_override) {
+		saved_port1_id = changed_prefs.jports[1].id;
+		saved_port1_mode = changed_prefs.jports[1].mode;
+		onscreen_port1_override = true;
+	}
+	changed_prefs.jports[1].id = JSEM_JOYS + device;
+	changed_prefs.jports[1].mode = mode == 2 ? JSEM_MODE_JOYSTICK_CD32 : JSEM_MODE_JOYSTICK;
+	changed_prefs.onscreen_joystick = mode == 1;
+	changed_prefs.onscreen_cd32pad = mode == 2;
 	set_config_changed();
 }
 
 void uae4arm_host_set_external_controller_mode(int jsem_mode)
 {
+	pending_external_controller_mode = jsem_mode;
 	changed_prefs.jports[1].mode = jsem_mode;
+	/* A connected Android/SDL controller is the first physical joystick. The
+	   launcher may have generated joyport1=none; selecting the external mode
+	   should make that controller usable immediately. A visible virtual pad
+	   temporarily owns the port and is restored by set_onscreen_controller(0). */
+	if (!onscreen_port1_override)
+		changed_prefs.jports[1].id = JSEM_JOYS;
 	set_config_changed();
+}
+
+void uae4arm_host_apply_pending_controller_mode(void)
+{
+	if (pending_external_controller_mode >= 0 && !onscreen_port1_override) {
+		changed_prefs.jports[1].id = JSEM_JOYS;
+		changed_prefs.jports[1].mode = pending_external_controller_mode;
+	}
+	if (pending_desktop_fullscreen) {
+		currprefs.gfx_apmode[APMODE_NATIVE].gfx_fullscreen = GFX_FULLWINDOW;
+		currprefs.gfx_apmode[APMODE_RTG].gfx_fullscreen = GFX_FULLWINDOW;
+		changed_prefs.gfx_apmode[APMODE_NATIVE].gfx_fullscreen = GFX_FULLWINDOW;
+		changed_prefs.gfx_apmode[APMODE_RTG].gfx_fullscreen = GFX_FULLWINDOW;
+	}
+}
+
+void uae4arm_host_set_desktop_fullscreen(bool enabled)
+{
+	pending_desktop_fullscreen = enabled;
 }
 
 void uae4arm_host_set_port0_joystick(bool joystick)
@@ -158,6 +250,69 @@ void uae4arm_host_quit(void)
 	   it up on the next frame and unwinds, which is what lets the host know
 	   emulation is over rather than having to guess. */
 	uae_quit();
+}
+
+void uae4arm_host_set_session(const char* state_path, const char* config_path,
+	const char* title)
+{
+	session_state_path = state_path ? state_path : "";
+	session_config_path = config_path ? config_path : "";
+	session_title = title ? title : "Amiga session";
+}
+
+bool uae4arm_host_save_session(void)
+{
+	if (session_state_path.empty() || session_config_path.empty())
+		return false;
+	uae4arm_host_save_state(session_state_path.c_str());
+	std::error_code ec;
+	const std::filesystem::path state(session_state_path);
+	const std::filesystem::path directory = state.parent_path();
+	std::filesystem::create_directories(directory, ec);
+	if (ec || !std::filesystem::exists(state, ec))
+		return false;
+
+	const std::filesystem::path index = directory / "recent.txt";
+	std::vector<std::string> lines;
+	{
+		std::ifstream input(index);
+		std::string line;
+		while (std::getline(input, line)) {
+			const std::size_t tab = line.find('\t');
+			const std::size_t second = tab == std::string::npos
+				? std::string::npos : line.find('\t', tab + 1);
+			const std::size_t third = second == std::string::npos
+				? std::string::npos : line.find('\t', second + 1);
+			const std::size_t fourth = third == std::string::npos
+				? std::string::npos : line.find('\t', third + 1);
+			if (fourth == std::string::npos ||
+				line.substr(third + 1, fourth - third - 1) != session_state_path)
+				lines.push_back(line);
+		}
+	}
+	const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+		std::chrono::system_clock::now().time_since_epoch()).count();
+	lines.insert(lines.begin(), std::to_string(now) + "\t" + session_title + "\t" +
+		session_state_path + "\t" + session_config_path);
+	while (lines.size() > 5) {
+		const std::string dropped = lines.back();
+		lines.pop_back();
+		const std::size_t first = dropped.find('\t');
+		const std::size_t second = first == std::string::npos
+			? std::string::npos : dropped.find('\t', first + 1);
+		const std::size_t third = second == std::string::npos
+			? std::string::npos : dropped.find('\t', second + 1);
+		const std::size_t fourth = third == std::string::npos
+			? std::string::npos : dropped.find('\t', third + 1);
+		if (fourth != std::string::npos)
+			std::filesystem::remove(dropped.substr(third + 1, fourth - third - 1), ec);
+	}
+	std::ofstream output(index, std::ios::trunc);
+	if (!output)
+		return false;
+	for (const std::string& line : lines)
+		output << line << '\n';
+	return true;
 }
 
 bool uae4arm_host_launch(const char* config_path, const char* whdload_archive)
