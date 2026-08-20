@@ -9,6 +9,59 @@
 
 #include <glib.h>
 #include <sys/stat.h>
+#include <dlfcn.h>
+
+#include <atomic>
+#include <string>
+#include <thread>
+#include <vector>
+
+using HostRun = int (*)(int, char**);
+using MusicPlay = bool (*)(const char*);
+using MusicStop = void (*)();
+using MusicSetPaused = void (*)(bool);
+using MusicIsBool = bool (*)();
+using MusicTitle = const char* (*)();
+using MusicLevel = float (*)();
+using MusicSetVolume = void (*)(float);
+static void* core_handle = nullptr;
+
+static gchar* app_support_directory();
+
+static HostRun load_core_run() {
+  if (core_handle == nullptr) {
+    // Flutter installs the runner in the bundle root and native libraries in
+    // its lib/ directory. Keep the core as a shared library so the same
+    // uae4arm_host API is used by desktop and mobile hosts.
+    g_autofree gchar* executable = g_file_read_link("/proc/self/exe", nullptr);
+    g_autofree gchar* directory = executable != nullptr
+        ? g_path_get_dirname(executable) : g_strdup(".");
+    g_autofree gchar* library =
+        g_build_filename(directory, "lib", "libuae4arm.so", nullptr);
+    core_handle = dlopen(library, RTLD_NOW | RTLD_GLOBAL);
+    if (core_handle == nullptr) {
+      g_warning("could not load lib/libuae4arm.so: %s", dlerror());
+      return nullptr;
+    }
+  }
+  dlerror();
+  HostRun run = reinterpret_cast<HostRun>(dlsym(core_handle, "uae4arm_host_run"));
+  const char* error = dlerror();
+  if (error != nullptr || run == nullptr) {
+    g_warning("core does not export uae4arm_host_run: %s",
+              error != nullptr ? error : "unknown error");
+    return nullptr;
+  }
+  return run;
+}
+
+template <typename Function>
+static Function core_symbol(const char* name) {
+  if (load_core_run() == nullptr) return nullptr;
+  dlerror();
+  Function function = reinterpret_cast<Function>(dlsym(core_handle, name));
+  return dlerror() == nullptr ? function : nullptr;
+}
 
 // The channel the launcher talks to. On Android and iOS the other end starts
 // the emulator and answers where things live; on the desktop there is no host
@@ -64,11 +117,66 @@ static void handle_method_call(FlMethodChannel* channel, FlMethodCall* call,
   } else if (g_strcmp0(method, "requestAllFilesAccess") == 0) {
     g_autoptr(FlValue) value = fl_value_new_bool(TRUE);
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(value));
+  } else if (g_strcmp0(method, "openControllerMapping") == 0) {
+    // There is no controller mapping UI in this desktop shell.
+    g_autoptr(FlValue) value = fl_value_new_bool(FALSE);
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(value));
+  } else if (g_strcmp0(method, "musicPlay") == 0) {
+    FlValue* arguments = fl_method_call_get_args(call);
+    FlValue* path = arguments != nullptr &&
+            fl_value_get_type(arguments) == FL_VALUE_TYPE_MAP
+        ? fl_value_lookup_string(arguments, "path") : nullptr;
+    MusicPlay play = core_symbol<MusicPlay>("uae4arm_host_music_play");
+    const bool ok = play != nullptr && path != nullptr &&
+        fl_value_get_type(path) == FL_VALUE_TYPE_STRING &&
+        play(fl_value_get_string(path));
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(fl_value_new_bool(ok)));
+  } else if (g_strcmp0(method, "musicStop") == 0 ||
+             g_strcmp0(method, "musicSetPaused") == 0 ||
+             g_strcmp0(method, "musicSetVolume") == 0) {
+    if (g_strcmp0(method, "musicStop") == 0) {
+      if (MusicStop stop = core_symbol<MusicStop>("uae4arm_host_music_stop")) stop();
+    } else if (g_strcmp0(method, "musicSetPaused") == 0) {
+      FlValue* arguments = fl_method_call_get_args(call);
+      FlValue* paused = arguments != nullptr &&
+              fl_value_get_type(arguments) == FL_VALUE_TYPE_MAP
+          ? fl_value_lookup_string(arguments, "paused") : nullptr;
+      if (MusicSetPaused set = core_symbol<MusicSetPaused>("uae4arm_host_music_set_paused"))
+        set(paused != nullptr && fl_value_get_type(paused) == FL_VALUE_TYPE_BOOL &&
+            fl_value_get_bool(paused));
+    } else if (MusicSetVolume set = core_symbol<MusicSetVolume>("uae4arm_host_music_set_volume")) {
+      FlValue* arguments = fl_method_call_get_args(call);
+      FlValue* volume = arguments != nullptr &&
+              fl_value_get_type(arguments) == FL_VALUE_TYPE_MAP
+          ? fl_value_lookup_string(arguments, "volume") : nullptr;
+      if (volume != nullptr && fl_value_get_type(volume) == FL_VALUE_TYPE_FLOAT)
+        set(static_cast<float>(fl_value_get_float(volume)));
+      else if (volume != nullptr && fl_value_get_type(volume) == FL_VALUE_TYPE_INT)
+        set(static_cast<float>(fl_value_get_int(volume)));
+    }
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(fl_value_new_null()));
+  } else if (g_strcmp0(method, "musicState") == 0) {
+    g_autoptr(FlValue) state = fl_value_new_map();
+    MusicIsBool playing = core_symbol<MusicIsBool>("uae4arm_host_music_is_playing");
+    MusicIsBool paused = core_symbol<MusicIsBool>("uae4arm_host_music_is_paused");
+    MusicTitle title = core_symbol<MusicTitle>("uae4arm_host_music_title");
+    MusicLevel level = core_symbol<MusicLevel>("uae4arm_host_music_level");
+    fl_value_set_string_take(state, "playing", fl_value_new_bool(playing != nullptr && playing()));
+    fl_value_set_string_take(state, "paused", fl_value_new_bool(paused != nullptr && paused()));
+    fl_value_set_string_take(state, "title", fl_value_new_string(title != nullptr && title() != nullptr ? title() : ""));
+    fl_value_set_string_take(state, "level", fl_value_new_float(level != nullptr ? level() : 0));
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(state));
+  } else if (g_strcmp0(method, "launch") == 0) {
+    // There is no native game window any more: the machine renders inside
+    // the Flutter panel via the in-process FFI core, the same surface every
+    // platform uses. Dart only falls back to this channel when that core
+    // failed to load -- and this runner loads the same libuae4arm.so, so
+    // there is nothing truthful to do here but say so.
+    response = FL_METHOD_RESPONSE(fl_method_error_response_new(
+        "launch_failed",
+        "The emulator core could not be loaded (lib/libuae4arm.so).",
+        nullptr));
   } else {
-    // Launching a game and the module player are the emulator core's, and the
-    // core is not built for the desktop yet. Not implemented is the honest
-    // answer: the launcher already treats it as "this host cannot", and says
-    // so, rather than failing in a way that looks like a bug.
     response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
   }
 
