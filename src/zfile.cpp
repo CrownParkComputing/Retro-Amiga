@@ -227,6 +227,8 @@ void zfile_exit (void)
 	   memory happens to stay readable and it is an endless spin, which is
 	   why a second game froze the app with no crash to show for it. */
 	zvolume_exit ();
+	/* The config statics point into the list this loop is about to free. */
+	cfgfile_exit ();
 	struct zfile *l;
 	while ((l = zlist)) {
 		zlist = l->next;

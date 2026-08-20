@@ -9,6 +9,7 @@
 
 #include "sysconfig.h"
 #include "sysdeps.h"
+#include "osdep/host_framebuffer.h"
 
 #include <cctype>
 
@@ -68,6 +69,17 @@ static int config_newfilesystem;
 static struct strlist *temp_lines;
 static struct strlist *error_lines;
 static struct zfile *default_file, *configstore;
+
+/* Forget the cached config zfiles. zfile_exit() frees every zfile in the
+ * process; in the shared-library core the next run's default_prefs would
+ * otherwise zfile_fclose() these corpses - the heap corruption behind the
+ * second-game crash the Linux harness (different-games) caught. Called from
+ * zfile_exit() itself, so no teardown path can miss it. */
+void cfgfile_exit (void)
+{
+	default_file = nullptr;
+	configstore = nullptr;
+}
 static int uaeconfig;
 static int unicode_config = 0;
 static bool gfx_keep_aspect_seen;
@@ -9023,7 +9035,14 @@ void default_prefs (struct uae_prefs *p, bool reset, int type)
 	p->turbo_emulation_limit = 0;
 	p->turbo_boot = false;
 	p->turbo_boot_delay = 100;
-	p->headless = false;
+	/* Not a plain default. When the host has asked for framebuffer output --
+	 * the launcher drawing the picture itself, no window -- headless must be
+	 * on for this run however many times prefs are reset. Setting it from the
+	 * host before the core starts gets wiped right here by the first
+	 * default_prefs(); setting it from the command line arrives after
+	 * graphics_setup() has already built a windowed surface. Neither survives.
+	 * Making the DEFAULT follow the host's request is what does. */
+	p->headless = uae4arm_host_framebuffer_output();
 	p->catweasel = 0;
 	p->tod_hack = false;
 	p->maprom = 0;

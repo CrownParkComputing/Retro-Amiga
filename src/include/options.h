@@ -1262,6 +1262,7 @@ extern void cfgfile_compatibility_rtg_pixelformat(struct uae_prefs* p);
 extern bool cfgfile_detect_art(struct uae_prefs* p, TCHAR* path);
 extern const TCHAR *cfgfile_getconfigdata(size_t *len);
 extern bool cfgfile_createconfigstore(struct uae_prefs* p);
+extern void cfgfile_exit(void);
 extern void cfgfile_get_shader_config(struct uae_prefs* p, int rtg);
 
 #ifdef AMIBERRY
