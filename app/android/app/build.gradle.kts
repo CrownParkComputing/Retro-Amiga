@@ -98,6 +98,21 @@ android {
         }
     }
 
+    // The Flutter Gradle Plugin clears ndk.abiFilters on every build type and
+    // refills it from its own hardcoded DEFAULT_PLATFORMS, which always
+    // includes armeabi-v7a. AGP then UNIONS that with the defaultConfig filter
+    // above, so defaultConfig alone can never subtract an ABI - every bundle
+    // shipped 32-bit regardless of what androidAbiFilters said. This block runs
+    // after the plugin's apply(), so clearing here is what actually decides the
+    // packaged set. 32-bit must not ship: the core reserves a 4GB natmem region
+    // at startup, which no armeabi-v7a process can map.
+    buildTypes.configureEach {
+        ndk {
+            abiFilters.clear()
+            abiFilters += androidAbiFilters
+        }
+    }
+
     externalNativeBuild {
         cmake {
             // Repo root: app/android/app -> app/android -> app -> repo root.
