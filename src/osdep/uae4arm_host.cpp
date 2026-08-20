@@ -278,15 +278,17 @@ bool uae4arm_host_save_session(void)
 		std::ifstream input(index);
 		std::string line;
 		while (std::getline(input, line)) {
+			/* timestamp \t title \t state \t config - three tabs. The state
+			   path sits between the second and third; comparing a field that
+			   needed a fourth tab kept every stale row, so one game pushed
+			   the rest off the shelf with copies of itself. */
 			const std::size_t tab = line.find('\t');
 			const std::size_t second = tab == std::string::npos
 				? std::string::npos : line.find('\t', tab + 1);
 			const std::size_t third = second == std::string::npos
 				? std::string::npos : line.find('\t', second + 1);
-			const std::size_t fourth = third == std::string::npos
-				? std::string::npos : line.find('\t', third + 1);
-			if (fourth == std::string::npos ||
-				line.substr(third + 1, fourth - third - 1) != session_state_path)
+			if (third == std::string::npos ||
+				line.substr(second + 1, third - second - 1) != session_state_path)
 				lines.push_back(line);
 		}
 	}

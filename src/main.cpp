@@ -1752,13 +1752,11 @@ static int real_main2 (int argc, TCHAR **argv)
 		no_gui = false;
 	restart_program = 0;
 
-#ifndef LIBRETRO
-	if (amiberry_options.update_check && get_update_method() != UpdateMethod::DISABLED) {
-		const auto channel = amiberry_options.update_channel == 1
-			? UpdateChannel::Preview : UpdateChannel::Stable;
-		start_async_update_check(channel);
-	}
-#endif
+	/* No self-update from inside the core. This fork ships the core as a
+	   library inside a host app, and the app's store or repo is the updater.
+	   The check also cost more than it earned: it parked a global
+	   std::thread on a curl call, and a host that exited while that thread
+	   was still joinable died in std::terminate on the way out. */
 
 	memset (&gui_data, 0, sizeof gui_data);
 	gui_data.cd = -1;

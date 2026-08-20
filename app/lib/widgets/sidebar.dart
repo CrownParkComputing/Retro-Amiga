@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 /// The side nav shared by every Retro-* front end.
@@ -130,13 +132,19 @@ class Sidebar extends StatelessWidget {
     final screenWidth = MediaQuery.sizeOf(context).width;
     // +2 for the rail's border, which Container draws inside its width, and
     // a little slack so rounding never lands on the ellipsis.
+    // The cap can fall below the floor on a very narrow window - a quarter
+    // of 390 is less than the rail's minimum - and clamp() THROWS on an
+    // inverted range rather than picking either end. The floor wins: a rail
+    // wider than its share beats an exception storm on every rebuild.
+    final double capWidth =
+        math.max(style.minWidth, style.maxWidth(screenWidth));
     final railWidth = (widest +
             iconAllowance +
             style.buttonSidePadding * 2 +
             style.navPadding * 2 +
             2 +
             4)
-        .clamp(style.minWidth, style.maxWidth(screenWidth));
+        .clamp(style.minWidth, capWidth);
 
     // Rows grow with the text rather than clipping it, but never get smaller
     // than a comfortable touch target.
