@@ -1,7 +1,7 @@
 name: uae4arm2026
 description: "Amiga emulator for iPhone and iPad, built on Amiberry."
 publish_to: 'none'
-version: 1.0.0+15
+version: 1.0.0+16
 
 environment:
   sdk: ^3.11.5
