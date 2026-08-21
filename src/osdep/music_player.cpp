@@ -193,8 +193,41 @@ void music_player_stop()
 
 void music_player_set_paused(bool paused)
 {
+	/* Unpausing has to be able to reopen: music_player_release_device() may
+	   have closed the stream while the app was in the background, and a flag
+	   flipped on a device that is gone plays nothing. */
+	if (!paused)
+		ensure_stream();
+
 	std::lock_guard<std::mutex> guard(g_lock);
 	g_paused = paused;
+}
+
+void music_player_release_device()
+{
+	/* Closes the audio device, which pausing does not.
+	   
+	   The stream is opened once and, before this, never closed - so the app
+	   held an open playback stream for its entire life whether or not anything
+	   was playing. An open stream keeps an AudioMix PARTIAL_WAKE_LOCK alive,
+	   and that stops the CPU sleeping: a launcher sitting in the background at
+	   0% CPU still drained the battery, and the system reported it as heavy
+	   resource use. Pausing was never going to fix it; only closing the device
+	   does.
+
+	   ensure_stream() reopens lazily, so playing again just works.
+
+	   Destroyed OUTSIDE the lock, deliberately: SDL waits for the feed
+	   callback to finish, and that callback takes g_lock. Holding it here
+	   would deadlock the two against each other. */
+	SDL_AudioStream* stream = nullptr;
+	{
+		std::lock_guard<std::mutex> guard(g_lock);
+		stream = g_stream;
+		g_stream = nullptr;
+	}
+	if (stream)
+		SDL_DestroyAudioStream(stream);
 }
 
 bool music_player_is_paused()

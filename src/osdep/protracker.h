@@ -54,6 +54,9 @@ void music_player_stop(void);
 
 /* Pausing keeps the tune loaded, so resuming continues rather than restarts. */
 void music_player_set_paused(bool paused);
+/* Closes the audio device. Pausing does not, and an open stream holds an
+   AudioMix wake lock for as long as the app lives. */
+void music_player_release_device(void);
 bool music_player_is_paused(void);
 
 /* True while a tune is loaded, whether or not it is paused. */

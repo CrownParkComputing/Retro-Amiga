@@ -419,6 +419,11 @@ void uae4arm_host_music_set_paused(bool paused)
 	music_player_set_paused(paused);
 }
 
+void uae4arm_host_music_release_audio(void)
+{
+	music_player_release_device();
+}
+
 bool uae4arm_host_music_is_paused(void)
 {
 	return music_player_is_paused();

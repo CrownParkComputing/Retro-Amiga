@@ -138,6 +138,14 @@ class MusicPlayer {
     // went off screen. Pausing something already paused costs nothing.
     _stopPolling();
     await _invoke<void>('musicSetPaused', <String, Object?>{'paused': true});
+    // And let go of the audio device, which pausing does not.
+    //
+    // The stream stays open across a pause, and an open playback stream holds
+    // an AudioMix PARTIAL_WAKE_LOCK for as long as the process lives. A
+    // launcher sitting in the background used 0% CPU and still kept the device
+    // awake, which the system reports as heavy battery use. The tune and its
+    // position are remembered either way, so resuming is unchanged.
+    await _invoke<void>('musicReleaseAudio');
     if (_last.playing) {
       _emit(MusicState(playing: true, paused: true, title: _last.title));
     }

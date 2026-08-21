@@ -180,6 +180,10 @@ void uae4arm_host_save_state(const char* path);
 bool uae4arm_host_music_play(const char* path);
 void uae4arm_host_music_stop(void);
 void uae4arm_host_music_set_paused(bool paused);
+/* Closes the audio device. Called when the app leaves the foreground: pausing
+   alone leaves the stream open, which holds a wake lock and keeps the CPU
+   awake for as long as the process lives. */
+void uae4arm_host_music_release_audio(void);
 bool uae4arm_host_music_is_paused(void);
 bool uae4arm_host_music_is_playing(void);
 /* Valid until the next call; copy it if you need to keep it. */

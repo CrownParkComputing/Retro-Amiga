@@ -231,6 +231,12 @@ Java_com_uae4arm2026_MainActivity_nativeMusicSetPaused(JNIEnv*, jclass, jboolean
 	uae4arm_host_music_set_paused(paused != JNI_FALSE);
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_com_uae4arm2026_MainActivity_nativeMusicReleaseAudio(JNIEnv*, jclass)
+{
+	uae4arm_host_music_release_audio();
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_uae4arm2026_MainActivity_nativeMusicIsPlaying(JNIEnv*, jclass)
 {

@@ -59,6 +59,7 @@ class MainActivity : FlutterActivity() {
 		@JvmStatic external fun nativeMusicPlay(path: String): Boolean
 		@JvmStatic external fun nativeMusicStop()
 		@JvmStatic external fun nativeMusicSetPaused(paused: Boolean)
+		@JvmStatic external fun nativeMusicReleaseAudio()
 		@JvmStatic external fun nativeMusicIsPlaying(): Boolean
 		@JvmStatic external fun nativeMusicIsPaused(): Boolean
 		@JvmStatic external fun nativeMusicTitle(): String
@@ -418,6 +419,13 @@ class MainActivity : FlutterActivity() {
 						if (ensureMusicLibrary(this)) {
 							nativeMusicSetPaused(call.argument<Boolean>("paused") ?: false)
 						}
+						result.success(null)
+					}
+					// Closes the audio device, which pausing does not. An open
+					// stream holds an AudioMix wake lock, so a backgrounded
+					// launcher kept the CPU awake at 0% CPU.
+					"musicReleaseAudio" -> {
+						if (ensureMusicLibrary(this)) nativeMusicReleaseAudio()
 						result.success(null)
 					}
 					"musicSetVolume" -> {

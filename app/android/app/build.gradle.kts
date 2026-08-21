@@ -88,7 +88,13 @@ android {
 
     defaultConfig {
         applicationId = "com.uae4arm2026"
-        minSdk = 29
+        // 28, which is this app's real floor rather than a preference.
+        // Amiberry calls posix_spawn (src/osdep/amiberry_update.cpp), and
+        // Bionic did not have it until API 28 -- a build at 26 fails outright
+        // with "use of undeclared identifier 'posix_spawn'". Gradle compiles
+        // this app's native code, so minSdk IS the API the core is built
+        // against; the two cannot drift apart.
+        minSdk = 28
         targetSdk = 36
         // Play production holds 404021019: the legacy Amiberry app's code, from
         // the major*100M + minor*1M + patch*10k + minuteOfDay scheme still in
