@@ -73,7 +73,9 @@ android {
     // the Java package of Uae4ArmEmulatorActivity.
     namespace = "com.uae4arm2026"
     compileSdk = 36
-    ndkVersion = "28.0.13004108"
+    // Same NDK as the rest of the Retro-* family. Gradle builds this app's
+    // native code itself, so this is the compiler, not just a label.
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
