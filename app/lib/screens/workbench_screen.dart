@@ -88,7 +88,6 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   /// True once _attachPad has registered the pad with the core. Until then no
   /// pad event may be pushed in: see _padTarget.
   bool _padAttached = false;
-  bool _paused = false;
 
   /// While a game runs, the rail and the strip step aside after a few
   /// seconds so the picture gets the whole screen. Any touch that is not on
@@ -99,17 +98,11 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
 
   void _wakeChrome() {
     _chromeTimer?.cancel();
-    // A paused game keeps its chrome. The strip is the only thing on screen
-    // saying the machine is stopped and offering the way back into it, and
-    // hiding it after three seconds leaves a frozen picture and no
-    // explanation - which reads as a hang, not a pause.
-    if (!_paused) {
-      _chromeTimer = Timer(const Duration(seconds: 3), () {
-        if (mounted && Emulator.playing.value && !_paused) {
-          setState(() => _chromeVisible = false);
-        }
-      });
-    }
+    _chromeTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && Emulator.playing.value) {
+        setState(() => _chromeVisible = false);
+      }
+    });
     if (!_chromeVisible && mounted) setState(() => _chromeVisible = true);
   }
   PadLayout _layout = PadLayout.defaults;
@@ -127,7 +120,6 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     setState(() {
       _mouseMode = false;
       _keyboardUp = false;
-      _paused = false;
       _chromeVisible = true;
     });
     if (Emulator.playing.value) {
@@ -543,22 +535,6 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
           // hidden the panel's own heading says it. A third copy was just
           // noise next to the toggle.
           const Spacer(),
-          // Said in words, not just by the button's icon. A stopped machine
-          // shows a still picture, which is indistinguishable from a hung one
-          // until something on screen says otherwise - and a tooltip does not
-          // count, because reading it means long-pressing the very button you
-          // are trying to understand.
-          if (inGame && _paused)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: Text(
-                'Paused',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: AmigaColors.textDim,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
           if (inGame) ..._sessionTools(Emulator.inProcessCore!),
         ],
       ),
@@ -611,36 +587,28 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
       // the pad, then the rest. No stop -- the rail is the way out.
       tool(
         tag: 'pauseFab',
-        icon: _paused ? Icons.play_arrow : Icons.pause,
-        tip: _paused ? 'Resume' : 'Pause',
-        active: _paused,
-        onPressed: () {
-          setState(() => _paused = !_paused);
-          // Their pause outranks the one the app applies on the way to the
-          // background: a game paused here must not start again by itself
-          // just because the app came back to the front.
+        icon: Icons.pause,
+        tip: 'Pause and keep your place',
+        onPressed: () async {
+          // Pause leaves the machine, the way the C64 front end's does. It
+          // used to stop the picture in place, which meant the paused state
+          // lived only in this session: nothing on the Resume shelf, and a
+          // machine still loaded behind whatever the user did next.
+          //
+          // stopInProcess writes the snapshot BEFORE the core goes down -
+          // that ordering matters, because the save is serviced by the core's
+          // own thread - so what comes back on Resume is the exact moment
+          // they stepped away.
           Emulator.forgetBackgroundPause();
-          if (_paused) {
-            // Pausing IS the snapshot, as on the C64: the moment you step
-            // away is the moment worth being able to come back to.
-            core.saveSession();
-          }
-          core.setPaused(_paused);
-          if (_paused) {
-            // Everything back, not just the strip. Chrome, sidebar and the
-            // shelf are three separate pieces of state, and restoring only
-            // the strip left a stopped machine looking identical to a hung
-            // one for anyone who had hidden the rail. Pausing is the moment
-            // you want the setups in front of you - to switch disk, change
-            // machine, or pick something else entirely.
-            setState(() {
-              _sidebarHidden = false;
-              _section = WorkbenchSection.setups;
-            });
-          }
-          // Chrome back and held while paused; resuming hands the screen to
-          // the game again on the usual timer.
-          _wakeChrome();
+          Emulator.stopInProcess();
+          await _refreshSession();
+          if (!mounted) return;
+          setState(() {
+                  // Land on Resume, not the shelf: what the user wants in front of
+            // them after pausing is the way back in.
+            _sidebarHidden = false;
+            _section = WorkbenchSection.resume;
+          });
         },
       ),
       tool(
