@@ -72,7 +72,7 @@ android {
     // Must stay com.uae4arm2026: the emulator's JNI entry points are named after
     // the Java package of Uae4ArmEmulatorActivity.
     namespace = "com.uae4arm2026"
-    compileSdk = 37
+    compileSdk = 36
     ndkVersion = "28.0.13004108"
 
     compileOptions {
@@ -87,7 +87,7 @@ android {
     defaultConfig {
         applicationId = "com.uae4arm2026"
         minSdk = 29
-        targetSdk = 37
+        targetSdk = 36
         // Play production holds 404021019: the legacy Amiberry app's code, from
         // the major*100M + minor*1M + patch*10k + minuteOfDay scheme still in
         // android/app/build.gradle (4.4.2, built at 16:59). The Flutter
