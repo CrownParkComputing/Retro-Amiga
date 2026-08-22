@@ -9,6 +9,7 @@ import '../data/file_category.dart';
 import '../data/media_folder.dart';
 import '../data/media_library.dart';
 import '../data/media_root.dart';
+import '../data/platform_info.dart';
 import '../data/startup_import.dart';
 import '../data/whdload_support.dart';
 import '../widgets/amiga_logo.dart';
@@ -311,7 +312,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   : 'Kickstart ROMs, floppies, hard drives, CD images and '
                         'WHDLoad archives. You supply your own: drop them - '
                         'zipped is fine - into this app\'s folder in the '
-                        'Files app (On My iPad > Retro-Amiga), then Scan.',
+                        'Files app (${filesAppDeviceName(context)} > '
+                        'Retro-Amiga), then Scan.',
             ),
             const SizedBox(height: 12),
             if (_scanning)

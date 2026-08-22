@@ -172,6 +172,12 @@ android/.gradle_home/
 # iOS cross-build trees (dependency sources and object files)
 native/ios/build/
 native/ios/out/
+# The Mac-native simulator build (build-core-simulator.sh) and its output.
+# Same reasoning as the device trees above: multi-GB of SDL/FLAC/libpng
+# sources and objects, all reproducible from the script.
+native/ios/build-sim/
+native/ios/out-simulator/
+native/ios/xcframework-stage/
 
 # Reference zips never live in the repo; the set is kept in
 # ~/Documents/retro-zips and documented in docs/ZIPS.md.

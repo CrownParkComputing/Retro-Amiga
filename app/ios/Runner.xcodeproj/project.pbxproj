@@ -21,7 +21,7 @@
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
-		AMIGA0012F0000000000001A /* libuae4arm.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = AMIGA0032F0000000000001A /* libuae4arm.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		AMIGA0012F0000000000001A /* libuae4arm.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = AMIGA0032F0000000000001A /* libuae4arm.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -41,7 +41,7 @@
 			dstPath = "";
 			dstSubfolderSpec = 10;
 			files = (
-				AMIGA0012F0000000000001A /* libuae4arm.framework in Embed Frameworks */,
+				AMIGA0012F0000000000001A /* libuae4arm.xcframework in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -71,7 +71,7 @@
 		97C147001CF9000F007C117D /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AC4D9ADAD3A285CF6C83BE0C /* TouchMouseView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TouchMouseView.swift; sourceTree = "<group>"; };
-		AMIGA0032F0000000000001A /* libuae4arm.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = libuae4arm.framework; path = Frameworks/libuae4arm.framework; sourceTree = "<group>"; };
+		AMIGA0032F0000000000001A /* libuae4arm.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = libuae4arm.xcframework; path = Frameworks/libuae4arm.xcframework; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -150,7 +150,7 @@
 		AMIGA0052F0000000000001A /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				AMIGA0032F0000000000001A /* libuae4arm.framework */,
+				AMIGA0032F0000000000001A /* libuae4arm.xcframework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -395,7 +395,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = iphoneos;
-				TARGETED_DEVICE_FAMILY = 2;
+				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Profile;
@@ -522,7 +522,7 @@
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = 2;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
@@ -574,7 +574,7 @@
 				SUPPORTED_PLATFORMS = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
-				TARGETED_DEVICE_FAMILY = 2;
+				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
