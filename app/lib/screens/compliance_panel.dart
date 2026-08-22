@@ -8,8 +8,6 @@
 // The sibling of Retro-C64's compliance screen, deliberately: the two apps
 // are reviewed by the same people against the same rules, and an answer that
 // is phrased differently in each is an answer that has to be checked twice.
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 

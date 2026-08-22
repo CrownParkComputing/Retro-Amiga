@@ -34,8 +34,12 @@ flutter:
 
   assets:
     # The compliance demo disk. Ours, built by tool/build_demo.sh from
-    # tool/demo_boot.s: a boot block that drives the chipset directly, so it
-    # is the same demo on the bundled AROS ROM as on a real Kickstart.
+    # tool/demo_src/demo.c: an OFS floppy with a standard boot block and an
+    # S/startup-sequence, whose program reaches the ROM only through
+    # dos.library. It went that way because the boot block it replaced drove
+    # the chipset directly and AROS -- entitled not to execute a non-DOS boot
+    # block -- simply never ran it. OFS rather than FFS so every Kickstart the
+    # app offers can boot it, back to the 1.3-era machines.
     - assets/demo/demo.adf
     # WHDLoad's own boot files and per-game database, shipped with the app.
     # Amiberry's booter mounts these as DH3 while a game runs; without them a
