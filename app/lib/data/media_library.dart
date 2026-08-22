@@ -6,6 +6,8 @@ import 'dart:isolate';
 
 import 'amiga_model.dart';
 import 'app_log.dart';
+import 'app_prefs.dart';
+import 'compliance_demo.dart';
 import 'file_category.dart';
 import 'host_paths.dart';
 import 'media_root.dart';
@@ -233,6 +235,18 @@ class MediaLibrary {
   /// shared storage under /sdcard; iOS has only the app's own Documents, which
   /// is where files dropped in through the Files app land.
   static Future<List<String>> defaultRoots() async {
+    // Compliance mode looks in ONE folder, and it is not the user's.
+    //
+    // Everything the demo runs on -- the AROS ROMs and the demo disk -- is
+    // written into that folder, so this is the whole search path while the
+    // mode is on. It is what makes the mode's claim true rather than merely
+    // stated: the library cannot list the user's games because it is not
+    // looking at them, and the ROM picker cannot reach their Kickstart
+    // because it is not in the path. Filtering results afterwards would have
+    // left both one missed code path away from being wrong.
+    if (await AppPrefs.complianceMode()) {
+      return <String>[(await ComplianceDemo.folder()).path];
+    }
     if (Platform.isAndroid) {
       // The app's own media root, not the whole of /sdcard. Scoped storage
       // will not let this app list shared storage at all, so walking /sdcard
@@ -661,6 +675,11 @@ class MediaLibrary {
       final File file = await _indexPath();
       file.writeAsStringSync(
         jsonEncode(<String, Object>{
+          // Which mode wrote this. A cache written in one mode must not be
+          // served in the other: the whole point of compliance mode is that
+          // the user's files are not in the picture, and a stale index would
+          // put them back on screen without anything having scanned them.
+          'complianceMode': await AppPrefs.complianceMode(),
           'roots': index.roots,
           'files': index.files.map((MediaFile f) => f.toJson()).toList(),
         }),
@@ -678,6 +697,12 @@ class MediaLibrary {
       if (!file.existsSync()) return const MediaIndex.empty();
       final Object? json = jsonDecode(file.readAsStringSync());
       if (json is! Map<String, Object?>) return const MediaIndex.empty();
+      // Written in the other mode: treat as no cache at all, which costs a
+      // rescan and is the only answer that cannot show the wrong files.
+      if ((json['complianceMode'] as bool? ?? false) !=
+          await AppPrefs.complianceMode()) {
+        return const MediaIndex.empty();
+      }
       final List<Object?> rawFiles =
           (json['files'] as List<Object?>?) ?? const <Object?>[];
       final List<MediaFile> files = <MediaFile>[];

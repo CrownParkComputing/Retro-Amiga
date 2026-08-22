@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart' show ByteData, rootBundle;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:uae4arm2026/data/amiga_model.dart';
+import 'package:uae4arm2026/data/aros_rom.dart';
 import 'package:uae4arm2026/data/file_category.dart';
 import 'package:uae4arm2026/data/compliance_demo.dart';
 import 'package:uae4arm2026/data/media_library.dart';
@@ -61,6 +62,24 @@ void main() {
 
     // Ordinary mode is unchanged.
     expect(RomPicker.kickstartFor(AmigaModel.a500, roms)?.name, isNotNull);
+  });
+
+  test('preparing the demo puts the ROMs in with it', () async {
+    // The demo folder is the whole search path while the mode is on, so if
+    // the ROMs are not in it the machine has nothing to boot -- and the mode
+    // would fail in the least obvious way, with a library that looks right
+    // and a machine that does not start.
+    final Directory dir = Directory.systemTemp.createTempSync('amigaroms');
+    addTearDown(() => dir.deleteSync(recursive: true));
+
+    await ComplianceDemo.prepare(into: dir);
+    final List<String> files = await ComplianceDemo.files(from: dir);
+
+    expect(files, contains(ComplianceDemo.diskName));
+    for (final String rom in ArosRom.fileNames) {
+      expect(files, contains(rom),
+          reason: 'the demo cannot boot without $rom beside it');
+    }
   });
 
   test('preparing the demo leaves exactly one disk image', () async {

@@ -61,9 +61,19 @@ class ComplianceDemo {
     final data = await rootBundle.load(_diskAsset);
     await disk.writeAsBytes(data.buffer.asUint8List(), flush: true);
 
-    // The ROM goes in beside it, so everything the demo runs on is in one
-    // folder a reviewer can open.
-    await ArosRom.installIfMissing();
+    // The ROMs go in beside it, so everything the demo runs on is in one
+    // folder -- one a reviewer can open, and the only folder the app looks
+    // in while the mode is on. That is what keeps the mode honest: the
+    // library cannot show the user's files because it is not looking at
+    // them, and the ROM picker cannot reach their Kickstart because it is
+    // not in the search path.
+    for (final String name in ArosRom.fileNames) {
+      final File rom = File('${dir.path}/$name');
+      if (!rom.existsSync()) {
+        final data = await rootBundle.load('assets/roms/$name');
+        await rom.writeAsBytes(data.buffer.asUint8List(), flush: true);
+      }
+    }
     return disk.path;
   }
 
