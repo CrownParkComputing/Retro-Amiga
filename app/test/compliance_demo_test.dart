@@ -7,6 +7,7 @@ import 'package:flutter/services.dart' show ByteData, rootBundle;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:uae4arm2026/data/amiga_model.dart';
 import 'package:uae4arm2026/data/aros_rom.dart';
+import 'package:uae4arm2026/data/save_states.dart';
 import 'package:uae4arm2026/data/file_category.dart';
 import 'package:uae4arm2026/data/compliance_demo.dart';
 import 'package:uae4arm2026/data/media_library.dart';
@@ -80,6 +81,42 @@ void main() {
       expect(files, contains(rom),
           reason: 'the demo cannot boot without $rom beside it');
     }
+  });
+
+  test('a saved session is recognised by the ROM its config booted', () async {
+    // Nothing in Dart writes the save index -- the core appends to it as it
+    // exits -- so a session cannot be tagged at write time. It is identified
+    // by what its config actually booted, and a compliance machine is the
+    // only one that boots its ROM out of the demo folder.
+    final Directory dir = Directory.systemTemp.createTempSync('amigacfg');
+    addTearDown(() => dir.deleteSync(recursive: true));
+
+    final File demoCfg = File('${dir.path}/demo.uae')
+      ..writeAsStringSync(
+          'kickstart_rom_file=/media/Compliance/aros-rom.bin\nfloppy0=x\n');
+    final File userCfg = File('${dir.path}/mine.uae')
+      ..writeAsStringSync('kickstart_rom_file=/media/Kickstarts/kick31.rom\n');
+
+    SaveState at(File cfg) => SaveState(
+          title: 'x',
+          statePath: cfg.path,
+          configPath: cfg.path,
+          savedAt: DateTime.fromMillisecondsSinceEpoch(0),
+        );
+
+    expect(at(demoCfg).isComplianceFor('/media/Compliance'), isTrue);
+    expect(at(userCfg).isComplianceFor('/media/Compliance'), isFalse);
+
+    // A config that has gone counts as the user's, which keeps an orphaned
+    // entry in their list rather than in the demo's.
+    expect(
+        SaveState(
+          title: 'x',
+          statePath: '${dir.path}/nope',
+          configPath: '${dir.path}/nope.uae',
+          savedAt: DateTime.fromMillisecondsSinceEpoch(0),
+        ).isComplianceFor('/media/Compliance'),
+        isFalse);
   });
 
   test('preparing the demo leaves exactly one disk image', () async {

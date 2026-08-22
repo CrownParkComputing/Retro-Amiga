@@ -170,7 +170,9 @@ class _CompliancePanelState extends State<CompliancePanel> {
                     alignment: Alignment.centerLeft,
                     child: Text(
                       'To run the demo:\n'
-                      '  1.  Open Games in the sidebar.\n'
+                      '  1.  Open FILES in the sidebar -- not Games. Games '
+                      'lists saved machine setups; Files lists the disks '
+                      'themselves, and the demo is a disk.\n'
                       '  2.  Start "${ComplianceDemo.diskName}".\n\n'
                       'It is inserted and booted the same way any other disk '
                       'is -- nothing is typed in or started for you, so what '
