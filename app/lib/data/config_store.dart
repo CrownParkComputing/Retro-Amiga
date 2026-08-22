@@ -5,6 +5,7 @@ import 'config_generator.dart';
 import 'host_paths.dart';
 import 'file_category.dart';
 import 'app_prefs.dart';
+import 'compliance_demo.dart';
 import 'media_library.dart';
 import 'media_root.dart';
 import 'emulator_settings.dart';
@@ -363,6 +364,17 @@ class ConfigStore {
     final Directory dir = await configDirectory();
     final List<SavedConfig> configs = <SavedConfig>[];
 
+    // Setups belong to the machine that is running.
+    //
+    // Compliance mode was already keeping the user's disks out of the
+    // library and their sessions out of Resume, but their SETUPS were still
+    // listed -- which is the screen called Games, so the mode looked like it
+    // had done nothing. A setup is recognised the same way a session is: a
+    // compliance machine is the only one whose ROM comes out of the demo
+    // folder.
+    final bool compliance = await AppPrefs.complianceMode();
+    final String demoFolder = (await ComplianceDemo.folder()).path;
+
     for (final FileSystemEntity entity in dir.listSync()) {
       if (entity is! File) continue;
       final String name = entity.uri.pathSegments.last;
@@ -375,6 +387,12 @@ class ConfigStore {
       } on Exception {
         continue;
       }
+      final bool isCompliance = text
+          .split('\n')
+          .any((String l) =>
+              l.startsWith('kickstart_rom_file=') && l.contains(demoFolder));
+      if (isCompliance != compliance) continue;
+
       configs.add(
         SavedConfig(
           name: name.substring(0, name.length - 4),

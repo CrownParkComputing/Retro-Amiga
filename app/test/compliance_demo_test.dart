@@ -119,6 +119,25 @@ void main() {
         isFalse);
   });
 
+  test('a setup belongs to the machine whose ROM it names', () async {
+    // Same rule as a saved session, and needed for the same reason: the
+    // user's setups were still listed in compliance mode -- on the screen
+    // called Games -- so the mode looked as though it had done nothing.
+    const String demoFolder = '/media/Compliance';
+    bool isCompliance(String config) => config
+        .split('\n')
+        .any((String l) =>
+            l.startsWith('kickstart_rom_file=') && l.contains(demoFolder));
+
+    expect(isCompliance('kickstart_rom_file=/media/Compliance/aros-rom.bin'),
+        isTrue);
+    expect(isCompliance('kickstart_rom_file=/media/Kickstarts/kick31.rom'),
+        isFalse);
+    // A setup that names no ROM at all is the user's, not the demo's: the
+    // demo always names one, because its whole point is which ROM it booted.
+    expect(isCompliance('floppy0=/media/Floppies/game.adf'), isFalse);
+  });
+
   test('preparing the demo leaves exactly one disk image', () async {
     final Directory dir = Directory.systemTemp.createTempSync('amigademo');
     addTearDown(() => dir.deleteSync(recursive: true));
