@@ -26,6 +26,13 @@ void main() {
 
     expect(bytes.length, 901120, reason: 'a standard 880K disk');
     expect(String.fromCharCodes(bytes.sublist(0, 3)), 'DOS');
+    // OFS, not FFS: every Kickstart can boot OFS, including the 1.3-era
+    // machines this app offers. Byte 3 is the filesystem flags.
+    expect(bytes[3], 0, reason: 'OFS -- FFS will not boot on a 1.3 machine');
+    // And there has to be code in the boot block, or the ROM has nothing to
+    // execute and the machine sits on the insert-disk screen.
+    expect(bytes.sublist(12, 1024).any((int b) => b != 0), isTrue,
+        reason: 'the boot block is empty');
 
     var sum = 0;
     for (var i = 0; i < 1024; i += 4) {
