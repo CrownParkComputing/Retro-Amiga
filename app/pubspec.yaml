@@ -8,7 +8,7 @@ publish_to: 'none'
 # before bumping rather than incrementing this line blind.
 #
 # Play holds 15, App Store holds 14. 16 clears both.
-version: 1.0.0+19
+version: 1.0.0+38
 
 environment:
   sdk: ^3.11.5

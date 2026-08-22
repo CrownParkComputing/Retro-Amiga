@@ -35,14 +35,20 @@ cd "$APP_DIR"
 # this reason, so fail clearly if it is absent rather than producing an app that
 # installs and then dies at "dlopen failed".
 #
-# It is a .framework and not a bare .dylib deliberately -- a loose dylib in
+# An .xcframework holding frameworks, never a bare .dylib: a loose dylib in
 # Frameworks/ is rejected by App Store validation as 90426 Invalid Swift
-# Support. EmulatorHost.swift dlopens this exact path.
-CORE="ios/Frameworks/libuae4arm.framework/libuae4arm"
-if [ ! -f "$CORE" ]; then
-  echo "error: missing $CORE -- the emulator core must be committed" >&2
-  exit 1
-fi
+# Support, and the framework path inside is the one EmulatorHost.swift
+# dlopens. The xcframework carries the device slice AND the simulator one so
+# Xcode can embed whichever the destination needs; both are checked here,
+# because a half-populated one builds for a device and then fails at dlopen
+# on a simulator -- the exact failure it exists to prevent.
+CORE_XC="ios/Frameworks/libuae4arm.xcframework"
+for slice in ios-arm64 ios-arm64-simulator; do
+  if [ ! -f "$CORE_XC/$slice/libuae4arm.framework/libuae4arm" ]; then
+    echo "error: missing $CORE_XC/$slice -- the emulator core must be committed" >&2
+    exit 1
+  fi
+done
 
 echo "--- resolving packages"
 flutter precache --ios
