@@ -145,6 +145,33 @@ android {
         }
     }
 
+    // The last word on which ABIs ship, enforced at packaging time.
+    //
+    // The buildTypes.configureEach block above was supposed to be that, on
+    // the reasoning that it runs after the Flutter plugin's apply(). It no
+    // longer does -- a release APK built with the default (arm64-v8a) came
+    // out carrying all three ABIs, which is two things at once:
+    //
+    //   * a build three times longer than it needs to be, because the native
+    //     side compiles ~1230 objects per ABI and only one of them is ever
+    //     run here;
+    //   * a correctness problem, because 32-bit MUST NOT ship. The core
+    //     reserves a 4GB natmem region at startup and no armeabi-v7a process
+    //     can map it, so a device served that ABI gets an app that cannot
+    //     start.
+    //
+    // Excludes cannot be re-added by whatever refills abiFilters, so this
+    // holds regardless of plugin ordering. It is derived from the same
+    // property, so CI passing the full set still ships the full set.
+    packaging {
+        jniLibs {
+            val all = setOf("arm64-v8a", "armeabi-v7a", "x86_64")
+            for (abi in all - androidAbiFilters.toSet()) {
+                excludes += "lib/$abi/**"
+            }
+        }
+    }
+
     signingConfigs {
         create("release") {
             if (keystoreConfig != null) {
@@ -175,6 +202,26 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+        }
+    }
+}
+
+// The last word on which ABIs are BUILT.
+//
+// packaging.jniLibs above stops the extra ones shipping, but they are still
+// compiled first -- roughly 1,230 objects per ABI, three ABIs, for a device
+// that runs one. finalizeDsl is the hook that runs after every plugin has
+// finished configuring the DSL, so what it sets is what the native build
+// task actually sees. Setting the same thing in defaultConfig or in
+// buildTypes.configureEach does not survive the Flutter plugin refilling
+// abiFilters from its own DEFAULT_PLATFORMS.
+androidComponents {
+    finalizeDsl { ext ->
+        ext.defaultConfig.ndk.abiFilters.clear()
+        ext.defaultConfig.ndk.abiFilters.addAll(androidAbiFilters)
+        ext.buildTypes.forEach { buildType ->
+            buildType.ndk.abiFilters.clear()
+            buildType.ndk.abiFilters.addAll(androidAbiFilters)
         }
     }
 }
