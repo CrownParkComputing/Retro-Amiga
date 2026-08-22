@@ -60,13 +60,35 @@ val androidVersionCodeBase = 500_000_000
 
 val keystoreConfig = resolveKeystore()
 
-// ABIs to build, as -PandroidAbiFilters=arm64-v8a,armeabi-v7a,x86_64. Defaults to
-// arm64-v8a for fast local builds; CI passes the full set for release.
+// ABIs to build. arm64-v8a everywhere -- local builds and both release
+// workflows, which pass ORG_GRADLE_PROJECT_androidAbiFilters=arm64-v8a.
+//
+// 32-BIT CANNOT WORK HERE, so armeabi-v7a is refused rather than merely left
+// out of the default: the core reserves a 4GB natmem region as it starts, and
+// no armeabi-v7a process can map it, so a device served that ABI gets an app
+// that cannot start. Shipping it is worse than not supporting the device,
+// because Play offers it and the user is the one who finds out.
+//
+// x86_64 is still selectable with -PandroidAbiFilters=arm64-v8a,x86_64 for
+// anyone running the Android emulator on a PC. It is not built by default
+// because nothing this project ships to runs on it.
 val androidAbiFilters: List<String> =
     (project.findProperty("androidAbiFilters") as String? ?: "arm64-v8a")
         .split(',')
         .map { it.trim() }
         .filter { it.isNotEmpty() }
+        .filter { abi ->
+            if (abi == "armeabi-v7a") {
+                logger.warn(
+                    "Ignoring armeabi-v7a: the core needs a 4GB natmem " +
+                    "reservation that a 32-bit process cannot map."
+                )
+                false
+            } else {
+                true
+            }
+        }
+        .ifEmpty { listOf("arm64-v8a") }
 
 android {
     // Must stay com.uae4arm2026: the emulator's JNI entry points are named after
@@ -125,11 +147,14 @@ android {
     // The Flutter Gradle Plugin clears ndk.abiFilters on every build type and
     // refills it from its own hardcoded DEFAULT_PLATFORMS, which always
     // includes armeabi-v7a. AGP then UNIONS that with the defaultConfig filter
-    // above, so defaultConfig alone can never subtract an ABI - every bundle
-    // shipped 32-bit regardless of what androidAbiFilters said. This block runs
-    // after the plugin's apply(), so clearing here is what actually decides the
-    // packaged set. 32-bit must not ship: the core reserves a 4GB natmem region
-    // at startup, which no armeabi-v7a process can map.
+    // above, so defaultConfig alone can never subtract an ABI.
+    //
+    // Clearing here was once enough, on the reasoning that this block runs
+    // after the plugin's apply(). It is not any more -- finalizeDsl at the
+    // foot of this file is what decides it now, and packaging.jniLibs decides
+    // what is packaged whatever becomes of the filters. This is kept as the
+    // first of the three because it is harmless and still narrows the set for
+    // anything that reads the DSL early.
     buildTypes.configureEach {
         ndk {
             abiFilters.clear()
