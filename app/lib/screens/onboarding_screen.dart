@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../data/amiga_model.dart';
 import '../data/app_prefs.dart';
+import '../data/aros_rom.dart';
 import '../data/file_category.dart';
 import '../data/media_folder.dart';
 import '../data/media_library.dart';
@@ -36,8 +37,20 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   String? _sourceFolder;
   String? _notice;
 
-  /// A Kickstart is the one thing that cannot be worked around later.
+  /// A Kickstart is the one thing that cannot be worked around later --
+  /// except that it now can, because the bundled AROS ROM is itself a
+  /// Kickstart the scan will count. So this stays "can the machine boot",
+  /// and [_hasRealKickstart] answers the different question of whether
+  /// commercial software has a fair chance of running.
   bool get _hasRom => _index.countOf(FileCategory.roms) > 0;
+
+  /// Kickstarts the user supplied, as opposed to the AROS pair the app
+  /// installs on every launch. Counted by NAME rather than remembered in a
+  /// flag, because a user who drops kick31.rom in later never comes back
+  /// through here to have a flag updated.
+  bool get _hasRealKickstart => _index
+      .of(FileCategory.roms)
+      .any((MediaFile f) => !ArosRom.fileNames.contains(f.name.toLowerCase()));
 
   String _root = '';
   bool _importing = false;
@@ -376,15 +389,19 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   ),
                 );
               }),
+              // No error card for "no Kickstart" any more: the app installs
+              // the AROS pair on every launch, so there is always one, and a
+              // red panel saying otherwise would be untrue. The AROS section
+              // below covers what that does and does not get you.
               if (!_hasRom)
                 Card(
                   color: Theme.of(context).colorScheme.errorContainer,
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Text(
-                      'No Kickstart ROM found. The Amiga cannot boot without '
-                      'one, so setup needs at least one before you can go on. '
-                      'Amiga Forever is the usual legitimate source.',
+                      'No Kickstart ROM found, and the built-in AROS ROM did '
+                      'not install either -- which should not happen. Check '
+                      'the Logs panel, or add a Kickstart of your own.',
                       style: TextStyle(
                         color: Theme.of(context).colorScheme.onErrorContainer,
                       ),
@@ -517,8 +534,67 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               const SizedBox(height: 24),
             ],
 
+            // The point of this section is that the app demonstrates itself.
+            // Everything above asks the user for files; this says they do not
+            // need any of it to see an Amiga boot, and is honest about the
+            // limits so nobody concludes the emulator is broken when a
+            // WHDLoad title refuses to run on AROS.
+            _SectionHeader(_hasRealKickstart ? '✓' : 'i', 'It works already'),
+            const SizedBox(height: 8),
+            Text(
+              _hasRealKickstart
+                  ? 'You have your own Kickstart, so the app will use it -- '
+                        'it is preferred over the built-in one whenever it is '
+                        'present, and gives the best compatibility.'
+                  : 'No Kickstart of your own? The app ships AROS, an open '
+                        'reimplementation of the Amiga ROM, and has already '
+                        'installed it. Finish setup and the machine boots to '
+                        'a Workbench desktop with nothing else supplied.',
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: Column(
+                children: <Widget>[
+                  ListTile(
+                    leading: Icon(
+                      _hasRealKickstart
+                          ? Icons.check_circle
+                          : Icons.memory_outlined,
+                      color: _hasRealKickstart
+                          ? Theme.of(context).colorScheme.primary
+                          : null,
+                    ),
+                    title: Text(
+                      _hasRealKickstart
+                          ? 'Your Kickstart is in use'
+                          : 'Running on AROS',
+                    ),
+                    subtitle: Text(
+                      _hasRealKickstart
+                          ? 'AROS stays installed as a fallback. Nothing to do.'
+                          : 'AROS is not a Kickstart clone. Workbench, the '
+                                'shell and plenty of ADFs run; many WHDLoad '
+                                'titles and some games need the real thing.',
+                    ),
+                  ),
+                  if (!_hasRealKickstart)
+                    const ListTile(
+                      leading: Icon(Icons.add_circle_outline),
+                      title: Text('To use a real Kickstart'),
+                      subtitle: Text(
+                        'Put kick13.rom / kick31.rom (Amiga Forever is the '
+                        'usual legitimate source) with your other files and '
+                        'scan again. It is picked up automatically and used '
+                        'in preference to AROS -- no setting to change.',
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
             _SectionHeader(
-              Platform.isAndroid ? '4' : '3',
+              Platform.isAndroid ? '5' : '4',
               'Pick your usual Amiga',
             ),
             const SizedBox(height: 8),
@@ -583,7 +659,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 child: Text(
-                  _hasRom ? 'Finish setup' : 'Add a Kickstart ROM to continue',
+                  _hasRealKickstart
+                      ? 'Finish setup'
+                      : 'Finish setup and see it working',
                 ),
               ),
             ),
