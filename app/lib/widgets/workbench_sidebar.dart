@@ -32,6 +32,9 @@ enum WorkbenchSection {
   settings('Settings', '⚙️', 1),
   music('Music', '🎵', 2),
   history('History', '📜', 2),
+  // Its own destination, and named so a store reviewer recognises it on
+  // sight rather than having to be told where to look.
+  compliance('Compliance', '✅', 2),
   about('About', 'ℹ️', 2);
 
   const WorkbenchSection(this.title, this.icon, this.group);

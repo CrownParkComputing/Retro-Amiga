@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../data/amiga_model.dart';
 import '../data/app_prefs.dart';
+import '../theme/amiga_theme.dart';
+import '../data/compliance_demo.dart';
 import '../data/aros_rom.dart';
 import '../data/file_category.dart';
 import '../data/media_folder.dart';
@@ -267,7 +269,41 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
   }
 
+  bool _busyCompliance = false;
+
+  /// Switches the app to the bundled AROS ROM and its demo disk, then
+  /// finishes setup.
+  ///
+  /// Nothing is started for the user: the demo is a disk they open from
+  /// Games like any other, which is also the only version of this that shows
+  /// them how to open anything else.
+  Future<void> _storeCompliance() async {
+    setState(() => _busyCompliance = true);
+    try {
+      await ComplianceDemo.prepare();
+      await AppPrefs.setComplianceMode(value: true);
+      await AppPrefs.setDefaultModel(_model);
+      await AppPrefs.setSetupComplete(value: true);
+      await AppPrefs.rememberBuild();
+      if (!mounted) return;
+      widget.onFinished();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not switch to the bundled ROM: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _busyCompliance = false);
+    }
+  }
+
   Future<void> _finish() async {
+    // Start means "my own Kickstart and my own files", so it also leaves
+    // compliance mode. The flag surviving would boot the bundled ROM again
+    // on the next machine, having just been asked for the opposite.
+    if (await AppPrefs.complianceMode()) {
+      await AppPrefs.setComplianceMode(value: false);
+    }
     await AppPrefs.setDefaultModel(_model);
     await AppPrefs.setSetupComplete(value: true);
     widget.onFinished();
@@ -299,6 +335,68 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               ],
             ),
             const SizedBox(height: 24),
+
+            // The choice, before the walkthrough rather than after it.
+            //
+            // Store Compliance used to sit at the bottom, past four sections
+            // about finding files and choosing folders -- so the one route
+            // that needs nothing from the user was the one they had to read
+            // the most to find. A reviewer with no Kickstart and no Amiga to
+            // take one from should not have to scroll through instructions
+            // aimed at somebody else.
+            //
+            // The sections stay: they are the other route, and they are what
+            // someone setting up their own machine came for.
+            Card(
+              color: AmigaColors.panel,
+              shape: RoundedRectangleBorder(
+                side: const BorderSide(color: AmigaColors.panelBorder),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    Text('Two ways in',
+                        style: Theme.of(context).textTheme.titleMedium),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'JUST SHOW ME IT WORKING\n'
+                      'The app ships AROS -- an open reimplementation of the '
+                      'Amiga ROM -- and a demo disk of our own. Nothing is '
+                      'needed from you: no Kickstart, no files, no network.',
+                      style: TextStyle(color: AmigaColors.textDim, height: 1.4),
+                    ),
+                    const SizedBox(height: 10),
+                    OutlinedButton(
+                      onPressed: _busyCompliance ? null : _storeCompliance,
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 10),
+                        child: Text('Store Compliance'),
+                      ),
+                    ),
+                    const Divider(height: 28, color: AmigaColors.panelBorder),
+                    const Text(
+                      'SET UP MY OWN AMIGA\n'
+                      'Your Kickstart, your disks and your WHDLoad games. The '
+                      'steps below walk through it; Start finishes at any '
+                      'point and the rest can be done from the sidebar.',
+                      style: TextStyle(color: AmigaColors.textDim, height: 1.4),
+                    ),
+                    const SizedBox(height: 10),
+                    FilledButton(
+                      onPressed: _hasRom ? _finish : null,
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 10),
+                        child: Text('Start'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 28),
 
             const _SectionHeader('1', 'Find your Amiga files'),
             const SizedBox(height: 8),
@@ -667,15 +765,16 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             ),
             const SizedBox(height: 24),
 
+            // Start again at the foot of the walkthrough, for anyone who has
+            // read it through. Store Compliance is NOT repeated here: it
+            // belongs with the choice at the top, and a second copy at the
+            // bottom would suggest it is the thing you do after setting up
+            // your own machine, which is the opposite of what it is.
             FilledButton(
               onPressed: _hasRom ? _finish : null,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Text(
-                  _hasRealKickstart
-                      ? 'Finish setup'
-                      : 'Finish setup and see it working',
-                ),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text('Start'),
               ),
             ),
             const SizedBox(height: 24),

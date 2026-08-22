@@ -167,7 +167,13 @@ class _RootState extends State<_Root> {
     if (_setupComplete == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    if (_setupComplete!) return const WorkbenchScreen();
+    if (_setupComplete!) {
+      return WorkbenchScreen(
+        // Compliance mode is a narrow place to be, so the way back to the
+        // walkthrough has to be reachable from inside it.
+        onRerunSetup: () => setState(() => _setupComplete = false),
+      );
+    }
     return OnboardingScreen(
       onFinished: () async {
         // Remembered on the way out rather than on the way in: a walkthrough

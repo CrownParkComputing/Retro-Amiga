@@ -1,5 +1,8 @@
 import 'dart:io';
 
+import 'app_prefs.dart';
+import 'compliance_demo.dart';
+
 import 'host_paths.dart';
 
 /// A game you can pick up where you left it.
@@ -22,6 +25,25 @@ class SaveState {
   final DateTime savedAt;
 
   bool get exists => File(statePath).existsSync();
+
+  /// Whether this session was saved in compliance mode, read from the config
+  /// it was running: a compliance machine boots its ROM out of the demo
+  /// folder, and nothing else does.
+  ///
+  /// A config that has gone counts as NOT compliance, which keeps an
+  /// orphaned entry in the user's own list rather than in the demo's.
+  bool isComplianceFor(String demoFolder) {
+    try {
+      final File config = File(configPath);
+      if (!config.existsSync()) return false;
+      return config
+          .readAsLinesSync()
+          .any((String l) =>
+              l.startsWith('kickstart_rom_file=') && l.contains(demoFolder));
+    } on Object {
+      return false;
+    }
+  }
 
   /// "3 minutes ago" and the like. Relative rather than a clock time, because
   /// what matters is which of five is the one you were just playing.
@@ -74,7 +96,24 @@ class SaveStates {
         // A state whose file has gone is not worth offering.
         if (state.exists) states.add(state);
       }
-      return states;
+
+      // Only sessions belonging to the machine that is running.
+      //
+      // A state saved on the user's Kickstart has no business being offered
+      // in compliance mode: restoring it would put their titles on screen in
+      // the mode whose whole point is that everything shown came with the
+      // app, and it would restore a snapshot into a machine booted on a
+      // different ROM. The reverse is true too -- demo sessions are clutter
+      // in their list.
+      //
+      // Identified by what the saved config actually booted, because nothing
+      // in Dart writes this index: the core appends to it as it exits, so
+      // there is no write to tag.
+      final bool compliance = await AppPrefs.complianceMode();
+      final String demoFolder = (await ComplianceDemo.folder()).path;
+      return states
+          .where((SaveState s) => s.isComplianceFor(demoFolder) == compliance)
+          .toList();
     } on Object {
       return <SaveState>[];
     }

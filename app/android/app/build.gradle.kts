@@ -60,13 +60,35 @@ val androidVersionCodeBase = 500_000_000
 
 val keystoreConfig = resolveKeystore()
 
-// ABIs to build, as -PandroidAbiFilters=arm64-v8a,armeabi-v7a,x86_64. Defaults to
-// arm64-v8a for fast local builds; CI passes the full set for release.
+// ABIs to build. arm64-v8a everywhere -- local builds and both release
+// workflows, which pass ORG_GRADLE_PROJECT_androidAbiFilters=arm64-v8a.
+//
+// 32-BIT CANNOT WORK HERE, so armeabi-v7a is refused rather than merely left
+// out of the default: the core reserves a 4GB natmem region as it starts, and
+// no armeabi-v7a process can map it, so a device served that ABI gets an app
+// that cannot start. Shipping it is worse than not supporting the device,
+// because Play offers it and the user is the one who finds out.
+//
+// x86_64 is still selectable with -PandroidAbiFilters=arm64-v8a,x86_64 for
+// anyone running the Android emulator on a PC. It is not built by default
+// because nothing this project ships to runs on it.
 val androidAbiFilters: List<String> =
     (project.findProperty("androidAbiFilters") as String? ?: "arm64-v8a")
         .split(',')
         .map { it.trim() }
         .filter { it.isNotEmpty() }
+        .filter { abi ->
+            if (abi == "armeabi-v7a") {
+                logger.warn(
+                    "Ignoring armeabi-v7a: the core needs a 4GB natmem " +
+                    "reservation that a 32-bit process cannot map."
+                )
+                false
+            } else {
+                true
+            }
+        }
+        .ifEmpty { listOf("arm64-v8a") }
 
 android {
     // Must stay com.uae4arm2026: the emulator's JNI entry points are named after
@@ -125,11 +147,14 @@ android {
     // The Flutter Gradle Plugin clears ndk.abiFilters on every build type and
     // refills it from its own hardcoded DEFAULT_PLATFORMS, which always
     // includes armeabi-v7a. AGP then UNIONS that with the defaultConfig filter
-    // above, so defaultConfig alone can never subtract an ABI - every bundle
-    // shipped 32-bit regardless of what androidAbiFilters said. This block runs
-    // after the plugin's apply(), so clearing here is what actually decides the
-    // packaged set. 32-bit must not ship: the core reserves a 4GB natmem region
-    // at startup, which no armeabi-v7a process can map.
+    // above, so defaultConfig alone can never subtract an ABI.
+    //
+    // Clearing here was once enough, on the reasoning that this block runs
+    // after the plugin's apply(). It is not any more -- finalizeDsl at the
+    // foot of this file is what decides it now, and packaging.jniLibs decides
+    // what is packaged whatever becomes of the filters. This is kept as the
+    // first of the three because it is harmless and still narrows the set for
+    // anything that reads the DSL early.
     buildTypes.configureEach {
         ndk {
             abiFilters.clear()
@@ -142,6 +167,33 @@ android {
             // Repo root: app/android/app -> app/android -> app -> repo root.
             path = file("../../../CMakeLists.txt")
             version = "3.22.1"
+        }
+    }
+
+    // The last word on which ABIs ship, enforced at packaging time.
+    //
+    // The buildTypes.configureEach block above was supposed to be that, on
+    // the reasoning that it runs after the Flutter plugin's apply(). It no
+    // longer does -- a release APK built with the default (arm64-v8a) came
+    // out carrying all three ABIs, which is two things at once:
+    //
+    //   * a build three times longer than it needs to be, because the native
+    //     side compiles ~1230 objects per ABI and only one of them is ever
+    //     run here;
+    //   * a correctness problem, because 32-bit MUST NOT ship. The core
+    //     reserves a 4GB natmem region at startup and no armeabi-v7a process
+    //     can map it, so a device served that ABI gets an app that cannot
+    //     start.
+    //
+    // Excludes cannot be re-added by whatever refills abiFilters, so this
+    // holds regardless of plugin ordering. It is derived from the same
+    // property, so CI passing the full set still ships the full set.
+    packaging {
+        jniLibs {
+            val all = setOf("arm64-v8a", "armeabi-v7a", "x86_64")
+            for (abi in all - androidAbiFilters.toSet()) {
+                excludes += "lib/$abi/**"
+            }
         }
     }
 
@@ -175,6 +227,26 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+        }
+    }
+}
+
+// The last word on which ABIs are BUILT.
+//
+// packaging.jniLibs above stops the extra ones shipping, but they are still
+// compiled first -- roughly 1,230 objects per ABI, three ABIs, for a device
+// that runs one. finalizeDsl is the hook that runs after every plugin has
+// finished configuring the DSL, so what it sets is what the native build
+// task actually sees. Setting the same thing in defaultConfig or in
+// buildTypes.configureEach does not survive the Flutter plugin refilling
+// abiFilters from its own DEFAULT_PLATFORMS.
+androidComponents {
+    finalizeDsl { ext ->
+        ext.defaultConfig.ndk.abiFilters.clear()
+        ext.defaultConfig.ndk.abiFilters.addAll(androidAbiFilters)
+        ext.buildTypes.forEach { buildType ->
+            buildType.ndk.abiFilters.clear()
+            buildType.ndk.abiFilters.addAll(androidAbiFilters)
         }
     }
 }
