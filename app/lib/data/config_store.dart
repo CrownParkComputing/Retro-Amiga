@@ -4,6 +4,7 @@ import 'amiga_model.dart';
 import 'config_generator.dart';
 import 'host_paths.dart';
 import 'file_category.dart';
+import 'app_prefs.dart';
 import 'media_library.dart';
 import 'media_root.dart';
 import 'emulator_settings.dart';
@@ -191,6 +192,19 @@ class ConfigStore {
     final AmigaModel? model = _modelFrom(text);
     if (model == null) return text;
 
+    // Compliance mode does not merely fill a gap, it OVERRIDES. A setup
+    // written earlier already names the user's Kickstart, and leaving it
+    // would boot their ROM in the mode whose whole claim is that nothing of
+    // theirs is being used -- with no sign of it, because either ROM boots.
+    if (await AppPrefs.complianceMode()) {
+      text = text
+          .split('\n')
+          .where((String l) =>
+              !l.startsWith('kickstart_rom_file=') &&
+              !l.startsWith('kickstart_ext_rom_file='))
+          .join('\n');
+    }
+
     final bool hasKickstart = RegExp(
       r'^kickstart_rom_file=\S',
       multiLine: true,
@@ -205,13 +219,18 @@ class ConfigStore {
     final List<MediaFile> roms = index.of(FileCategory.roms);
     if (roms.isEmpty) return text;
 
+    // Compliance mode boots the bundled AROS ROM whatever else is installed.
+    final bool aros = await AppPrefs.complianceMode();
+
     final StringBuffer added = StringBuffer();
     if (!hasKickstart) {
-      final MediaFile? rom = RomPicker.kickstartFor(model, roms);
+      final MediaFile? rom =
+          RomPicker.kickstartFor(model, roms, preferAros: aros);
       if (rom != null) added.writeln('kickstart_rom_file=${rom.path}');
     }
-    if (model.needsExtendedRom && !hasExtended) {
-      final MediaFile? ext = RomPicker.extendedRomFor(model, roms);
+    if ((model.needsExtendedRom || aros) && !hasExtended) {
+      final MediaFile? ext =
+          RomPicker.extendedRomFor(model, roms, preferAros: aros);
       if (ext != null) added.writeln('kickstart_ext_rom_file=${ext.path}');
     }
     if (added.isEmpty) return text;

@@ -139,11 +139,30 @@ class RomPicker {
   }
 
   /// The main Kickstart for [model], or null.
-  static MediaFile? kickstartFor(AmigaModel model, List<MediaFile> roms) {
+  ///
+  /// [preferAros] forces the bundled AROS ROM. That is compliance mode, and
+  /// it must be a hard preference rather than a nudge: the point of the mode
+  /// is that the machine demonstrably runs on a ROM nobody had to supply, so
+  /// quietly picking up a Kickstart the user happens to have imported would
+  /// defeat it -- and would do so invisibly, since both boot.
+  static MediaFile? kickstartFor(
+    AmigaModel model,
+    List<MediaFile> roms, {
+    bool preferAros = false,
+  }) {
     final List<MediaFile> candidates = roms
         .where((MediaFile r) => !_isExtended(r.name))
         .toList();
     if (candidates.isEmpty) return null;
+
+    if (preferAros) {
+      for (final MediaFile rom in candidates) {
+        if (rom.name.toLowerCase() == 'aros-rom.bin') return rom;
+      }
+      // No AROS present is a real problem in this mode, and returning some
+      // other ROM would hide it behind a machine that boots.
+      return null;
+    }
 
     final List<String> wanted = switch (model) {
       AmigaModel.cd32 => <String>['cd32'],
@@ -164,7 +183,17 @@ class RomPicker {
   }
 
   /// The extended ROM for [model], or null when it needs none.
-  static MediaFile? extendedRomFor(AmigaModel model, List<MediaFile> roms) {
+  static MediaFile? extendedRomFor(
+    AmigaModel model,
+    List<MediaFile> roms, {
+    bool preferAros = false,
+  }) {
+    if (preferAros) {
+      for (final MediaFile rom in roms) {
+        if (rom.name.toLowerCase() == 'aros-ext.bin') return rom;
+      }
+      return null;
+    }
     if (!model.needsExtendedRom) return null;
     final String machine = model == AmigaModel.cd32 ? 'cd32' : 'cdtv';
     for (final MediaFile rom in roms) {

@@ -33,6 +33,10 @@ flutter:
   uses-material-design: true
 
   assets:
+    # The compliance demo disk. Ours, built by tool/build_demo.sh from
+    # tool/demo_boot.s: a boot block that drives the chipset directly, so it
+    # is the same demo on the bundled AROS ROM as on a real Kickstart.
+    - assets/demo/demo.adf
     # WHDLoad's own boot files and per-game database, shipped with the app.
     # Amiberry's booter mounts these as DH3 while a game runs; without them a
     # WHDLoad game boots to Workbench and stops on a requester about DH3, and

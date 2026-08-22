@@ -27,6 +27,7 @@ import '../widgets/media_chooser.dart';
 import '../emulator.dart';
 import '../widgets/sidebar.dart';
 import 'about_panel.dart';
+import 'compliance_panel.dart';
 import 'audio_panel.dart';
 import 'configurations_screen.dart';
 import 'history_screen.dart';
@@ -47,7 +48,10 @@ import 'video_panel.dart';
 /// everything and only observes, so the tap that wakes it still reaches
 /// whatever was under it.
 class WorkbenchScreen extends StatefulWidget {
-  const WorkbenchScreen({super.key});
+  const WorkbenchScreen({super.key, this.onRerunSetup});
+
+  /// Reopens the walkthrough. Owned by main(), which holds the setup flag.
+  final VoidCallback? onRerunSetup;
 
   @override
   State<WorkbenchScreen> createState() => _WorkbenchScreenState();
@@ -786,6 +790,8 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
         return const ConfigurationsScreen(embedded: true);
       case WorkbenchSection.history:
         return const HistoryScreen();
+      case WorkbenchSection.compliance:
+        return CompliancePanel(onRerunSetup: widget.onRerunSetup);
       case WorkbenchSection.about:
         return const AboutPanel();
       case WorkbenchSection.music:

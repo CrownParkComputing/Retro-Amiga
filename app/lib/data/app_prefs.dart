@@ -16,11 +16,34 @@ class AppPrefs {
   static const String _screenFill = 'screen_fill';
   static const String _musicVolume = 'music_volume';
 
+  /// Whether the machine boots the bundled AROS ROM instead of the user's
+  /// Kickstart. Read at startup, because that is when the ROM is chosen.
+  static const String _complianceMode = 'compliance_mode';
+
   /// Whether first-run setup has been through. Until it has, the app has no
   /// Kickstart and nothing can boot, so the shelf is not worth showing.
   static Future<bool> setupComplete() async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_setupComplete) ?? false;
+  }
+
+  /// Whether to boot the bundled AROS ROM rather than a Kickstart of the
+  /// user's.
+  ///
+  /// A mode rather than a setting: it decides which ROM the emulator is
+  /// started with, so it takes effect when a machine is next launched, and
+  /// while it is on the app deliberately keeps away from the user's own
+  /// files. The point is that the app can be shown working with nothing
+  /// supplied -- which is what a store review asks -- without borrowing
+  /// anything of theirs to do it.
+  static Future<bool> complianceMode() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_complianceMode) ?? false;
+  }
+
+  static Future<void> setComplianceMode({required bool value}) async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_complianceMode, value);
   }
 
   static Future<void> setSetupComplete({required bool value}) async {

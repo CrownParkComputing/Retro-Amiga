@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../data/amiga_model.dart';
 import '../data/app_prefs.dart';
+import '../data/compliance_demo.dart';
 import '../data/aros_rom.dart';
 import '../data/file_category.dart';
 import '../data/media_folder.dart';
@@ -255,7 +256,41 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
   }
 
+  bool _busyCompliance = false;
+
+  /// Switches the app to the bundled AROS ROM and its demo disk, then
+  /// finishes setup.
+  ///
+  /// Nothing is started for the user: the demo is a disk they open from
+  /// Games like any other, which is also the only version of this that shows
+  /// them how to open anything else.
+  Future<void> _storeCompliance() async {
+    setState(() => _busyCompliance = true);
+    try {
+      await ComplianceDemo.prepare();
+      await AppPrefs.setComplianceMode(value: true);
+      await AppPrefs.setDefaultModel(_model);
+      await AppPrefs.setSetupComplete(value: true);
+      await AppPrefs.rememberBuild();
+      if (!mounted) return;
+      widget.onFinished();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not switch to the bundled ROM: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _busyCompliance = false);
+    }
+  }
+
   Future<void> _finish() async {
+    // Start means "my own Kickstart and my own files", so it also leaves
+    // compliance mode. The flag surviving would boot the bundled ROM again
+    // on the next machine, having just been asked for the opposite.
+    if (await AppPrefs.complianceMode()) {
+      await AppPrefs.setComplianceMode(value: false);
+    }
     await AppPrefs.setDefaultModel(_model);
     await AppPrefs.setSetupComplete(value: true);
     widget.onFinished();
@@ -656,13 +691,21 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
             FilledButton(
               onPressed: _hasRom ? _finish : null,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Text(
-                  _hasRealKickstart
-                      ? 'Finish setup'
-                      : 'Finish setup and see it working',
-                ),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text('Start'),
+              ),
+            ),
+            const SizedBox(height: 12),
+            // The route that needs nothing from the user at all. Named for
+            // what it is for rather than what it does mechanically, because
+            // it is what a store reviewer is pointed at and has to be
+            // recognisable on a screen they have never seen.
+            OutlinedButton(
+              onPressed: _busyCompliance ? null : _storeCompliance,
+              child: const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text('Store Compliance'),
               ),
             ),
             const SizedBox(height: 24),
