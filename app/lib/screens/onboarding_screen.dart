@@ -148,7 +148,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   @override
   void initState() {
     super.initState();
-    _scan();
+    // Kickstart only: see _scan's note on why entry does not unpack the
+    // user's zips for them.
+    _scan(importMedia: false);
     WhdloadSupport.status().then((WhdloadStatus status) {
       if (mounted) setState(() => _whdload = status);
     });
@@ -200,7 +202,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     await _scan();
   }
 
-  Future<void> _scan() async {
+  /// [importMedia] false files the Kickstart and nothing else. The
+  /// automatic pass on entry uses it: opening the zips in the app's folder
+  /// and filing what is inside is a decision the user makes by pressing
+  /// Scan, not something a walkthrough does to their collection while they
+  /// are still reading the first screen.
+  Future<void> _scan({bool importMedia = true}) async {
     setState(() {
       _scanning = true;
       _notice = null;
@@ -217,7 +224,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       // every category with the Kickstarts sitting right there. The launch
       // import is skipped during onboarding precisely so this can run it at
       // the right moment instead.
-      await StartupImport.run();
+      //
+      // On entry that is the Kickstart alone -- enough for the walkthrough to
+      // report a ROM and for the machine to boot. Pressing Scan is what takes
+      // the floppies and music out of their zips.
+      await StartupImport.run(includeMedia: importMedia);
       final MediaIndex index = await MediaLibrary.scan();
 
       // Adopt the folder the collection already lives in, unless the user has

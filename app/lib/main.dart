@@ -155,7 +155,10 @@ class _RootState extends State<_Root> {
     // onboarding walkthrough does its own import, with the root chooser and a
     // report the user can actually read; doing it twice would move the same
     // files and then show "nothing found".
-    if (complete) await StartupImport.run();
+    // Kickstarts only. A floppy or music collection in that folder is the
+    // user's to arrange; filing it on every launch is the onboarding
+    // walkthrough's job and the Scan button's, not the splash screen's.
+    if (complete) await StartupImport.run(includeMedia: false);
     if (mounted) setState(() => _setupComplete = complete);
   }
 

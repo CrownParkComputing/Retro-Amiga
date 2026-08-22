@@ -1,5 +1,6 @@
 import 'app_log.dart';
 import 'aros_rom.dart';
+import 'file_category.dart';
 import 'media_library.dart';
 import 'media_root.dart';
 
@@ -35,13 +36,21 @@ class StartupImport {
   /// be blocked by a bad file or an unreadable directory, and the worst case
   /// is a library that is missing something the user can still fix by hand
   /// with the Scan button.
-  static Future<ImportResult?> run() async {
+  /// [includeMedia] files floppies, hard drives and music as well as the
+  /// Kickstart. Launch passes false: those are a collection the user may
+  /// still be copying in through Files, and filing them on every launch
+  /// moved half-copied sets out from under them. Onboarding, and the Scan
+  /// button, still ask for the lot.
+  static Future<ImportResult?> run({bool includeMedia = true}) async {
     // Before the scan, so a first launch on a device with no Kickstart still
     // finds one and the library reports a ROM rather than nothing.
     await ArosRom.installIfMissing();
     try {
       final MediaIndex index = await MediaLibrary.scan();
-      final ImportResult result = await MediaImporter.import(index);
+      final ImportResult result = await MediaImporter.import(
+        index,
+        only: includeMedia ? null : const <FileCategory>{FileCategory.roms},
+      );
       if (result.moved > 0) {
         AppLog.info('startup', 'filed ${result.moved} new file(s) on launch');
       }

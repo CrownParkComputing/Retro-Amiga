@@ -201,7 +201,14 @@ class ImportResult {
 class MediaImporter {
   const MediaImporter._();
 
-  static Future<ImportResult> import(MediaIndex index) async {
+  /// [only], when given, files just those categories and leaves the rest
+  /// where they lie. Launch passes the ROM categories alone: a Kickstart
+  /// has to be in place before the core starts, while floppies and music
+  /// are a collection the user may still be copying in.
+  static Future<ImportResult> import(
+    MediaIndex index, {
+    Set<FileCategory>? only,
+  }) async {
     final String root = await MediaRoot.path();
     int moved = 0;
     int inPlace = 0;
@@ -211,6 +218,7 @@ class MediaImporter {
       // Archives are not media. They are only worth keeping when they hold
       // WHDLoad's boot files, which install() handles separately.
       if (file.category == FileCategory.archives) continue;
+      if (only != null && !only.contains(file.category)) continue;
 
       if (file.path.startsWith('$root/')) {
         inPlace++;
@@ -245,7 +253,7 @@ class MediaImporter {
       'into $root: $moved moved, $inPlace already there'
           '${failed > 0 ? ', $failed failed' : ''}',
     );
-    final int extracted = await _extractArchives(index, root);
+    final int extracted = await _extractArchives(index, root, only);
     if (extracted > 0) {
       AppLog.info('import', '$extracted disk images unpacked from zips');
     }
@@ -275,7 +283,8 @@ class MediaImporter {
   /// app's folder is a drop zone, not a museum of spent archives, and the
   /// reference zips live on the machine that built them. One that still
   /// holds something unrecognised is kept, moved aside into Archives/.
-  static Future<int> _extractArchives(MediaIndex index, String root) async {
+  static Future<int> _extractArchives(
+      MediaIndex index, String root, Set<FileCategory>? only) async {
     int extracted = 0;
 
     for (final MediaFile file in index.files) {
@@ -302,6 +311,11 @@ class MediaImporter {
         final FileCategory? category = FileCategory.fromPath(name);
         // Only media, and never an archive inside an archive.
         if (category == null || category == FileCategory.archives) {
+          owes = true;
+          continue;
+        }
+        // Not wanted on this pass: the zip keeps it, and so keeps itself.
+        if (only != null && !only.contains(category)) {
           owes = true;
           continue;
         }
