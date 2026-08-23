@@ -50,6 +50,19 @@ for slice in ios-arm64 ios-arm64-simulator; do
   fi
 done
 
+# Flutter 3.47 enables Swift Package Manager by default, and gamepads_ios has
+# not adopted it. The mixed SPM/CocoaPods registrant then fails to compile for
+# device -- "Module 'gamepads_ios' not found" -- which Flutter reports as the
+# far less specific "No Xcode build settings have been found".
+#
+# GitHub Actions sets this explicitly in the workflow. Xcode Cloud runs THIS
+# script instead, and `flutter config` is a per-machine setting, so a fix made
+# on a laptop or in a workflow file never reaches these builders: they have to
+# be told separately, which is why cloud builds failed while CI was green.
+#
+# Tolerated if the flag does not exist: older Flutter has no SPM to disable.
+flutter config --no-enable-swift-package-manager || true
+
 echo "--- resolving packages"
 flutter precache --ios
 flutter pub get
