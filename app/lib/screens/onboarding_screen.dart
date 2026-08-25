@@ -258,6 +258,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     // covering the first.
     setState(() {
       _scanning = true;
+      _scanned = false;
+      _index = const MediaIndex.empty();
+      _collections = <AmigaCollection, String>{};
       _phase = _Phase.scanning;
       _notice = 'Reading the folder…';
     });
@@ -603,6 +606,17 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   /// two columns of it, and the walkthrough moved to a page of its own behind
   /// a button.
   Widget _resultsView() {
+    // Arriving here means "show me what is there", so if nothing has been
+    // counted yet, count it now rather than presenting a page of zeroes and
+    // waiting to be asked. Posted after the frame because it is a setState
+    // and this is a build.
+    if (!_scanned && !_scanning) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_scanned && !_scanning) {
+          unawaited(_scan(importMedia: false));
+        }
+      });
+    }
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
       child: Column(
@@ -627,6 +641,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               ),
             ],
           ),
+          if (_scanning)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: LinearProgressIndicator(minHeight: 2),
+            ),
           if (_notice != null)
             Padding(
               padding: const EdgeInsets.only(top: 4),
@@ -699,6 +718,21 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   child: Text('Scan again'),
                 ),
               ),
+              // The way back to the picker. Without it the folder chosen at
+              // the gate was final: a wrong choice, or a card that was not in
+              // the device at the time, could only be corrected by clearing
+              // the app's data. It is also what the new-build re-check needs,
+              // where the whole point is to confirm the folder or change it.
+              if (MediaFolder.isSupported) ...<Widget>[
+                const SizedBox(width: 12),
+                OutlinedButton(
+                  onPressed: _scanning ? null : _chooseFolder,
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    child: Text('Choose folder…'),
+                  ),
+                ),
+              ],
               const SizedBox(width: 12),
               OutlinedButton(
                 onPressed: () => setState(() {
