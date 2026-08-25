@@ -62,6 +62,27 @@ class HostPaths {
     return _sharedAmigaDirectory = path;
   }
 
+  /// Every volume that could hold a Retro-Applications/Amiga library, best
+  /// first. Empty on platforms with only one place for it to be.
+  ///
+  /// Android only, and it exists because there is no Dart-side way to ask:
+  /// the removable card is a separate volume, and the API the app was using
+  /// returns the internal one by definition. See
+  /// MainActivity.amigaLibraryRoots.
+  static Future<List<String>> amigaLibraryRoots() async {
+    if (!Platform.isAndroid) return const <String>[];
+    try {
+      final List<Object?>? roots = await _channel.invokeListMethod<Object?>(
+        'amigaLibraryRoots',
+      );
+      return (roots ?? const <Object?>[]).whereType<String>().toList();
+    } on PlatformException {
+      return const <String>[];
+    } on MissingPluginException {
+      return const <String>[];
+    }
+  }
+
   static Future<bool> hasSharedStorageAccess() async {
     if (!Platform.isAndroid) return true;
     return await _channel.invokeMethod<bool>('hasSharedStorageAccess') ?? false;

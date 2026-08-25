@@ -69,6 +69,29 @@ class MediaRoot {
     return fallback;
   }
 
+  /// Whether a candidate root holds anything at all.
+  ///
+  /// Deliberately shallow: one level of per-kind folders and whether any of
+  /// them has a file in it. Enough to tell a real collection from the empty
+  /// skeleton this app creates, without walking a card full of other
+  /// machines' games to find out.
+  static Future<bool> _hasMedia(String path) async {
+    try {
+      final Directory dir = Directory(path);
+      if (!dir.existsSync()) return false;
+      for (final FileSystemEntity entry in dir.listSync(followLinks: false)) {
+        if (entry is File) return true;
+        if (entry is Directory &&
+            entry.listSync(followLinks: false).isNotEmpty) {
+          return true;
+        }
+      }
+      return false;
+    } on FileSystemException {
+      return false;
+    }
+  }
+
   /// Whether a root can actually be listed and written.
   ///
   /// Checked rather than assumed: the answer changed underneath existing
@@ -107,7 +130,26 @@ class MediaRoot {
     // resolves primary storage (shown as "Odin2" on that handheld), and the
     // native core uses this exact path too. Media stays here in place; it is
     // never duplicated into Android/data.
-    if (Platform.isAndroid) return await HostPaths.sharedAmigaDirectory();
+    if (Platform.isAndroid) {
+      // The volume with a real library on it, if there is one.
+      //
+      // This used to be sharedAmigaDirectory() alone, which is the internal
+      // emulated volume and can never be anything else. A collection on an SD
+      // card was therefore unreachable: the app pointed at internal storage,
+      // created an empty folder skeleton there, scanned it and reported
+      // nothing found. The card is a different volume and has to be asked for
+      // by name.
+      final List<String> candidates = await HostPaths.amigaLibraryRoots();
+      for (final String candidate in candidates) {
+        if (await _hasMedia(candidate)) {
+          AppLog.info('media', 'adopting the library at $candidate');
+          return candidate;
+        }
+      }
+      // Nothing populated anywhere: internal storage, where the skeleton gets
+      // created and the user is told to put things.
+      return await HostPaths.sharedAmigaDirectory();
+    }
     if (Platform.isIOS) return await HostPaths.documents();
     final Directory dir = Directory(
       '${Platform.environment['HOME'] ?? await HostPaths.documents()}'

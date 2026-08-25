@@ -12,6 +12,14 @@ import 'host_paths.dart';
 import 'media_root.dart';
 import '../widgets/alphabet_filter.dart';
 
+/// Reports how far a scan has got: how many recognised files so far, and the
+/// folder being walked.
+///
+/// The walk runs in an isolate and used to return only at the end, so a large
+/// collection was an unbroken spinner with no way to tell a slow scan from a
+/// stuck one. Onboarding now counts up while it works.
+typedef ScanProgress = void Function(int found, String folder);
+
 /// One file the scan found.
 class MediaFile {
   MediaFile({required this.path, required this.category, required this.size})
@@ -405,6 +413,7 @@ class MediaLibrary {
     // still reports when it stops.
     int maxDepth = 12,
     int fileLimit = 40000,
+    ScanProgress? onProgress,
   }) async {
     final List<String> scanRoots = roots ?? await defaultRoots();
     // Archives are only worth indexing inside the media folder - see _walk.
@@ -412,8 +421,12 @@ class MediaLibrary {
 
     // Only sendable values cross the isolate boundary, so the walk returns
     // plain maps and they are turned back into MediaFiles here.
-    final List<Map<String, Object>> raw = await Isolate.run(
-      () => _walk(scanRoots, maxDepth, fileLimit, mediaRoot),
+    final List<Map<String, Object>> raw = await _runWalk(
+      scanRoots,
+      maxDepth,
+      fileLimit,
+      mediaRoot,
+      onProgress,
     );
     final bool truncated = raw.length >= fileLimit;
 
@@ -630,13 +643,83 @@ class MediaLibrary {
     }
   }
 
+  /// Runs the walk in an isolate, reporting progress if anyone is listening.
+  ///
+  /// Two paths on purpose. Without a listener this is `Isolate.run`, exactly as
+  /// before -- the launch scan and the library panel's rescan have nowhere to
+  /// show a count and should not pay for a port. With one, the isolate is
+  /// spawned by hand so it can send progress back as it goes, because
+  /// `Isolate.run` has no channel for anything but the return value.
+  static Future<List<Map<String, Object>>> _runWalk(
+    List<String> roots,
+    int maxDepth,
+    int fileLimit,
+    String mediaRoot,
+    ScanProgress? onProgress,
+  ) async {
+    if (onProgress == null) {
+      return Isolate.run(() => _walk(roots, maxDepth, fileLimit, mediaRoot));
+    }
+
+    final ReceivePort port = ReceivePort();
+    final Completer<List<Map<String, Object>>> done =
+        Completer<List<Map<String, Object>>>();
+
+    port.listen((Object? message) {
+      if (message is! Map) return;
+      final Object? result = message['result'];
+      if (result != null) {
+        if (!done.isCompleted) {
+          done.complete((result as List).cast<Map<String, Object>>());
+        }
+        port.close();
+        return;
+      }
+      onProgress(
+        (message['found'] as num?)?.toInt() ?? 0,
+        message['folder'] as String? ?? '',
+      );
+    });
+
+    try {
+      await Isolate.spawn(_walkEntry, <Object>[
+        port.sendPort,
+        roots,
+        maxDepth,
+        fileLimit,
+        mediaRoot,
+      ]);
+    } on Object {
+      port.close();
+      // A spawn that fails is not a reason to have no library: fall back to
+      // the path that needs no port, and simply show no count.
+      return Isolate.run(() => _walk(roots, maxDepth, fileLimit, mediaRoot));
+    }
+
+    return done.future;
+  }
+
+  /// The spawned isolate's entry point. Must be a static taking one argument.
+  static void _walkEntry(List<Object> args) {
+    final SendPort port = args[0] as SendPort;
+    final List<Map<String, Object>> found = _walk(
+      (args[1] as List).cast<String>(),
+      args[2] as int,
+      args[3] as int,
+      args[4] as String,
+      port,
+    );
+    port.send(<String, Object>{'result': found});
+  }
+
   /// Runs inside the scan isolate. Top-level work only: no plugins, no UI.
   static List<Map<String, Object>> _walk(
     List<String> roots,
     int maxDepth,
     int fileLimit,
-    String mediaRoot,
-  ) {
+    String mediaRoot, [
+    SendPort? progress,
+  ]) {
     final List<Map<String, Object>> found = <Map<String, Object>>[];
     // One entry per file. Roots can contain one another - the media folder
     // lives inside home on a desktop - and without this every file under the
@@ -645,6 +728,13 @@ class MediaLibrary {
 
     void walkDir(Directory dir, int depth) {
       if (depth > maxDepth || found.length >= fileLimit) return;
+      // Per directory rather than per file: directories are orders of
+      // magnitude fewer, so this costs almost nothing and still moves often
+      // enough to read as progress.
+      progress?.send(<String, Object>{
+        'found': found.length,
+        'folder': dir.path,
+      });
       List<FileSystemEntity> entries;
       try {
         entries = dir.listSync(followLinks: false);

@@ -88,12 +88,68 @@ class MainActivity : FlutterActivity() {
 	override fun onCreate(savedInstanceState: Bundle?) {
 		// The in-process core reads this before resolving Amiberry's content
 		// paths. Set it before Flutter can lazily load the native library.
+		//
+		// The BEST root, not the internal one. The core opens floppies and
+		// hard-drive images by path, so if the library is this app's folder on
+		// the SD card then that is the path it has to be told about; pointing it
+		// at internal storage left it looking at an empty skeleton.
 		Os.setenv(
 			"RETRO_AMIGA_CONTENT_ROOT",
-			sharedAmigaDirectory().absolutePath,
+			amigaLibraryRoots().firstOrNull() ?: sharedAmigaDirectory().absolutePath,
 			true,
 		)
 		super.onCreate(savedInstanceState)
+	}
+
+	/**
+	 * Every place a Retro-Applications/Amiga library could live, best first.
+	 *
+	 * Environment.getExternalStorageDirectory() is the INTERNAL emulated volume
+	 * and nothing else -- there is no argument that makes it return a removable
+	 * card. So an SD-card library was invisible: the app pointed at internal
+	 * storage, created the empty folder skeleton there, scanned it and
+	 * truthfully reported nothing found while 110 floppies sat on the card.
+	 * That is the "the contents of the folders are not recognized" report, and
+	 * no amount of re-scanning could ever have fixed it.
+	 *
+	 * getExternalFilesDirs() is the answer that survives Play review. It
+	 * returns this app's own directory on EVERY mounted volume, the removable
+	 * card included, and reading or writing them needs no permission at all --
+	 * not MANAGE_EXTERNAL_STORAGE, which Play will not grant an emulator, and
+	 * not a SAF grant either. They are also real filesystem paths, which
+	 * matters more here than it looks: the emulator core opens floppies and
+	 * hard-drive images by path, so a content URI is not something it can be
+	 * handed without rewriting how it opens files.
+	 *
+	 * The shared internal folder stays on the list, last, for installs that
+	 * still hold all-files access from an earlier build. It is where the
+	 * skeleton is created when there is nothing anywhere else.
+	 *
+	 * Ordered by what is actually in them, so the launcher adopts a real
+	 * library rather than an empty skeleton it made itself.
+	 */
+	private fun amigaLibraryRoots(): List<String> {
+		val candidates = LinkedHashSet<File>()
+
+		// This app's own folder on every volume. No permission, any volume.
+		for (dir in getExternalFilesDirs(null)) {
+			if (dir != null) candidates.add(File(dir, SHARED_AMIGA_FOLDER))
+		}
+
+		// The shared folder, for installs that can still read it.
+		candidates.add(sharedAmigaDirectory())
+
+		val readable = candidates.filter { it.isDirectory && it.canRead() }
+
+		// Non-empty first, then by how much is in them. listFiles() is null on a
+		// directory this app cannot read, which counts as empty.
+		return readable
+			.sortedByDescending { folder ->
+				folder.listFiles()?.sumOf { child ->
+					if (child.isDirectory) child.listFiles()?.size ?: 0 else 1
+				} ?: 0
+			}
+			.map { it.absolutePath }
 	}
 
 	/**
@@ -450,6 +506,11 @@ class MainActivity : FlutterActivity() {
 
 					"sharedAmigaDirectory" ->
 						result.success(sharedAmigaDirectory().absolutePath)
+
+					// Every volume that could hold the library, best first.
+					// See amigaLibraryRoots: an SD-card collection is only
+					// reachable this way.
+					"amigaLibraryRoots" -> result.success(amigaLibraryRoots())
 
 					"hasSharedStorageAccess" ->
 						result.success(hasSharedStorageAccess())

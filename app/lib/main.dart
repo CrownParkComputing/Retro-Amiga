@@ -121,6 +121,10 @@ class _Root extends StatefulWidget {
 class _RootState extends State<_Root> {
   bool? _setupComplete;
 
+  /// Whether the wizard is being shown to re-check an existing folder rather
+  /// than to set one up. See [AppPrefs.isNewBuild].
+  bool _verifyOnly = false;
+
   @override
   void initState() {
     super.initState();
@@ -137,11 +141,19 @@ class _RootState extends State<_Root> {
   }
 
   void _onSetupRequested() {
-    if (mounted) setState(() => _setupComplete = false);
+    // Asked for from Settings, so this is the full walkthrough and not a
+    // re-check: someone who goes looking for it wants the choice back.
+    if (mounted) {
+      setState(() {
+        _verifyOnly = false;
+        _setupComplete = false;
+      });
+    }
   }
 
   Future<void> _load() async {
     bool complete = false;
+    bool verifyOnly = false;
     try {
       // The launcher before Flutter kept .uae setups in the external app
       // folder. Recover them before deciding this is a first run.
@@ -157,6 +169,24 @@ class _RootState extends State<_Root> {
           !await HostPaths.hasSharedStorageAccess()) {
         complete = false;
       }
+      // A new build re-checks the folder before the shelf is shown.
+      //
+      // AppPrefs.isNewBuild has existed, documented and under test, since the
+      // build stamp went in -- and nothing ever called it, so every deploy
+      // dropped straight onto a shelf built from a cached index, with no sign
+      // of whether the folder still read or still held what it did. Paths
+      // move between builds and storage rules change under them; this is the
+      // one moment worth confirming.
+      //
+      // Not for compliance mode: there is no folder of the user's to verify,
+      // and sending them back through setup would ask a question they have
+      // already answered with the opposite answer.
+      if (complete && !await AppPrefs.complianceMode()) {
+        if (await AppPrefs.isNewBuild()) {
+          complete = false;
+          verifyOnly = true;
+        }
+      }
     } on Object {
       // A missing preference store means first run, not a failure.
     }
@@ -169,7 +199,12 @@ class _RootState extends State<_Root> {
     // user's to arrange; filing it on every launch is the onboarding
     // walkthrough's job and the Scan button's, not the splash screen's.
     if (complete) await StartupImport.run(includeMedia: false);
-    if (mounted) setState(() => _setupComplete = complete);
+    if (mounted) {
+      setState(() {
+        _verifyOnly = verifyOnly;
+        _setupComplete = complete;
+      });
+    }
   }
 
   @override
@@ -185,6 +220,7 @@ class _RootState extends State<_Root> {
       );
     }
     return OnboardingScreen(
+      verifyOnly: _verifyOnly,
       onFinished: () async {
         // Remembered on the way out rather than on the way in: a walkthrough
         // that was never finished should come back.
