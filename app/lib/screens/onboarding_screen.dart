@@ -15,7 +15,6 @@ import '../data/hard_drive_set.dart';
 import '../data/media_folder.dart';
 import '../data/media_library.dart';
 import '../data/media_root.dart';
-import '../data/platform_info.dart';
 import '../data/startup_import.dart';
 import '../data/whdload_support.dart';
 import '../widgets/amiga_logo.dart';
@@ -62,6 +61,10 @@ enum _Phase {
 
   /// What was found, and only now a Start button.
   results,
+
+  /// The walkthrough: folders, WHDLoad, what AROS does. Reached from the
+  /// results rather than sitting underneath them.
+  details,
 }
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
@@ -71,6 +74,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   bool _scanned = false;
 
   late _Phase _phase = widget.verifyOnly ? _Phase.scanning : _Phase.gate;
+
+  /// Which walkthrough page is showing. See _detailPages.
+  int _detailsPage = 0;
 
   /// The running count and the folder being walked.
   ///
@@ -416,6 +422,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           _Phase.gate => _gateView(),
           _Phase.scanning => _scanningView(),
           _Phase.results => _resultsView(),
+          _Phase.details => _detailsView(),
         },
       ),
     );
@@ -587,260 +594,276 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
-  /// What was found, then the rest of the walkthrough.
+  /// Everything the scan found, on one page.
+  ///
+  /// It used to be the whole walkthrough in one column: totals, then four
+  /// sections about folders and WHDLoad and what AROS does, with Start at the
+  /// foot of all of it. On a handheld that is a lot of scrolling to answer one
+  /// question -- did it find my collection? -- so the answer is the page now,
+  /// two columns of it, and the walkthrough moved to a page of its own behind
+  /// a button.
   Widget _resultsView() {
-    return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      children: <Widget>[
-        const SizedBox(height: 16),
-            const SizedBox(height: 28),
-
-            const _SectionHeader('1', 'Find your Amiga files'),
-            const SizedBox(height: 8),
-            Text(
-              MediaFolder.isSupported
-                  ? 'Kickstart ROMs, floppies, hard drives, CD images and '
-                        'WHDLoad archives. You supply your own: choose the '
-                        'Retro-Applications/Amiga folder on your device '
-                        '(shown under Odin2 on that handheld). Put AGS_UAE, '
-                        'Zeb WHDLoad and other complete setups in their own '
-                        'folders inside HardDrives; they are detected '
-                        'automatically.'
-                  : 'Kickstart ROMs, floppies, hard drives, CD images and '
-                        'WHDLoad archives. You supply your own: drop them - '
-                        'zipped is fine - into this app\'s folder in the '
-                        'Files app (${filesAppDeviceName(context)} > '
-                        'Retro-Amiga), then Scan.',
-            ),
-            const SizedBox(height: 12),
-            if (_scanning)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8),
-                child: Row(
-                  children: <Widget>[
-                    SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                    SizedBox(width: 12),
-                    Text('Scanning…'),
-                  ],
-                ),
-              )
-            else
-              // One button. The app's folder is the only door - the scan
-              // files whatever zips are waiting there and reports what it
-              // found, exactly as C64-Retro does. A Files picker here was a
-              // second road in, one that filed things by the picker's rules
-              // instead of the importer's.
-              MediaFolder.isSupported
-                  ? Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        OutlinedButton.icon(
-                          onPressed: _importFolder,
-                          icon: const Icon(Icons.drive_folder_upload),
-                          label: Text(
-                            _sourceFolder == null
-                                ? 'Choose your Amiga folder'
-                                : 'Choose a different folder',
-                          ),
-                        ),
-                        if (_sourceFolder != null)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Text(
-                              'Reading from $_sourceFolder',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ),
-                      ],
-                    )
-                  : OutlinedButton.icon(
-                      onPressed: _scan,
-                      icon: const Icon(Icons.search),
-                      label: Text(_scanned ? 'Scan again' : 'Scan for files'),
-                    ),
-            if (_notice != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 12),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Icon(
+                _hasRom ? Icons.check_circle : Icons.error_outline,
+                color: _hasRom ? const Color(0xFF00E28A) : null,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
                 child: Text(
-                  _notice!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  _index.isEmpty
+                      ? 'Nothing found in the selected folder'
+                      : 'Found in ${_sourceFolder ?? _root}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
-            const SizedBox(height: 16),
-
-            if (_scanned || !_index.isEmpty) ...<Widget>[
-              _SectionHeader(
-                _hasRom ? '✓' : '!',
-                _index.isEmpty
-                    ? 'Nothing found in the selected folder'
-                    : 'Found in ${_sourceFolder ?? _root}',
-              ),
-              const SizedBox(height: 8),
-              ..._shown.map((FileCategory category) {
-                final int count = _index.countOf(category);
-                return ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: SizedBox(
-                    width: 56,
-                    height: 40,
-                    child: Image.asset(
-                      _artworkFor(category),
-                      fit: BoxFit.contain,
-                      errorBuilder: (BuildContext c, Object e, StackTrace? s) =>
-                          const AmigaLogo(height: 20),
-                    ),
-                  ),
-                  title: Text(category.displayName),
-                  subtitle: count == 0
-                      ? null
-                      : Text(
-                          _index
-                              .of(category)
-                              .take(3)
-                              .map((MediaFile file) => file.name)
-                              .join(' · '),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                  trailing: Text(
-                    count == 0 ? 'none' : '$count',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                );
-              }),
-              // The big pre-built packs, by name, found or not.
-              //
-              // A file count per category cannot answer "did it see my
-              // AmigaVision drive?" -- a 40GB collection shows up there as
-              // "Hard Drives: 1", indistinguishable from any other image. And
-              // "not found" is worth printing too: it separates "the app
-              // cannot read my card" from "the app read my card and that pack
-              // is not on it", which is the difference between a bug and a
-              // missing download.
-              const Divider(),
-              const SizedBox(height: 4),
-              Text(
-                'Known collections',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-              const SizedBox(height: 4),
-              ...AmigaCollection.values.map((AmigaCollection collection) {
-                final String? where = _collections[collection];
-                final bool found = where != null;
-                return ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  leading: Icon(
-                    found ? Icons.check_circle : Icons.remove_circle_outline,
-                    size: 20,
-                    color: found
-                        ? const Color(0xFF00E28A)
-                        : AmigaColors.textDim,
-                  ),
-                  title: Text(collection.displayName),
-                  subtitle: Text(
-                    found ? where : collection.description,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: found ? null : AmigaColors.textDim,
-                    ),
-                  ),
-                  trailing: Text(
-                    found ? 'found' : 'not found',
-                    style: TextStyle(
-                      color: found ? null : AmigaColors.textDim,
-                      fontSize: 12,
-                    ),
-                  ),
-                );
-              }),
-              const SizedBox(height: 8),
-
-              if (_hardDriveSetups.isNotEmpty) ...<Widget>[
-                const Divider(),
-                for (final HardDriveSet setup in _hardDriveSetups)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      setup.looksLikeAgs ? Icons.grid_view : Icons.storage,
-                    ),
-                    title: Text(setup.name),
-                    subtitle: Text(
-                      '${setup.driveCount} drive(s) · boots '
-                      '${setup.bootDrive.split(RegExp(r'[/\\]')).last}'
-                      '${setup.looksLikeAgs ? ' · AGS/RTG' : ''}'
-                      '${setup.looksLikeZebWhdload ? ' · Zeb WHDLoad' : ''}',
-                    ),
-                    trailing: const Text('setup'),
-                  ),
-              ],
-              // No error card for "no Kickstart" any more: the app installs
-              // the AROS pair on every launch, so there is always one, and a
-              // red panel saying otherwise would be untrue. The AROS section
-              // below covers what that does and does not get you.
-              if (!_hasRom)
-                Card(
-                  color: Theme.of(context).colorScheme.errorContainer,
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Text(
-                      'No Kickstart ROM found, and the built-in AROS ROM did '
-                      'not install either -- which should not happen. Check '
-                      'the Logs panel, or add a Kickstart of your own.',
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onErrorContainer,
-                      ),
-                    ),
-                  ),
-                ),
-              const SizedBox(height: 16),
             ],
-
-        const SizedBox(height: 8),
-        // Start, here, where the totals above it are what it is agreeing to.
-        Row(
-          children: <Widget>[
-            Expanded(
-              child: FilledButton(
-                onPressed: (_scanned && _hasRom && !_scanning) ? _finish : null,
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 12),
-                  child: Text('Start'),
+          ),
+          if (_notice != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                _notice!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AmigaColors.textDim,
                 ),
               ),
             ),
-            const SizedBox(width: 12),
-            OutlinedButton(
-              onPressed: _scanning ? null : _scan,
-              child: const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text('Scan again'),
-              ),
-            ),
-          ],
-        ),
-        if (!_hasRom)
-          const Padding(
-            padding: EdgeInsets.only(top: 10),
-            child: Text(
-              'No Kickstart was found, so nothing can boot yet. The steps '
-              'below say where to put one.',
-              style: TextStyle(color: AmigaColors.textDim, fontSize: 12),
+          const Divider(height: 20),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (BuildContext context, BoxConstraints constraints) {
+                // Two columns wherever there is room for them, which on a
+                // handheld in landscape there always is. A phone held upright
+                // gets the same content stacked rather than squeezed.
+                final bool wide = constraints.maxWidth >= 640;
+                if (!wide) {
+                  return ListView(
+                    children: <Widget>[
+                      ..._mediaTotals(),
+                      const SizedBox(height: 12),
+                      ..._collectionRows(),
+                    ],
+                  );
+                }
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Expanded(child: ListView(children: _mediaTotals())),
+                    const SizedBox(width: 24),
+                    Expanded(child: ListView(children: _collectionRows())),
+                  ],
+                );
+              },
             ),
           ),
-        const SizedBox(height: 20),
+          const Divider(height: 20),
+          if (!_hasRom)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text(
+                'No Kickstart was found, so nothing can boot yet. Setup '
+                'details says where to put one.',
+                style: TextStyle(color: AmigaColors.textDim, fontSize: 12),
+              ),
+            ),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: FilledButton(
+                  onPressed: (_scanned && _hasRom && !_scanning)
+                      ? _finish
+                      : null,
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    child: Text('Start'),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton(
+                onPressed: _scanning ? null : _scan,
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Text('Scan again'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton(
+                onPressed: () => setState(() {
+                  _detailsPage = 0;
+                  _phase = _Phase.details;
+                }),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Text('Setup details'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The left column: how much of each kind was found.
+  List<Widget> _mediaTotals() {
+    return <Widget>[
+      Text('Media', style: Theme.of(context).textTheme.titleSmall),
+      const SizedBox(height: 4),
+      ..._shown.map((FileCategory category) {
+        final int count = _index.countOf(category);
+        return ListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          visualDensity: VisualDensity.compact,
+          leading: SizedBox(
+            width: 40,
+            height: 28,
+            child: Image.asset(
+              _artworkFor(category),
+              fit: BoxFit.contain,
+              errorBuilder: (BuildContext c, Object e, StackTrace? s) =>
+                  const AmigaLogo(height: 16),
+            ),
+          ),
+          title: Text(category.displayName),
+          trailing: Text(
+            count == 0 ? 'none' : '$count',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+        );
+      }),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        dense: true,
+        visualDensity: VisualDensity.compact,
+        leading: const SizedBox(width: 40, child: Icon(Icons.music_note)),
+        title: Text(FileCategory.music.displayName),
+        trailing: Text(
+          _index.countOf(FileCategory.music) == 0
+              ? 'none'
+              : '${_index.countOf(FileCategory.music)}',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+      ),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        dense: true,
+        visualDensity: VisualDensity.compact,
+        leading: SizedBox(
+          width: 40,
+          child: Icon(
+            _whdload.ready ? Icons.check_circle : Icons.info_outline,
+            color: _whdload.ready ? const Color(0xFF00E28A) : null,
+          ),
+        ),
+        title: const Text('WHDLoad support'),
+        trailing: Text(
+          _whdload.ready ? 'ready' : 'not ready',
+          style: const TextStyle(fontSize: 12),
+        ),
+      ),
+    ];
+  }
+
+  /// The right column: the packs by name, then any drive set that was found.
+  List<Widget> _collectionRows() {
+    return <Widget>[
+      Text('Known collections', style: Theme.of(context).textTheme.titleSmall),
+      const SizedBox(height: 4),
+      ...AmigaCollection.values.map((AmigaCollection collection) {
+        final String? where = _collections[collection];
+        final bool found = where != null;
+        return ListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          visualDensity: VisualDensity.compact,
+          leading: Icon(
+            found ? Icons.check_circle : Icons.remove_circle_outline,
+            size: 20,
+            color: found ? const Color(0xFF00E28A) : AmigaColors.textDim,
+          ),
+          title: Text(collection.displayName),
+          subtitle: Text(
+            found ? where : collection.description,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11,
+              color: found ? null : AmigaColors.textDim,
+            ),
+          ),
+          trailing: Text(
+            found ? 'found' : 'not found',
+            style: TextStyle(
+              color: found ? null : AmigaColors.textDim,
+              fontSize: 12,
+            ),
+          ),
+        );
+      }),
+      if (_hardDriveSetups.isNotEmpty) ...<Widget>[
+        const SizedBox(height: 8),
+        Text('Drive sets', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 4),
+        for (final HardDriveSet setup in _hardDriveSetups)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            visualDensity: VisualDensity.compact,
+            leading: Icon(
+              setup.looksLikeAgs ? Icons.grid_view : Icons.storage,
+              size: 20,
+            ),
+            title: Text(setup.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text(
+              '${setup.driveCount} drive(s)'
+              '${setup.looksLikeAgs ? ' · AGS/RTG' : ''}'
+              '${setup.looksLikeZebWhdload ? ' · Zeb WHDLoad' : ''}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 11),
+            ),
+          ),
+      ],
+    ];
+  }
+
+  /// The walkthrough, on its own page rather than under the answer.
+  /// The walkthrough, as pages rather than one long scroll.
+  ///
+  /// It was four sections stacked in a single column under the results, so
+  /// the answer to "did it find my collection" sat above several screens of
+  /// reference material about folders and AROS. One subject per page, with a
+  /// step count, so it can be read or skipped a page at a time.
+  ///
+  /// Which pages exist depends on the platform: iOS has no WHDLoad step
+  /// because it has nowhere to search for the boot archive, and Android has
+  /// no "where media lives" step because the answer is not the user's to
+  /// change.
+  List<({String title, List<Widget> body})> _detailPages() {
+    return <({String title, List<Widget> body})>[
+      if (!Platform.isAndroid)
+        (
+          title: 'Where media lives',
+          body: <Widget>[
             // Android has no media-folder question to answer. The library lives
             // inside the app's own storage because that is the only place it can
             // write, and the folder the user picks in step 1 is the source. A
             // "where media lives" step could only show a path they cannot change.
             if (!Platform.isAndroid) ...<Widget>[
-              const _SectionHeader('2', 'Where media lives'),
               const SizedBox(height: 8),
               Text(
                 MediaRoot.canChoose
@@ -902,13 +925,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               ),
               const SizedBox(height: 24),
             ],
+          ],
+        ),
+      if (Platform.isAndroid)
+        (
+          title: 'WHDLoad support',
+          body: <Widget>[
             // WHDLoad setup is Android only. The boot archive has to be found
             // on the device, and iOS gives the app nothing to search: no
             // shared storage, and the sandbox holds only what has been handed
             // to it. Rather than show a step that can only ever say "not
             // found", iOS does not offer one.
             if (Platform.isAndroid) ...<Widget>[
-              const _SectionHeader('2', 'WHDLoad support'),
               const SizedBox(height: 8),
               const Text(
                 'WHDLoad games are .lha archives that need WHDLoad itself to '
@@ -956,13 +984,17 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               ),
               const SizedBox(height: 24),
             ],
+          ],
+        ),
+      (
+        title: 'It works already',
+        body: <Widget>[
 
             // The point of this section is that the app demonstrates itself.
             // Everything above asks the user for files; this says they do not
             // need any of it to see an Amiga boot, and is honest about the
             // limits so nobody concludes the emulator is broken when a
             // WHDLoad title refuses to run on AROS.
-            _SectionHeader(_hasRealKickstart ? '✓' : 'i', 'It works already'),
             const SizedBox(height: 8),
             Text(
               _hasRealKickstart
@@ -1016,10 +1048,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             ),
             const SizedBox(height: 24),
 
-            _SectionHeader(
-              Platform.isAndroid ? '5' : '4',
-              'Pick your usual Amiga',
-            ),
+        ],
+      ),
+      (
+        title: 'Pick your usual Amiga',
+        body: <Widget>[
             const SizedBox(height: 8),
             const Text('New setups start from this machine.'),
             const SizedBox(height: 12),
@@ -1076,61 +1109,86 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               ),
             ),
             const SizedBox(height: 24),
-
-            // Start again at the foot of the walkthrough, for anyone who has
-            // read it through. Store Compliance is NOT repeated here: it
-            // belongs with the choice at the top, and a second copy at the
-            // bottom would suggest it is the thing you do after setting up
-            // your own machine, which is the opposite of what it is.
-            FilledButton(
-              onPressed: _hasRom ? _finish : null,
-              child: const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text('Start'),
-              ),
-            ),
-            const SizedBox(height: 24),
-      ],
-    );
+        ],
+      ),
+    ];
   }
-}
 
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader(this.number, this.title);
+  Widget _detailsView() {
+    final List<({String title, List<Widget> body})> pages = _detailPages();
+    if (pages.isEmpty) return _resultsView();
+    final int at = _detailsPage.clamp(0, pages.length - 1);
+    final ({String title, List<Widget> body}) page = pages[at];
+    final bool last = at == pages.length - 1;
 
-  final String number;
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
+    return Column(
       children: <Widget>[
-        Container(
-          width: 28,
-          height: 28,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: Theme.of(context).colorScheme.primary,
-          ),
-          child: Text(
-            number,
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onPrimary,
-              fontWeight: FontWeight.bold,
-            ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 12, 16, 0),
+          child: Row(
+            children: <Widget>[
+              IconButton(
+                icon: const Icon(Icons.close),
+                tooltip: 'Back to what was found',
+                onPressed: () => setState(() => _phase = _Phase.results),
+              ),
+              Expanded(
+                child: Text(
+                  page.title,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              Text(
+                'Step ${at + 1} of ${pages.length}',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AmigaColors.textDim,
+                ),
+              ),
+            ],
           ),
         ),
-        const SizedBox(width: 10),
-        Text(title, style: Theme.of(context).textTheme.titleMedium),
+        const Divider(height: 20),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            children: page.body,
+          ),
+        ),
+        const Divider(height: 20),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+          child: Row(
+            children: <Widget>[
+              OutlinedButton(
+                onPressed: at == 0
+                    ? () => setState(() => _phase = _Phase.results)
+                    : () => setState(() => _detailsPage = at - 1),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Text('Back'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton(
+                  onPressed: last
+                      ? () => setState(() => _phase = _Phase.results)
+                      : () => setState(() => _detailsPage = at + 1),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Text(last ? 'Done' : 'Next'),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }
 }
 
-/// Where media should live. A text field rather than a folder picker: the
-/// picker Android offers returns a content:// tree the emulator core cannot
-/// open, since the core takes plain paths.
 class _RootDialog extends StatefulWidget {
   const _RootDialog({required this.initial});
 

@@ -9,6 +9,7 @@ import 'app_prefs.dart';
 import 'compliance_demo.dart';
 import 'file_category.dart';
 import 'host_paths.dart';
+import 'media_folder.dart';
 import 'media_root.dart';
 import '../widgets/alphabet_filter.dart';
 
@@ -421,19 +422,35 @@ class MediaLibrary {
 
     // Only sendable values cross the isolate boundary, so the walk returns
     // plain maps and they are turned back into MediaFiles here.
-    final List<Map<String, Object>> raw = await _runWalk(
-      scanRoots,
-      maxDepth,
-      fileLimit,
-      mediaRoot,
-      onProgress,
+    // The granted folder is ENUMERATED, not walked.
+    //
+    // This is why a scan of the user's chosen folder found nothing. The SAF
+    // grant was only ever used to guess a filesystem path, which was then
+    // handed to a dart:io walk -- and dart:io cannot list a removable card
+    // without all-files access, which Play will not grant an emulator. So the
+    // app asked the system for permission to read a folder, was given it, and
+    // then tried to read the folder a way the permission does not cover.
+    //
+    // MediaFolder.list goes through the content resolver, which is what the
+    // grant actually authorises. It existed and had no callers.
+    final List<Map<String, Object>> raw = <Map<String, Object>>[];
+    final List<MediaFile> granted = await _fromGrantedFolder(onProgress);
+
+    raw.addAll(
+      await _runWalk(scanRoots, maxDepth, fileLimit, mediaRoot, onProgress),
     );
     final bool truncated = raw.length >= fileLimit;
 
     final List<MediaFile> found = <MediaFile>[];
+    final Set<String> seenPaths = <String>{};
     for (final Map<String, Object> entry in raw) {
       final MediaFile? file = MediaFile.fromJson(entry);
-      if (file != null) found.add(file);
+      if (file != null && seenPaths.add(file.path)) found.add(file);
+    }
+    // The granted folder can sit inside a walked root when the app does hold
+    // all-files access, so the same file arrives twice.
+    for (final MediaFile file in granted) {
+      if (seenPaths.add(file.path)) found.add(file);
     }
 
     found.sort(
@@ -641,6 +658,42 @@ class MediaLibrary {
     } on FileSystemException {
       return false;
     }
+  }
+
+  /// The granted SAF folder, as media files.
+  ///
+  /// Returns real filesystem paths rather than content URIs, because that is
+  /// what the rest of the app and the emulator core expect. On a removable
+  /// card the path is right even where a dart:io listing of it would fail:
+  /// the enumeration came through the content resolver, and only the naming
+  /// is filesystem-shaped.
+  static Future<List<MediaFile>> _fromGrantedFolder(
+    ScanProgress? onProgress,
+  ) async {
+    if (!MediaFolder.isSupported) return const <MediaFile>[];
+    final String? root = await MediaFolder.displayPath();
+    if (root == null || root.isEmpty) return const <MediaFile>[];
+
+    final List<FolderEntry> entries = await MediaFolder.list();
+    final List<MediaFile> files = <MediaFile>[];
+    for (final FolderEntry entry in entries) {
+      final FileCategory? category = FileCategory.fromPath(entry.name);
+      if (category == null) continue;
+      final String directory = entry.directory.isEmpty
+          ? root
+          : '$root/${entry.directory}';
+      files.add(
+        MediaFile(
+          path: '$directory/${entry.name}',
+          category: category,
+          size: entry.size,
+        ),
+      );
+      if (files.length % 64 == 0) onProgress?.call(files.length, directory);
+    }
+    onProgress?.call(files.length, root);
+    AppLog.info('scan', '${files.length} files from the granted folder');
+    return files;
   }
 
   /// Runs the walk in an isolate, reporting progress if anyone is listening.
