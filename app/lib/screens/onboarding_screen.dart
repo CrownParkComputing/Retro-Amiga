@@ -15,6 +15,7 @@ import '../data/platform_info.dart';
 import '../data/startup_import.dart';
 import '../data/whdload_support.dart';
 import '../widgets/amiga_logo.dart';
+import '../widgets/import_progress_dialog.dart';
 
 /// First-run setup.
 ///
@@ -36,6 +37,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   AmigaModel _model = AmigaModel.a500;
   bool _scanning = false;
   bool _scanned = false;
+
   /// The folder the user picked, shown so a wrong choice is visible.
   String? _sourceFolder;
   String? _notice;
@@ -174,19 +176,27 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final String? picked = await MediaFolder.pick();
     if (picked == null) return; // Backed out: not an error.
     final String? shown = await MediaFolder.displayPath();
-    if (mounted) setState(() => _sourceFolder = shown);
+    if (!mounted) return;
+    setState(() => _sourceFolder = shown);
 
     setState(() {
       _scanning = true;
       _notice = 'Reading the folder…';
     });
     try {
-      final ImportResult result = await MediaFolderImporter.importAll(
-        onProgress: (int done, int total) {
-          if (mounted && total > 0) {
-            setState(() => _notice = 'Copying $done of $total…');
-          }
-        },
+      final ImportResult result = await ImportProgressDialog.run<ImportResult>(
+        context,
+        title: 'Importing Amiga files',
+        initialMessage: 'Scanning the selected folder and AGS collection…',
+        operation: (ImportProgressUpdate update) =>
+            MediaFolderImporter.importAll(
+              onProgress: (int done, int total) {
+                update('Copying recognised files…', done: done, total: total);
+                if (mounted && total > 0) {
+                  setState(() => _notice = 'Copying $done of $total…');
+                }
+              },
+            ),
       );
       if (!mounted) return;
       setState(
@@ -358,8 +368,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: <Widget>[
-                    Text('Two ways in',
-                        style: Theme.of(context).textTheme.titleMedium),
+                    Text(
+                      'Two ways in',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
                     const SizedBox(height: 10),
                     const Text(
                       'JUST SHOW ME IT WORKING\n'
@@ -404,9 +416,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               MediaFolder.isSupported
                   ? 'Kickstart ROMs, floppies, hard drives, CD images and '
                         'WHDLoad archives. You supply your own: choose the '
-                        'folder they live in - /sdcard/Amiga, a Downloads '
-                        'folder, wherever - and the app copies what it '
-                        'recognises into its own library.'
+                        'Retro-Applications/Amiga folder on your device '
+                        '(shown under Odin2 on that handheld). AGS_UAE, dated '
+                        'WHDLoad packs and your own HDF folders can then be '
+                        'added intact from the setup wizard.'
                   : 'Kickstart ROMs, floppies, hard drives, CD images and '
                         'WHDLoad archives. You supply your own: drop them - '
                         'zipped is fine - into this app\'s folder in the '
@@ -588,7 +601,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 ),
               ),
               const SizedBox(height: 24),
-
             ],
             // WHDLoad setup is Android only. The boot archive has to be found
             // on the device, and iOS gives the app nothing to search: no

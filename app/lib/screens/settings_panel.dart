@@ -11,6 +11,7 @@ import '../data/media_folder.dart';
 import '../data/media_library.dart';
 import '../data/media_root.dart';
 import '../theme/amiga_theme.dart';
+import '../widgets/import_progress_dialog.dart';
 
 /// Where things live and how they get there, after setup has run.
 ///
@@ -153,10 +154,20 @@ class _SettingsPanelState extends State<SettingsPanel> {
   Future<void> _chooseSourceFolder() async {
     final String? picked = await MediaFolder.pick();
     if (picked == null) return; // Backed out.
+    if (!mounted) return;
 
     setState(() => _busy = true);
     try {
-      await MediaFolderImporter.importAll();
+      await ImportProgressDialog.run<ImportResult>(
+        context,
+        title: 'Importing Amiga files',
+        initialMessage: 'Scanning the selected folder and AGS collection…',
+        operation: (ImportProgressUpdate update) =>
+            MediaFolderImporter.importAll(
+              onProgress: (int done, int total) =>
+                  update('Copying recognised files…', done: done, total: total),
+            ),
+      );
       await MediaLibrary.scan();
     } on Exception {
       // The import reports its own failures to the log; the reload below

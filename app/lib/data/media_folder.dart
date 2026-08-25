@@ -114,10 +114,13 @@ class MediaFolder {
 
   /// Opens the system folder picker. Returns the granted folder, or null if
   /// the user backed out.
-  static Future<String?> pick() async {
+  static Future<String?> pick({String? initialSubfolder}) async {
     if (!isSupported) return null;
     try {
-      return await _channel.invokeMethod<String>('pickMediaFolder');
+      return await _channel.invokeMethod<String>(
+        'pickMediaFolder',
+        <String, Object?>{'initialSubfolder': initialSubfolder},
+      );
     } on PlatformException catch (e) {
       AppLog.info('folder', 'picker refused: ${e.code}');
       return null;

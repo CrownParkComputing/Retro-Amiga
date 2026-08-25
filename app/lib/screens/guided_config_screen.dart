@@ -14,6 +14,7 @@ import '../data/media_library.dart';
 import '../data/media_root.dart';
 import '../emulator.dart';
 import '../widgets/amiga_logo.dart';
+import '../widgets/import_progress_dialog.dart';
 import '../widgets/media_chooser.dart';
 
 /// What the user said they were setting up. It decides which machines are
@@ -837,15 +838,29 @@ class _HardDriveSetStepState extends State<_HardDriveSetStep> {
       HardDriveSet? set;
       ImportResult? imported;
       if (MediaFolder.isSupported) {
-        final String? picked = await MediaFolder.pick();
+        final String? picked = await MediaFolder.pick(
+          initialSubfolder: 'HardDrives',
+        );
         if (picked == null) return;
+        if (!mounted) return;
         final HardDriveFolderImport? result =
-            await MediaFolderImporter.importHardDriveTree(
-              onProgress: (int done, int total) {
-                if (mounted) {
-                  setState(() => _notice = 'Copying $done of $total…');
-                }
-              },
+            await ImportProgressDialog.run<HardDriveFolderImport?>(
+              context,
+              title: 'Adding hard-drive folder',
+              initialMessage: 'Scanning HDF and AGS files…',
+              operation: (ImportProgressUpdate update) =>
+                  MediaFolderImporter.importHardDriveTree(
+                    onProgress: (int done, int total) {
+                      update(
+                        'Copying the hard-drive set…',
+                        done: done,
+                        total: total,
+                      );
+                      if (mounted) {
+                        setState(() => _notice = 'Copying $done of $total…');
+                      }
+                    },
+                  ),
             );
         set = result?.set;
         imported = result?.result;

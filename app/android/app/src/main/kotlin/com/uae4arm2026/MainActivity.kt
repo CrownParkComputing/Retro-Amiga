@@ -367,7 +367,10 @@ class MainActivity : FlutterActivity() {
 							)
 						} else {
 							pendingFolderPick = result
-							MediaFolderAccess.pickFolder(this)
+							MediaFolderAccess.pickFolder(
+								this,
+								call.argument<String>("initialSubfolder"),
+							)
 						}
 					}
 

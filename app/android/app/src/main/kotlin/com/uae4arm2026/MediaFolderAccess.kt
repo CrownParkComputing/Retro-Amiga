@@ -29,6 +29,17 @@ object MediaFolderAccess {
 	const val REQUEST_PICK_FOLDER = 0x5AF0
 
 	/**
+	 * The shared Retro-Applications layout used across the handheld builds.
+	 *
+	 * "primary" is Android's stable Storage Access Framework name for internal
+	 * shared storage. The Files UI may label that volume "Odin2", but baking
+	 * the marketing name into a filesystem path would only work on one device.
+	 * A missing folder is harmless: the system picker falls back to its normal
+	 * location and the user can still select an SD-card collection instead.
+	 */
+	private const val preferredAmigaPath = "Retro-Applications/Amiga"
+
+	/**
 	 * The persisted tree, or null if the user has not granted one.
 	 *
 	 * Read back from the system rather than from our own preferences: a grant
@@ -40,12 +51,32 @@ object MediaFolderAccess {
 			.firstOrNull { it.isReadPermission }
 			?.uri
 
-	fun pickFolder(activity: Activity) {
+	fun pickFolder(activity: Activity, initialSubfolder: String? = null) {
+		val safeSubfolder = initialSubfolder
+			?.replace('\\', '/')
+			?.split('/')
+			?.filter { it.isNotBlank() && it != "." && it != ".." }
+			?.joinToString("/")
+			.orEmpty()
+		val initialPath = if (safeSubfolder.isEmpty()) {
+			preferredAmigaPath
+		} else {
+			"$preferredAmigaPath/$safeSubfolder"
+		}
+		val initialTree = Uri.parse(
+			"content://com.android.externalstorage.documents/document/" +
+				Uri.encode("primary:$initialPath")
+		)
 		val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
 			addFlags(
 				Intent.FLAG_GRANT_READ_URI_PERMISSION or
 					Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
 			)
+			// Open directly on the canonical Odin2/internal-storage collection.
+			// This is only a starting location; ACTION_OPEN_DOCUMENT_TREE still
+			// requires the user to grant the folder explicitly under scoped
+			// storage, as required by Play policy.
+			putExtra(DocumentsContract.EXTRA_INITIAL_URI, initialTree)
 		}
 		activity.startActivityForResult(intent, REQUEST_PICK_FOLDER)
 	}
