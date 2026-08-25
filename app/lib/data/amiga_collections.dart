@@ -23,12 +23,19 @@ enum AmigaCollection {
     <String>['ags_uae', 'ags-uae', 'agsuae', 'ags'],
   ),
 
-  /// Zeb's dated WHDLoad packs.
+  /// The dated full-disk WHDLoad pack, commonly called Zeb's.
+  ///
+  /// Its name almost never contains "zeb". What it is actually distributed as
+  /// is a folder and image named for the build date -- "A1200 WHDLoad
+  /// (15-Feb-2026).hdf" beside a partition calculator and a couple of PDFs --
+  /// so matching on "zeb" found a 25GB pack sitting in plain sight exactly
+  /// never. The date in brackets after the word is the signature.
   zebWhdload(
-    'Zeb WHDLoad',
-    'Dated WHDLoad pack with its own bootstrap drive.',
+    'WHDLoad pack',
+    'Dated full-disk WHDLoad image, usually called Zeb\'s.',
     <String>['zeb'],
     alsoNeeds: <String>['whd'],
+    patterns: <String>[r'whdload\s*\('],
   ),
 
   /// AmigaVision, which the Amiga Vision spelling still turns up as.
@@ -50,6 +57,7 @@ enum AmigaCollection {
     this.description,
     this.fragments, {
     this.alsoNeeds = const <String>[],
+    this.patterns = const <String>[],
   });
 
   final String displayName;
@@ -62,7 +70,14 @@ enum AmigaCollection {
   /// "zeb" alone matches a folder called Zebra.
   final List<String> alsoNeeds;
 
+  /// Where a substring is not enough. Any one of these matching is a match on
+  /// its own, without [alsoNeeds] -- these are already specific.
+  final List<String> patterns;
+
   bool _matches(String lowerPath) {
+    for (final String pattern in patterns) {
+      if (RegExp(pattern).hasMatch(lowerPath)) return true;
+    }
     if (!fragments.any(lowerPath.contains)) return false;
     return alsoNeeds.every(lowerPath.contains);
   }

@@ -235,6 +235,10 @@ class HardDriveSet {
       bootDrive,
       ...drives,
     ].join('/').toLowerCase();
+    // The dated naming is what these actually ship as -- "A1200 WHDLoad
+    // (15-Feb-2026)" -- and almost none of them say "zeb" anywhere. Requiring
+    // that name meant the pack was never recognised as one.
+    if (RegExp(r'whdload\s*\(').hasMatch(identity)) return true;
     return identity.contains('zeb') && identity.contains('whd');
   }
 

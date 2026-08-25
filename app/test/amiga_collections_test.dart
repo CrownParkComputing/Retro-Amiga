@@ -40,6 +40,25 @@ void main() {
     expect(AmigaCollection.findIn(index), isEmpty);
   });
 
+  test('finds the dated WHDLoad pack, which never says "zeb"', () {
+    // What is actually on the card: a folder and image named for the build
+    // date. Matching on "zeb" missed a 25GB pack in plain sight.
+    final MediaIndex index = MediaIndex(
+      roots: const <String>['/sd/Amiga'],
+      files: <MediaFile>[
+        file(
+          '/sd/Amiga/harddrives/WHDLoad (15-Feb-2026)/'
+          'A1200 WHDLoad (15-Feb-2026).hdf',
+          FileCategory.hardDrives,
+        ),
+      ],
+    );
+    expect(
+      AmigaCollection.findIn(index)[AmigaCollection.zebWhdload],
+      '/sd/Amiga/harddrives/WHDLoad (15-Feb-2026)',
+    );
+  });
+
   test('Zeb needs both halves of its name', () {
     final MediaIndex index = MediaIndex(
       roots: const <String>['/sd/Amiga'],
