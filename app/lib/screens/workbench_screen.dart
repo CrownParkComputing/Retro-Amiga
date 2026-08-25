@@ -20,7 +20,6 @@ import '../data/music_player.dart';
 import '../data/save_states.dart';
 import '../data/session.dart';
 import '../ffi/amiga_core.dart';
-import '../ffi/amiga_texture.dart';
 import '../widgets/amiga_keyboard_overlay.dart';
 import '../widgets/amiga_screen_view.dart';
 import '../widgets/pad_overlay.dart';
@@ -138,6 +137,9 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
 
   PadLayout _layout = PadLayout.defaults;
 
+  /// See the compliance case in [_panel].
+  CompliancePanel? _compliancePanel;
+
   int get _pad => _layout.style == PadStyle.cd32 ? 2 : 1;
 
   /// Redraws for the Fill toggle, and does nothing else.
@@ -176,6 +178,8 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     } else {
       _chromeTimer?.cancel();
       _padAttached = false;
+      _sessionStarted = false;
+      _pointers.clear();
       // Give the buttons back to the launcher: a handheld navigates its own
       // menus with the same stick it just played with.
       unawaited(GameController.setGameRunning(false));
@@ -183,9 +187,21 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     if (Emulator.playing.value) _startSession();
   }
 
+  /// True while _startSession is in flight or has completed for the current
+  /// session, so the start-of-session work cannot be run twice over one game.
+  bool _sessionStarted = false;
+
   /// A session has begun in the panel: load the pad layout the designer
   /// saved and register the pad it asks for with the core.
+  ///
+  /// Guarded, because running this over a core that is already going re-enters
+  /// the input device table while the emulation thread is using it, and that
+  /// aborts the process out of Scudo rather than failing politely. One route
+  /// in is fixed (see _onScreenFillChanged); the guard is here so the next one
+  /// is a no-op rather than a crash report.
   Future<void> _startSession() async {
+    if (_sessionStarted) return;
+    _sessionStarted = true;
     final PadLayout layout = await PadLayoutStore.load();
     // Ask before drawing: a controller already attached means the on-screen
     // pad should never appear, rather than appear and then vanish.
@@ -306,11 +322,17 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     // panel without going through _startSession left a controller doing
     // nothing at all.
     _bindPhysicalController();
-    GameController.onAudioFocusChanged = (bool focused) {
-      if (focused) {
-        Emulator.resumeIfSuspended();
-      } else {
-        Emulator.suspend();
+    GameController.onAudioFocusChanged = (AudioFocus focus) {
+      switch (focus) {
+        case AudioFocus.gain:
+          Emulator.resumeIfSuspended();
+        case AudioFocus.loss:
+          Emulator.suspend();
+        case AudioFocus.duck:
+          // Deliberately nothing. The system is lowering our volume for a
+          // notification, not asking the machine to stop, and stopping it
+          // here froze the game every time a message arrived.
+          break;
       }
     };
     unawaited(GameController.start());
@@ -807,14 +829,9 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
                   _pointers.remove(event.pointer),
               child: AmigaScreenView(
                 core: core,
-                // Only the fallback path pays per frame, and only where there
-                // is no external texture to composite instead. Where there is
-                // -- Android and iOS both -- a frame is one memcpy into the
-                // compositor's own buffer, so the cap that used to be needed
-                // to keep the audio callback fed is not.
-                pollInterval: AmigaTexture.isSupported
-                    ? Duration.zero
-                    : const Duration(milliseconds: 20),
+                // No pollInterval: only the fallback path has a frame-rate
+                // ceiling, and only the widget knows whether it ended up on
+                // it. See AmigaScreenView.pollInterval.
                 fill: AppPrefs.screenFill.value,
                 mouseMode: _mouseMode,
               ),
@@ -855,7 +872,15 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
       case WorkbenchSection.history:
         return const HistoryScreen();
       case WorkbenchSection.compliance:
-        return CompliancePanel(onRerunSetup: widget.onRerunSetup);
+        // Held rather than rebuilt. Every other case here is `const`, so
+        // Flutter sees the identical widget on a rebuild and skips the
+        // subtree entirely; this one allocated a fresh instance on each of
+        // the nineteen setState calls in this screen -- including the
+        // three-second chrome timer -- and so was the only panel actually
+        // being rebuilt for reasons that had nothing to do with it.
+        return _compliancePanel ??= CompliancePanel(
+          onRerunSetup: widget.onRerunSetup,
+        );
       case WorkbenchSection.about:
         return const AboutPanel();
       case WorkbenchSection.music:

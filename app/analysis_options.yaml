@@ -8,3 +8,28 @@ analyzer:
     - macos/**
     - linux/**
 include: package:flutter_lints/flutter.yaml
+
+linter:
+  rules:
+    # Widget allocation the framework can skip entirely. The guided-config
+    # screen alone rebuilds a few hundred widgets per step, and a const one is
+    # not rebuilt at all -- the element is reused and its subtree is not
+    # visited. Cheapest performance rule there is.
+    - prefer_const_constructors
+    - prefer_const_constructors_in_immutables
+    - prefer_const_declarations
+    - prefer_const_literals_to_create_immutables
+
+    # A Container with nothing but a child is a render object doing nothing.
+    - avoid_unnecessary_containers
+    - sized_box_for_whitespace
+
+    # Both of these have already cost this app a bug apiece: a timer left
+    # running after its screen went, and a BuildContext used after an await.
+    - cancel_subscriptions
+    - close_sinks
+    - use_build_context_synchronously
+
+    # An unawaited future that throws becomes an unhandled error with no
+    # stack worth reading. `unawaited(...)` says the omission was meant.
+    - unawaited_futures

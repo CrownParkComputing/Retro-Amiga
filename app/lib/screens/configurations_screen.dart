@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../data/amiga_model.dart';
@@ -314,7 +316,7 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
         builder: (BuildContext context) => ConfigEditorScreen(config: config),
       ),
     );
-    if (saved == true && mounted) _reload();
+    if (saved == true && mounted) unawaited(_reload());
   }
 
   Widget _machineTabs() {

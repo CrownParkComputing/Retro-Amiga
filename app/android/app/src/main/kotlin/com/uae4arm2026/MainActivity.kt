@@ -140,15 +140,80 @@ class MainActivity : FlutterActivity() {
 	 */
 	private var gameRunning = false
 
+	/**
+	 * Audio focus, translated into what the emulator should actually do.
+	 *
+	 * This used to send `change == AUDIOFOCUS_GAIN` as a bare boolean, and
+	 * Dart suspended the entire emulator on anything else. Two of those
+	 * "anything else" values are not a reason to stop:
+	 *
+	 *  * AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK means "carry on, quieter" -- a
+	 *    notification chirp on a tablet is the common case. Suspending the
+	 *    machine there froze the game mid-play for every system sound.
+	 *  * AUDIOFOCUS_GAIN_TRANSIENT and friends are gains, and matching only
+	 *    the exact GAIN constant meant a machine suspended by a transient
+	 *    loss was never told it could start again. It simply stayed stopped,
+	 *    which is what "it crashes" and "the audio breaks" look like from the
+	 *    outside.
+	 *
+	 * Three outcomes, named, so the Dart side cannot get this wrong again.
+	 */
 	private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { change ->
-		channel?.invokeMethod(
-			"audioFocusChanged",
-			change == AudioManager.AUDIOFOCUS_GAIN,
-		)
+		val state = when (change) {
+			AudioManager.AUDIOFOCUS_GAIN,
+			AudioManager.AUDIOFOCUS_GAIN_TRANSIENT,
+			AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
+			AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE -> "gain"
+
+			// Keep playing. The system lowers our volume for us.
+			AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> "duck"
+
+			AudioManager.AUDIOFOCUS_LOSS,
+			AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> "loss"
+
+			// An unknown value is not a reason to stop a game.
+			else -> "duck"
+		}
+		channel?.invokeMethod("audioFocusChanged", state)
 	}
+
+	/**
+	 * Held on O+ through AudioFocusRequest, which is the only form the system
+	 * honours there; the stream-based call is deprecated and increasingly a
+	 * no-op, which left the game with no focus at all and its audio at the
+	 * mercy of whatever else was playing.
+	 */
+	private var audioFocusRequest: android.media.AudioFocusRequest? = null
 
 	private fun setGameAudioFocus(running: Boolean) {
 		val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+			if (running) {
+				val request = android.media.AudioFocusRequest
+					.Builder(AudioManager.AUDIOFOCUS_GAIN)
+					.setAudioAttributes(
+						android.media.AudioAttributes.Builder()
+							.setUsage(android.media.AudioAttributes.USAGE_GAME)
+							.setContentType(
+								android.media.AudioAttributes.CONTENT_TYPE_MUSIC
+							)
+							.build()
+					)
+					// The emulator has no way to duck itself, so let the
+					// system do it rather than be handed a transient loss.
+					.setWillPauseWhenDucked(false)
+					.setOnAudioFocusChangeListener(audioFocusListener)
+					.build()
+				audioFocusRequest = request
+				audio.requestAudioFocus(request)
+			} else {
+				audioFocusRequest?.let { audio.abandonAudioFocusRequest(it) }
+				audioFocusRequest = null
+			}
+			return
+		}
+
+		@Suppress("DEPRECATION")
 		if (running) {
 			audio.requestAudioFocus(
 				audioFocusListener,

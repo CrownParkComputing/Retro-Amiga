@@ -125,9 +125,20 @@ class _WobbleJoystickState extends State<WobbleJoystick>
             onPanUpdate: (d) => _updateFromLocal(d.localPosition, radius),
             onPanEnd: (_) => _release(),
             onPanCancel: _release,
-            child: CustomPaint(
-              painter: _WobblePainter(knobOffset: _knobOffset, active: _active),
-              size: Size(widget.size, widget.size),
+            // The stick springs back on an AnimationController, so it
+            // repaints at the display's rate for as long as it is moving.
+            // Without a boundary that repaint is shared with whatever else
+            // is in the same layer -- over a running game, the picture and
+            // the status strip -- so every nudge of the stick redrew them
+            // too.
+            child: RepaintBoundary(
+              child: CustomPaint(
+                painter: _WobblePainter(
+                  knobOffset: _knobOffset,
+                  active: _active,
+                ),
+                size: Size(widget.size, widget.size),
+              ),
             ),
           );
         },

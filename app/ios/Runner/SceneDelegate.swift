@@ -51,8 +51,22 @@ class SceneDelegate: FlutterSceneDelegate {
     }
   }
 
+  /// Interruptions, and route changes, translated into what a game should do.
+  ///
+  /// This sent a bare boolean, matching what Android sent, and both were
+  /// wrong in the same way: the Dart side suspended the whole emulator on
+  /// anything that was not a clean resume. The protocol is now three named
+  /// states -- "gain", "duck", "loss" -- so a momentary interruption cannot be
+  /// read as a reason to stop the machine.
+  ///
+  /// The session also has to be made active again by hand. iOS deactivates it
+  /// for the duration of an interruption and does NOT restore it, so a game
+  /// that came back from a phone call came back silent; that is what made
+  /// "the audio has deteriorated" survive a resume.
   private func observeAudioInterruptions() {
-    audioObservers = [NotificationCenter.default.addObserver(
+    let center = NotificationCenter.default
+
+    let interruption = center.addObserver(
       forName: AVAudioSession.interruptionNotification,
       object: AVAudioSession.sharedInstance(),
       queue: .main
@@ -60,9 +74,50 @@ class SceneDelegate: FlutterSceneDelegate {
       guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey]
               as? UInt,
             let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
-      self?.emulatorChannel?.invokeMethod(
-        "audioFocusChanged", arguments: type == .ended)
-    }]
+
+      switch type {
+      case .began:
+        self?.emulatorChannel?.invokeMethod("audioFocusChanged", arguments: "loss")
+      case .ended:
+        // Only resume if the system says we may; otherwise something else is
+        // still holding the session and starting up would be silent anyway.
+        let options = (notification.userInfo?[AVAudioSessionInterruptionOptionKey]
+          as? UInt).map(AVAudioSession.InterruptionOptions.init(rawValue:))
+        guard options?.contains(.shouldResume) ?? true else { return }
+        do {
+          try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+          NSLog("uae4arm: could not reactivate the audio session: %@",
+                error.localizedDescription)
+        }
+        self?.emulatorChannel?.invokeMethod("audioFocusChanged", arguments: "gain")
+      @unknown default:
+        break
+      }
+    }
+
+    // A headphone being unplugged is the case worth catching: the route
+    // changes, the session survives, and without reactivating it the game
+    // plays on with no sound out of the speaker.
+    let routeChange = center.addObserver(
+      forName: AVAudioSession.routeChangeNotification,
+      object: AVAudioSession.sharedInstance(),
+      queue: .main
+    ) { notification in
+      guard let raw = notification.userInfo?[AVAudioSessionRouteChangeReasonKey]
+              as? UInt,
+            let reason = AVAudioSession.RouteChangeReason(rawValue: raw),
+            reason == .oldDeviceUnavailable || reason == .newDeviceAvailable
+      else { return }
+      do {
+        try AVAudioSession.sharedInstance().setActive(true)
+      } catch {
+        NSLog("uae4arm: route change reactivation failed: %@",
+              error.localizedDescription)
+      }
+    }
+
+    audioObservers = [interruption, routeChange]
   }
 
   /// Tells the launcher when a controller comes or goes.

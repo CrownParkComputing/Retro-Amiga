@@ -58,6 +58,56 @@ void main() {
     );
   });
 
+  test('retries on a later launch when the old directory was not there yet',
+      () async {
+    // The upgrade case that lost people's setups. The first launch cannot see
+    // the old directory -- the host has not answered, so the two roots
+    // collapse onto the same path -- and the migration used to mark itself
+    // finished anyway, so no later launch ever looked again.
+    final int first = await LegacyMigration.run(
+      appSupportDirectory: support.path,
+      emulatorHomeDirectory: support.path,
+    );
+    expect(first, 0);
+
+    final Directory old = Directory('${home.path}/conf')..createSync();
+    File('${old.path}/Workbench 3.1.uae').writeAsStringSync('cpu_model=68020\n');
+
+    final int second = await LegacyMigration.run(
+      appSupportDirectory: support.path,
+      emulatorHomeDirectory: home.path,
+    );
+
+    expect(second, 1);
+    expect(
+      File('${support.path}/conf/Workbench 3.1.uae').existsSync(),
+      isTrue,
+    );
+  });
+
+  test('retries when the old directory simply does not exist yet', () async {
+    // No conf directory at all on the first look: also not a finished
+    // migration, because the user may restore a backup between launches.
+    expect(
+      await LegacyMigration.run(
+        appSupportDirectory: support.path,
+        emulatorHomeDirectory: home.path,
+      ),
+      0,
+    );
+
+    final Directory old = Directory('${home.path}/conf')..createSync();
+    File('${old.path}/Later.uae').writeAsStringSync('later');
+
+    expect(
+      await LegacyMigration.run(
+        appSupportDirectory: support.path,
+        emulatorHomeDirectory: home.path,
+      ),
+      1,
+    );
+  });
+
   test('runs only once', () async {
     final Directory old = Directory('${home.path}/conf')..createSync();
     File('${old.path}/First.uae').writeAsStringSync('first');

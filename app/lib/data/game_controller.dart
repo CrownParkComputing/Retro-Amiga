@@ -30,7 +30,7 @@ class GameController {
   /// events reach the same pad the on-screen controls drive.
   static void Function(bool left, bool right, bool up, bool down)? onDirection;
   static void Function(int button, bool pressed)? onButton;
-  static ValueChanged<bool>? onAudioFocusChanged;
+  static ValueChanged<AudioFocus>? onAudioFocusChanged;
 
   /// Starts watching, and answers once with what is attached now.
   ///
@@ -60,7 +60,9 @@ class GameController {
               a['pressed'] as bool? ?? false,
             );
           case 'audioFocusChanged':
-            onAudioFocusChanged?.call(call.arguments as bool? ?? false);
+            onAudioFocusChanged?.call(
+              AudioFocus.parse(call.arguments as String?),
+            );
         }
         return null;
       });
@@ -98,6 +100,38 @@ class GameController {
       // keeps the on-screen pad, which is the right default for a touch
       // device and harmless on a desktop that has a keyboard anyway.
       return false;
+    }
+  }
+}
+
+/// What the system has done to our audio focus, and what it means for a game.
+///
+/// Three values rather than a boolean, because the boolean it replaced was
+/// wrong in both directions: it read every transient gain as a loss, and every
+/// duck as a reason to stop the machine. A tablet raises both of those several
+/// times an hour -- a notification is enough -- and each one froze the game.
+enum AudioFocus {
+  /// Ours again, or still ours. Resume if we stopped.
+  gain,
+
+  /// Something else wants to be heard over us for a moment. Keep running:
+  /// the system lowers our volume itself, and a game that stops for a
+  /// notification chirp is worse than one that plays quietly through it.
+  duck,
+
+  /// Gone, for now or for good. Stop.
+  loss;
+
+  static AudioFocus parse(String? name) {
+    switch (name) {
+      case 'gain':
+        return AudioFocus.gain;
+      case 'loss':
+        return AudioFocus.loss;
+      default:
+        // Includes 'duck' and anything a future host sends that this build
+        // does not know: not a reason to stop a game.
+        return AudioFocus.duck;
     }
   }
 }

@@ -746,7 +746,7 @@ class _HardDriveStepState extends State<_HardDriveStep> {
     final List<MediaFile> drives = _index.of(FileCategory.hardDrives);
     if (drives.isEmpty) return const <HardDriveSet>[];
     final String firstPath = drives.first.path;
-    final String marker = '/HardDrives/';
+    const String marker = '/HardDrives/';
     final int at = firstPath.replaceAll(r'\', '/').indexOf(marker);
     if (at < 0) return const <HardDriveSet>[];
     return HardDriveSet.discoverIn(
@@ -771,9 +771,9 @@ class _HardDriveStepState extends State<_HardDriveStep> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          Row(
+          const Row(
             children: <Widget>[
-              const Expanded(
+              Expanded(
                 child: Text(
                   'HardDrives is scanned automatically. Keep AGS_UAE and each '
                   'dated WHDLoad setup in its own folder.',

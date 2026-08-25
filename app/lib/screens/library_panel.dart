@@ -60,6 +60,12 @@ class _LibraryPanelState extends State<LibraryPanel> {
   bool _loading = true;
   String? _error;
   List<MediaFile> _files = <MediaFile>[];
+
+  /// Whether the scan stopped before it ran out of files. Shown, because a
+  /// shelf that is quietly missing half a collection is indistinguishable
+  /// from one that cannot read the folders at all -- and that is exactly how
+  /// it was reported.
+  bool _truncated = false;
   List<SavedConfig> _configs = <SavedConfig>[];
   StreamSubscription<MediaIndex>? _mediaChanges;
 
@@ -95,6 +101,7 @@ class _LibraryPanelState extends State<LibraryPanel> {
       if (!mounted) return;
       setState(() {
         _files = index.files;
+        _truncated = index.truncated;
         _recompute();
       });
     });
@@ -184,6 +191,7 @@ class _LibraryPanelState extends State<LibraryPanel> {
       setState(() {
         _files = index.files;
         _configs = configs;
+        _truncated = index.truncated;
         _loading = false;
         _recompute();
       });
@@ -216,6 +224,7 @@ class _LibraryPanelState extends State<LibraryPanel> {
         ),
         _tabRow(),
         _searchRow(),
+        if (_truncated) const _TruncationNotice(),
         const Divider(height: 1, color: AmigaColors.panelBorder),
         Expanded(child: _body()),
       ],
@@ -368,7 +377,7 @@ class _LibraryPanelState extends State<LibraryPanel> {
       ),
     );
     // The wizard may have saved a setup, which changes this row's action.
-    if (mounted) _load();
+    if (mounted) unawaited(_load());
   }
 
   Future<void> _playMusic(MediaFile file) async {
@@ -732,6 +741,35 @@ class _TabPill extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Says so when the scan stopped early, rather than leaving the user to
+/// conclude their folders are not being read.
+class _TruncationNotice extends StatelessWidget {
+  const _TruncationNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      color: const Color(0x22FFD400),
+      child: const Row(
+        children: <Widget>[
+          Icon(Icons.info_outline, size: 16, color: Color(0xFFFFD400)),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'This collection is larger than one scan can hold, so some '
+              'files are not listed. Moving what you are not using out of '
+              'the Amiga folder will bring the rest in.',
+              style: TextStyle(fontSize: 12, color: Color(0xFFFFD400)),
+            ),
+          ),
+        ],
       ),
     );
   }

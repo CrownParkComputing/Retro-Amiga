@@ -23,10 +23,7 @@ import 'package:flutter/scheduler.dart';
 /// Everything is driven from real elapsed seconds, so it runs at the same
 /// speed on a 120Hz iPad as on a 60Hz handheld.
 class BoingBackdrop extends StatefulWidget {
-  const BoingBackdrop({super.key, this.opacity = 1.0, this.scrollText});
-
-  /// Faded down while the workbench is in use, full while it is idle.
-  final double opacity;
+  const BoingBackdrop({super.key, this.scrollText});
 
   /// What the scroller says. Null uses the built-in greeting.
   final String? scrollText;
@@ -68,17 +65,23 @@ class _BoingBackdropState extends State<BoingBackdrop>
 
   @override
   Widget build(BuildContext context) {
-    if (widget.opacity <= 0) return const SizedBox.expand();
-    return Opacity(
-      opacity: widget.opacity,
-      child: RepaintBoundary(
-        child: CustomPaint(
-          painter: _BoingPainter(
-            elapsed: _elapsed,
-            text: _text ?? _BoingPainter.defaultText,
-          ),
-          size: Size.infinite,
+    // No `Opacity` here, deliberately.
+    //
+    // There was one, wrapped around this, fed by an `opacity` parameter that
+    // every caller left at its default. At 1.0 Opacity paints its child
+    // straight through, so it was costing nothing -- but the moment anyone
+    // passed a real value it would have become an offscreen `saveLayer` on
+    // every frame of a full-screen animation, which is one of the more
+    // expensive things a phone GPU can be asked to do. The workbench fades
+    // this in and out by mounting and unmounting it, so the knob had no user
+    // and no future; it is gone rather than left as a trap.
+    return RepaintBoundary(
+      child: CustomPaint(
+        painter: _BoingPainter(
+          elapsed: _elapsed,
+          text: _text ?? _BoingPainter.defaultText,
         ),
+        size: Size.infinite,
       ),
     );
   }

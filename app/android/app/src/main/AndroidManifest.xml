@@ -50,7 +50,8 @@
         android:icon="@mipmap/ic_launcher"
         android:banner="@drawable/tv_banner"
         android:allowBackup="true"
-        android:hasFragileUserData="true">
+        android:hasFragileUserData="true"
+        android:largeHeap="true">
 
         <!-- Flutter launcher -->
         <activity

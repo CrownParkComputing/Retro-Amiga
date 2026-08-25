@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../data/config_store.dart';
@@ -55,7 +57,7 @@ class _ResumePanelState extends State<ResumePanel> {
 
   Future<void> _forget(SaveState state) async {
     await SaveStates.remove(state);
-    if (mounted) _load();
+    if (mounted) unawaited(_load());
   }
 
   @override

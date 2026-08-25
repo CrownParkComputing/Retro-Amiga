@@ -145,7 +145,7 @@ class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
                 ),
                 const SizedBox(height: 12),
 
-                _Section('Processor'),
+                const _Section('Processor'),
                 _Choice<int>(
                   label: 'CPU',
                   value: settings.cpuModel,
@@ -199,7 +199,7 @@ class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
                     ),
                   ),
 
-                _Section('Memory'),
+                const _Section('Memory'),
                 _Choice<int>(
                   label: 'Chip',
                   value: settings.chipRam,
@@ -253,7 +253,7 @@ class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
                     onChanged: (int v) => _update(settings.copyWith(z3Ram: v)),
                   ),
 
-                _Section('Chipset'),
+                const _Section('Chipset'),
                 _Choice<String>(
                   label: 'Chipset',
                   value: settings.chipset,
@@ -293,7 +293,7 @@ class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
                   onChanged: (bool v) => _update(settings.copyWith(ntsc: v)),
                 ),
 
-                _Section('Sound'),
+                const _Section('Sound'),
                 _Choice<int>(
                   label: 'Rate',
                   value: settings.soundFreq,
@@ -335,7 +335,7 @@ class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
                       _update(settings.copyWith(soundStereoSeparation: v)),
                 ),
 
-                _Section('Picture'),
+                const _Section('Picture'),
                 _Switch(
                   label: 'Correct aspect ratio',
                   help: '4:3, the shape the games were drawn for.',

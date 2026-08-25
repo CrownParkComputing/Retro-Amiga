@@ -12,11 +12,11 @@ class AboutPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
+    return const DefaultTabController(
       length: 2,
       child: Column(
         children: <Widget>[
-          const TabBar(
+          TabBar(
             tabs: <Widget>[
               Tab(text: 'About'),
               Tab(text: 'Logs'),
@@ -26,7 +26,7 @@ class AboutPanel extends StatelessWidget {
             indicatorColor: AmigaColors.workbenchOrange,
             dividerColor: AmigaColors.panelBorder,
           ),
-          const Expanded(
+          Expanded(
             child: TabBarView(
               children: <Widget>[
                 _AboutBody(),
@@ -86,7 +86,7 @@ class _AboutBody extends StatelessWidget {
               'that build compiles the JIT out entirely rather than switching '
               'it off at runtime.',
         ),
-        _Section(
+        const _Section(
           title: 'The front end',
           body:
               'Flutter, everywhere - Android, iOS, macOS, Linux and Windows '
@@ -94,7 +94,7 @@ class _AboutBody extends StatelessWidget {
               'nothing is copied through Dart, so the picture costs the same '
               'as it does in Amiberry proper.',
         ),
-        _Section(
+        const _Section(
           title: 'What you need to supply',
           body:
               'A Kickstart ROM, for full compatibility. The app boots '
@@ -105,7 +105,7 @@ class _AboutBody extends StatelessWidget {
               'Amiga Forever, and if you have an Amiga you may already own '
               'one. Everything else, the app will find by scanning.',
         ),
-        _Section(
+        const _Section(
           title: 'AROS',
           body:
               'The fallback Kickstart is the AROS m68k ROM, an independent '
@@ -114,7 +114,7 @@ class _AboutBody extends StatelessWidget {
               'aros.sourceforge.io. WHDLoad, JST and AmiQuit are Bert Jahn\'s '
               'and ship under their own terms.',
         ),
-        _Section(
+        const _Section(
           title: 'Thanks',
           body:
               'Amiberry, WinUAE, and the people who wrote the demos that '

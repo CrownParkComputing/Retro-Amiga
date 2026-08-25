@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -33,14 +34,48 @@ class AmigaScreenView extends StatefulWidget {
   final AmigaCore core;
 
   /// The shortest gap between two uploads, as a ceiling on the frame rate the
-  /// fallback path will pay for. `Duration.zero` takes every frame the Amiga
-  /// publishes. Ignored on the texture path, which is cheap enough not to
-  /// need a ceiling.
-  final Duration pollInterval;
+  /// FALLBACK path will pay for. `Duration.zero` takes every frame the Amiga
+  /// publishes; the texture path ignores it entirely, being one memcpy rather
+  /// than an upload.
+  ///
+  /// Defaulted rather than passed in, and the default is deliberately the
+  /// cautious one. The caller cannot know which path this widget ended up on
+  /// -- the texture is asked for asynchronously and may be refused by the
+  /// platform or by an older core -- so a caller that picked the ceiling from
+  /// `AmigaTexture.isSupported` would leave Android uncapped in exactly the
+  /// case where the cap still mattered.
+  final Duration? pollInterval;
 
   /// Stretch the picture over the whole panel instead of keeping the Amiga's
   /// shape. On a 16:9 phone that is the difference between bars and no bars.
   final bool fill;
+
+  /// The shape an Amiga picture is meant to be, whatever its pixel count.
+  ///
+  /// Amiga pixels are not square and their proportions change with the mode:
+  /// lores is 320x256, hires 640x256, PAL hires interlaced 752x576. All of
+  /// them were displayed on the same 4:3 screen, so the pixel counts are not
+  /// the shape -- 640x256 is 2.5:1 as numbers and 4:3 as a picture.
+  ///
+  /// Fitting by pixel count is what this used to do, and it is the "problems
+  /// with stretching video for other formats" report: hires interlaced came
+  /// out close enough to look right (1.31 against 1.33) and every other mode
+  /// came out visibly wrong, tall in lores and flat in hires. Correcting to
+  /// a fixed 4:3 is what WinUAE and Amiberry both call correct aspect, and it
+  /// is right for PAL and NTSC alike.
+  static const double displayAspect = 4 / 3;
+
+  /// The fallback path's frame-rate ceiling.
+  ///
+  /// Only reached where there is no external texture. Android gets the
+  /// stricter figure for the reason it always did: a full upload per frame
+  /// starves the audio callback on modest hardware, and torn sound is worse
+  /// than a slightly coarser picture. Where the texture path works -- which
+  /// is now the normal case on both mobile platforms -- neither figure
+  /// applies.
+  static final Duration _fallbackFloor = Platform.isAndroid
+      ? const Duration(milliseconds: 33)
+      : const Duration(milliseconds: 20);
 
   /// Treat touches as the Amiga mouse: drag moves it, tap clicks, a long press
   /// is the right button.
@@ -49,7 +84,7 @@ class AmigaScreenView extends StatefulWidget {
   const AmigaScreenView({
     super.key,
     required this.core,
-    this.pollInterval = const Duration(milliseconds: 20),
+    this.pollInterval,
     this.fill = false,
     this.mouseMode = false,
   });
@@ -75,10 +110,6 @@ class _AmigaScreenViewState extends State<AmigaScreenView>
   /// fallback: poll, upload, paint.
   AmigaTexture? _texture;
   bool _attaching = false;
-
-  /// The Amiga's current mode on the texture path. The surface is resized by
-  /// the platform as the mode changes; this is what fits it into the panel.
-  Size _textureSize = Size.zero;
 
   bool _uploading = false;
   int _lastSerial = -1;
@@ -128,15 +159,13 @@ class _AmigaScreenViewState extends State<AmigaScreenView>
 
     if (_texture != null) {
       // Frames are the platform's business here -- it pushes them to the
-      // compositor without Dart in the loop at all. The one thing still worth
-      // asking for is the shape to fit the picture into, because the Amiga
-      // changes mode mid-game. Two stores behind an uncontended mutex, and it
-      // only reaches the tree on the frames where the answer changed.
-      final Size size = widget.core.frameSize();
-      if (size != _textureSize && !size.isEmpty) {
-        setState(() => _textureSize = size);
+      // compositor without Dart in the loop at all, and the picture is drawn
+      // into a fixed 4:3 box, so a mode change needs nothing from this side.
+      // All that is left is noticing the first frame, to take the placeholder
+      // down. Two stores behind an uncontended mutex.
+      if (!_started.value && !widget.core.frameSize().isEmpty) {
+        _started.value = true;
       }
-      if (!_started.value && !size.isEmpty) _started.value = true;
       return;
     }
 
@@ -145,7 +174,7 @@ class _AmigaScreenViewState extends State<AmigaScreenView>
     // holds the core's staging buffer still while we read it -- see
     // AmigaFrame.pixels, which is borrowed rather than copied.
     if (_uploading) return;
-    final Duration floor = widget.pollInterval;
+    final Duration floor = widget.pollInterval ?? AmigaScreenView._fallbackFloor;
     if (floor > Duration.zero && elapsed - _lastUpload < floor) return;
 
     final AmigaFrame? frame = widget.core.frame();
@@ -188,21 +217,22 @@ class _AmigaScreenViewState extends State<AmigaScreenView>
     // the rail and the status strip, and repainting at 50Hz repaints them too.
     final Widget canvas = RepaintBoundary(
       child: texture != null
-          ? FittedBox(
-              fit: widget.fill ? BoxFit.fill : BoxFit.contain,
-              child: SizedBox(
-                width: _textureSize.isEmpty
-                    ? texture.width.toDouble()
-                    : _textureSize.width,
-                height: _textureSize.isEmpty
-                    ? texture.height.toDouble()
-                    : _textureSize.height,
-                child: Texture(
-                  textureId: texture.id,
-                  filterQuality: FilterQuality.none,
-                ),
-              ),
-            )
+          ? (widget.fill
+                ? Texture(
+                    textureId: texture.id,
+                    filterQuality: FilterQuality.none,
+                  )
+                : Center(
+                    child: AspectRatio(
+                      // The mode's pixel count is deliberately not used here;
+                      // see AmigaScreenView.displayAspect.
+                      aspectRatio: AmigaScreenView.displayAspect,
+                      child: Texture(
+                        textureId: texture.id,
+                        filterQuality: FilterQuality.none,
+                      ),
+                    ),
+                  ))
           : CustomPaint(
               painter: _FramePainter(source: _source, fill: widget.fill),
               size: Size.infinite,
@@ -320,12 +350,32 @@ class _FramePainter extends CustomPainter {
     if (image == null || size.isEmpty) return;
     paintImage(
       canvas: canvas,
-      rect: Offset.zero & size,
+      // Not the image's own proportions: the destination is a 4:3 box, and
+      // the whole frame is stretched into it whatever mode produced it. See
+      // AmigaScreenView.displayAspect.
+      rect: fill ? Offset.zero & size : _correctedRect(size),
       image: image,
       // The Amiga's pixels are the artwork. Smoothing them is the difference
       // between a chunky screen and a blurred one.
       filterQuality: FilterQuality.none,
-      fit: fill ? BoxFit.fill : BoxFit.contain,
+      fit: BoxFit.fill,
+    );
+  }
+
+  /// The largest 4:3 rectangle that fits [size], centred.
+  static Rect _correctedRect(Size size) {
+    const double aspect = AmigaScreenView.displayAspect;
+    double width = size.width;
+    double height = width / aspect;
+    if (height > size.height) {
+      height = size.height;
+      width = height * aspect;
+    }
+    return Rect.fromLTWH(
+      (size.width - width) / 2,
+      (size.height - height) / 2,
+      width,
+      height,
     );
   }
 

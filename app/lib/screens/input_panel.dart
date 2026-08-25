@@ -43,15 +43,15 @@ class InputPanel extends StatelessWidget {
               // counterpart for yet. A settings row that silently does
               // nothing is worse than no row.
               if (Platform.isAndroid)
-                ListTile(
-                  leading: const Icon(Icons.videogame_asset_outlined),
-                  title: const Text('Controller buttons'),
-                  subtitle: const Text(
+                const ListTile(
+                  leading: Icon(Icons.videogame_asset_outlined),
+                  title: Text('Controller buttons'),
+                  subtitle: Text(
                     'Which button on a real controller is red, blue, green and '
                     'yellow. A CD32 config uses all four; anything else uses the '
                     'first two as fire.',
                   ),
-                  trailing: const Icon(Icons.chevron_right),
+                  trailing: Icon(Icons.chevron_right),
                   onTap: Emulator.openControllerMapping,
                 ),
             ],

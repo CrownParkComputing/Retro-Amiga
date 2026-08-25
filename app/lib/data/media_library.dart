@@ -111,14 +111,28 @@ class MediaFile {
 
 /// The result of a scan, grouped so a wizard step can ask for one category.
 class MediaIndex {
-  const MediaIndex({required this.roots, required this.files});
+  const MediaIndex({
+    required this.roots,
+    required this.files,
+    this.truncated = false,
+  });
 
   const MediaIndex.empty()
     : roots = const <String>[],
-      files = const <MediaFile>[];
+      files = const <MediaFile>[],
+      truncated = false;
 
   final List<String> roots;
   final List<MediaFile> files;
+
+  /// Whether the walk stopped before it ran out of files.
+  ///
+  /// It could always do this -- there is a file limit and a depth limit -- and
+  /// it used to do it silently, which is the worst of the options. A user
+  /// with a large collection saw some of their CD images and floppies and not
+  /// others, with nothing anywhere saying why, and reported it as the folders
+  /// not being recognised. They were recognised; the scan had simply stopped.
+  final bool truncated;
 
   /// Only files of that kind. Archives are never offered.
   ///
@@ -378,8 +392,19 @@ class MediaLibrary {
   /// aborting the scan: on Android plenty of them are unreadable by design.
   static Future<MediaIndex> scan({
     List<String>? roots,
-    int maxDepth = 6,
-    int fileLimit = 5000,
+    // Both ceilings exist to stop a stray symlink turning this into a
+    // full-disk crawl, and both were low enough to be hit by real
+    // collections rather than only by accidents.
+    //
+    // Depth: an AGS install under HardDrives/ is comfortably more than six
+    // levels below the media root, so its HDFs sat below the floor.
+    //
+    // Files: 5000 counts only what is INDEXED, but a shelf of a few thousand
+    // ADFs plus a WHDLoad set reaches it, and everything after was dropped.
+    // 40000 is past any collection that fits on a handheld, and the walk
+    // still reports when it stops.
+    int maxDepth = 12,
+    int fileLimit = 40000,
   }) async {
     final List<String> scanRoots = roots ?? await defaultRoots();
     // Archives are only worth indexing inside the media folder - see _walk.
@@ -390,6 +415,7 @@ class MediaLibrary {
     final List<Map<String, Object>> raw = await Isolate.run(
       () => _walk(scanRoots, maxDepth, fileLimit, mediaRoot),
     );
+    final bool truncated = raw.length >= fileLimit;
 
     final List<MediaFile> found = <MediaFile>[];
     for (final Map<String, Object> entry in raw) {
@@ -402,8 +428,18 @@ class MediaLibrary {
           a.name.toLowerCase().compareTo(b.name.toLowerCase()),
     );
 
-    final MediaIndex index = MediaIndex(roots: scanRoots, files: found);
+    final MediaIndex index = MediaIndex(
+      roots: scanRoots,
+      files: found,
+      truncated: truncated,
+    );
     AppLog.info('scan', '${found.length} files under ${scanRoots.join(", ")}');
+    if (truncated) {
+      AppLog.warn(
+        'scan',
+        'stopped at the $fileLimit file limit; some media was not indexed',
+      );
+    }
     await _persist(index);
     if (!_changes.isClosed) _changes.add(index);
     return index;
@@ -726,20 +762,35 @@ class MediaLibrary {
     return File('${await HostPaths.appSupport()}/$_indexFile');
   }
 
+  /// Writes the index, off the UI isolate.
+  ///
+  /// Encoding a few thousand entries is tens of milliseconds of JSON, and it
+  /// used to be done on the isolate that draws, immediately after a scan --
+  /// so the frame that should have shown the results was the frame that paid
+  /// for storing them.
   static Future<void> _persist(MediaIndex index) async {
     try {
-      final File file = await _indexPath();
-      file.writeAsStringSync(
-        jsonEncode(<String, Object>{
-          // Which mode wrote this. A cache written in one mode must not be
-          // served in the other: the whole point of compliance mode is that
-          // the user's files are not in the picture, and a stale index would
-          // put them back on screen without anything having scanned them.
-          'complianceMode': await AppPrefs.complianceMode(),
-          'roots': index.roots,
-          'files': index.files.map((MediaFile f) => f.toJson()).toList(),
-        }),
-      );
+      final String path = (await _indexPath()).path;
+      // Which mode wrote this. A cache written in one mode must not be served
+      // in the other: the whole point of compliance mode is that the user's
+      // files are not in the picture, and a stale index would put them back on
+      // screen without anything having scanned them.
+      final bool compliance = await AppPrefs.complianceMode();
+      final List<Map<String, Object>> files = index.files
+          .map((MediaFile f) => f.toJson())
+          .toList();
+      final List<String> roots = index.roots;
+      final bool truncated = index.truncated;
+      await Isolate.run(() {
+        File(path).writeAsStringSync(
+          jsonEncode(<String, Object>{
+            'complianceMode': compliance,
+            'truncated': truncated,
+            'roots': roots,
+            'files': files,
+          }),
+        );
+      });
     } on Exception {
       // A lost cache costs a rescan, nothing more.
     }
@@ -747,35 +798,63 @@ class MediaLibrary {
 
   /// The last scan, so the wizard opens instantly instead of walking storage
   /// again every time.
+  ///
+  /// All of the work happens in an isolate, and the reason is the existence
+  /// check rather than the JSON. Every cached entry is stat'ed to drop files
+  /// the user has since deleted, so a shelf of a few thousand items was a few
+  /// thousand syscalls on the isolate that draws -- run at startup and again
+  /// every time the library panel opened. That is not a slow frame, it is a
+  /// visible freeze, and on a large collection it is long enough to be an ANR.
   static Future<MediaIndex> cached() async {
     try {
-      final File file = await _indexPath();
-      if (!file.existsSync()) return const MediaIndex.empty();
-      final Object? json = jsonDecode(file.readAsStringSync());
-      if (json is! Map<String, Object?>) return const MediaIndex.empty();
-      // Written in the other mode: treat as no cache at all, which costs a
-      // rescan and is the only answer that cannot show the wrong files.
-      if ((json['complianceMode'] as bool? ?? false) !=
-          await AppPrefs.complianceMode()) {
-        return const MediaIndex.empty();
-      }
-      final List<Object?> rawFiles =
-          (json['files'] as List<Object?>?) ?? const <Object?>[];
-      final List<MediaFile> files = <MediaFile>[];
-      for (final Object? raw in rawFiles) {
-        if (raw is Map<String, Object?>) {
-          final MediaFile? parsed = MediaFile.fromJson(raw);
+      final String path = (await _indexPath()).path;
+      final bool compliance = await AppPrefs.complianceMode();
+
+      final Map<String, Object>? decoded = await Isolate.run(() {
+        final File file = File(path);
+        if (!file.existsSync()) return null;
+        final Object? json = jsonDecode(file.readAsStringSync());
+        if (json is! Map<String, Object?>) return null;
+        // Written in the other mode: treat as no cache at all, which costs a
+        // rescan and is the only answer that cannot show the wrong files.
+        if ((json['complianceMode'] as bool? ?? false) != compliance) {
+          return null;
+        }
+
+        final List<Map<String, Object?>> kept = <Map<String, Object?>>[];
+        for (final Object? raw in (json['files'] as List<Object?>?) ??
+            const <Object?>[]) {
+          if (raw is! Map<String, Object?>) continue;
+          final Object? entryPath = raw['path'];
           // Drop entries whose file has since gone.
-          if (parsed != null && File(parsed.path).existsSync()) {
-            files.add(parsed);
+          if (entryPath is String && File(entryPath).existsSync()) {
+            kept.add(raw);
           }
         }
-      }
-      final List<String> roots =
-          ((json['roots'] as List<Object?>?) ?? const <Object?>[])
+
+        return <String, Object>{
+          'files': kept,
+          'truncated': json['truncated'] as bool? ?? false,
+          'roots': ((json['roots'] as List<Object?>?) ?? const <Object?>[])
               .whereType<String>()
-              .toList();
-      return MediaIndex(roots: roots, files: files);
+              .toList(),
+        };
+      });
+
+      if (decoded == null) return const MediaIndex.empty();
+
+      final List<MediaFile> files = <MediaFile>[];
+      for (final Object? raw in decoded['files'] as List<Object?>) {
+        if (raw is Map<String, Object?>) {
+          final MediaFile? parsed = MediaFile.fromJson(raw);
+          if (parsed != null) files.add(parsed);
+        }
+      }
+      return MediaIndex(
+        roots: (decoded['roots'] as List<Object?>).cast<String>(),
+        files: files,
+        truncated: decoded['truncated'] as bool? ?? false,
+      );
     } on Exception {
       return const MediaIndex.empty();
     }

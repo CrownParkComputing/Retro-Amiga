@@ -42,11 +42,35 @@ class MusicPlayer {
 
   /// Broadcast so the music screen and the workbench equaliser can both listen
   /// without one cancelling the other's subscription.
+  ///
+  /// The listener callbacks are what set the polling rate; see [_pollInterval].
   static final StreamController<MusicState> _states =
-      StreamController<MusicState>.broadcast();
+      StreamController<MusicState>.broadcast(
+        onListen: _retune,
+        onCancel: _retune,
+      );
 
   static Timer? _poll;
   static MusicState _last = const MusicState();
+
+  /// How often to ask the host what it is doing.
+  ///
+  /// It was a flat 100ms whenever a tune was playing, which is ten platform
+  /// channel round trips a second for as long as the music is on -- paid
+  /// whether or not anything was showing the result. 100ms is a level meter's
+  /// requirement, and a level meter only exists while something is watching
+  /// it. With nobody listening the only thing left to notice is a tune ending
+  /// on its own, and a second is soon enough for that.
+  static Duration get _pollInterval => _states.hasListener
+      ? const Duration(milliseconds: 100)
+      : const Duration(seconds: 1);
+
+  /// Moves an existing poll to the rate the current audience needs.
+  static void _retune() {
+    if (_poll == null) return;
+    _stopPolling();
+    _startPolling();
+  }
 
   static Stream<MusicState> get states => _states.stream;
   static MusicState get state => _last;
@@ -101,13 +125,8 @@ class MusicPlayer {
     if (!_states.isClosed) _states.add(state);
   }
 
-  /// 100ms is fast enough for a level meter to look alive and slow enough that
-  /// the channel traffic does not matter.
   static void _startPolling() {
-    _poll ??= Timer.periodic(
-      const Duration(milliseconds: 100),
-      (_) => refresh(),
-    );
+    _poll ??= Timer.periodic(_pollInterval, (_) => refresh());
   }
 
   static void _stopPolling() {

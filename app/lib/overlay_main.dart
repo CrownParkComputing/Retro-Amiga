@@ -270,7 +270,7 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
       if (pad) _padVisible = false;
     });
     if (pad && _layoutLoaded) {
-      OverlayPad.setOnScreenController(0);
+      unawaited(OverlayPad.setOnScreenController(0));
     } else {
       _applyPadRouting();
     }
@@ -658,7 +658,7 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
                           mainAxisSize: MainAxisSize.min,
                           children: <Widget>[
                             // Pause goes back to the workbench, saving where you were.
-                            _OverlayIconButton(
+                            const _OverlayIconButton(
                               icon: Icons.pause,
                               onPressed: OverlayPad.pauseToWorkbench,
                             ),
@@ -674,7 +674,7 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
                                 if (!_padVisible) {
                                   _stickMoved(false, false, false, false);
                                   _heldButtons.clear();
-                                  OverlayPad.releaseAll(_pad);
+                                  unawaited(OverlayPad.releaseAll(_pad));
                                 }
                               },
                             ),
@@ -708,7 +708,7 @@ class _EmulatorOverlayState extends State<EmulatorOverlay> {
                                 if (up) {
                                   _stickMoved(false, false, false, false);
                                   _heldButtons.clear();
-                                  OverlayPad.releaseAll(_pad);
+                                  unawaited(OverlayPad.releaseAll(_pad));
                                 }
                               },
                             ),
