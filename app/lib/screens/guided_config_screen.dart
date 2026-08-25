@@ -921,14 +921,11 @@ class _HardDriveSetStepState extends State<_HardDriveSetStep> {
       await _reload(scan: MediaFolder.isSupported);
       if (mounted) {
         final String profile = selectedSet.looksLikeAgs ? ' · AGS preset' : '';
-        final String copies = imported == null
-            ? ''
-            : ' · ${imported.moved} copied'
-                  '${imported.failed > 0 ? ', ${imported.failed} failed' : ''}';
+        final String source = imported == null ? '' : ' · used in place';
         setState(
           () => _notice =
               '${selectedSet.name}: ${selectedSet.driveCount} mount(s)'
-              '$profile$copies',
+              '$profile$source',
         );
       }
     } on Object catch (error) {

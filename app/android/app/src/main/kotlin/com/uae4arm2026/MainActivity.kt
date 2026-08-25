@@ -8,11 +8,17 @@ import android.media.AudioManager
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.os.Build
+import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
+import android.system.Os
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 import java.util.concurrent.Executors
 
 /**
@@ -24,6 +30,7 @@ class MainActivity : FlutterActivity() {
 
 	private companion object {
 		const val CHANNEL = "uae4arm2026/emulator"
+		const val SHARED_AMIGA_FOLDER = "Retro-Applications/Amiga"
 		private val mediaIoExecutor = Executors.newSingleThreadExecutor()
 
 		/**
@@ -71,6 +78,24 @@ class MainActivity : FlutterActivity() {
 		@JvmStatic external fun nativeMusicSetVolume(volume: Float)
 	}
 
+	private fun sharedAmigaDirectory(): File =
+		File(Environment.getExternalStorageDirectory(), SHARED_AMIGA_FOLDER)
+
+	private fun hasSharedStorageAccess(): Boolean =
+		Build.VERSION.SDK_INT < Build.VERSION_CODES.R ||
+			Environment.isExternalStorageManager()
+
+	override fun onCreate(savedInstanceState: Bundle?) {
+		// The in-process core reads this before resolving Amiberry's content
+		// paths. Set it before Flutter can lazily load the native library.
+		Os.setenv(
+			"RETRO_AMIGA_CONTENT_ROOT",
+			sharedAmigaDirectory().absolutePath,
+			true,
+		)
+		super.onCreate(savedInstanceState)
+	}
+
 	/**
 	 * The Dart call waiting on the folder picker.
 	 *
@@ -80,6 +105,8 @@ class MainActivity : FlutterActivity() {
 	 * backing out, or a second attempt would be refused as "busy" forever.
 	 */
 	private var pendingFolderPick: MethodChannel.Result? = null
+	private var pendingStorageAccess: MethodChannel.Result? = null
+	private var waitingForStorageSettings = false
 
 	/// Set once the engine is up, so controller changes can be pushed to Dart.
 	private var channel: MethodChannel? = null
@@ -252,6 +279,12 @@ class MainActivity : FlutterActivity() {
 		super.onResume()
 		(getSystemService(INPUT_SERVICE) as? InputManager)
 			?.registerInputDeviceListener(inputDeviceListener, Handler(Looper.getMainLooper()))
+		if (waitingForStorageSettings) {
+			waitingForStorageSettings = false
+			val pending = pendingStorageAccess
+			pendingStorageAccess = null
+			pending?.success(hasSharedStorageAccess())
+		}
 	}
 
 	override fun onPause() {
@@ -330,12 +363,38 @@ class MainActivity : FlutterActivity() {
 					"emulatorHomeDirectory" ->
 						result.success(getExternalFilesDir(null)?.absolutePath)
 
-					// Scoped storage will not let the app walk a folder like
-					// /sdcard/Amiga, and the permission that would - all-files
-					// access - is one Play gates behind a review aimed at file
-					// managers. Instead the user grants one folder through the
-					// system picker and the grant is persisted. See
-					// MediaFolderAccess.
+					"sharedAmigaDirectory" ->
+						result.success(sharedAmigaDirectory().absolutePath)
+
+					"hasSharedStorageAccess" ->
+						result.success(hasSharedStorageAccess())
+
+					"requestSharedStorageAccess" -> {
+						if (hasSharedStorageAccess()) {
+							result.success(true)
+						} else if (pendingStorageAccess != null) {
+							result.error(
+								"busy",
+								"storage access settings are already open",
+								null,
+							)
+						} else {
+							pendingStorageAccess = result
+							waitingForStorageSettings = true
+							val intent = Intent(
+								Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+								Uri.parse("package:$packageName"),
+							)
+							try {
+								startActivity(intent)
+							} catch (error: Exception) {
+								startActivity(
+									Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION),
+								)
+							}
+						}
+					}
+
 					// The in-process panel draws its own pad and needs the same
 					// answer the emulator activity already had: is there real
 					// hardware to play on? Without this it always drew touch
@@ -409,57 +468,6 @@ class MainActivity : FlutterActivity() {
 						}
 					}
 
-					"copyFromMediaFolder" -> {
-						val documentId = call.argument<String>("documentId")
-						val destination = call.argument<String>("destination")
-						val tree = MediaFolderAccess.grantedTree(this)
-						if (documentId == null || destination == null) {
-							result.error(
-								"bad_args",
-								"copyFromMediaFolder needs documentId and destination",
-								null,
-							)
-						} else if (tree == null) {
-							result.error("no_folder", "no folder has been granted", null)
-						} else {
-							mediaIoExecutor.execute {
-								val ok = MediaFolderAccess.copyDocument(
-									contentResolver,
-									tree,
-									documentId,
-									destination,
-								)
-								Handler(Looper.getMainLooper()).post { result.success(ok) }
-							}
-						}
-					}
-
-					"copyFromMediaFolderBatch" -> {
-						val copies = call.argument<List<Map<String, Any?>>>("copies")
-						val tree = MediaFolderAccess.grantedTree(this)
-						if (copies == null) {
-							result.error("bad_args", "copies are required", null)
-						} else if (tree == null) {
-							result.error("no_folder", "no folder has been granted", null)
-						} else {
-							mediaIoExecutor.execute {
-								val copied = copies.map { copy ->
-									val documentId = copy["documentId"] as? String
-									val destination = copy["destination"] as? String
-									documentId != null && destination != null &&
-										MediaFolderAccess.copyDocument(
-											contentResolver,
-											tree,
-											documentId,
-											destination,
-										)
-								}
-								Handler(Looper.getMainLooper()).post {
-									result.success(copied)
-								}
-							}
-						}
-					}
 					"musicPlay" -> {
 						val path = call.argument<String>("path")
 						result.success(

@@ -15,7 +15,9 @@ import 'data/music_player.dart';
 import 'emulator.dart';
 
 import 'data/app_prefs.dart';
+import 'data/host_paths.dart';
 import 'data/legacy_migration.dart';
+import 'data/media_folder.dart';
 import 'data/startup_import.dart';
 import 'data/whdload_support.dart';
 import 'screens/workbench_screen.dart';
@@ -145,6 +147,16 @@ class _RootState extends State<_Root> {
       // folder. Recover them before deciding this is a first run.
       await LegacyMigration.run();
       complete = await AppPrefs.setupComplete();
+      // Existing Android installs previously used Android/data. The shared
+      // library cannot be read until the user grants its one-time special
+      // access, so bring setup back instead of showing an apparently empty
+      // shelf. Fresh installs already arrive here because setupComplete is
+      // false; this covers upgrades too.
+      if (complete &&
+          MediaFolder.isSupported &&
+          !await HostPaths.hasSharedStorageAccess()) {
+        complete = false;
+      }
     } on Object {
       // A missing preference store means first run, not a failure.
     }

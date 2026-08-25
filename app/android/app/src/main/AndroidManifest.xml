@@ -17,17 +17,11 @@
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
-
-    <!-- MANAGE_EXTERNAL_STORAGE (all-files access) is deliberately NOT
-         requested. It is a Play "sensitive permission": shipping it means
-         filling in a declaration form and passing a review that Google
-         normally only grants to file managers, backup and antivirus apps, and
-         an undeclared one blocks the release outright. A folder scan is not
-         worth gating every future update on that review.
-         The cost is real: scoped storage cannot enumerate a directory, so on
-         Android 11 and above the library scan finds nothing and the user picks
-         files one at a time through Browse. Below Android 11 the legacy read
-         permission still allows a scan. -->
+    <!-- Retro-Amiga operates on the user's canonical emulator library in
+         Retro-Applications/Amiga. Media is never copied into Android/data.
+         Android 11+ requires this special access for the native core's POSIX
+         file APIs and directory-backed AGS installs. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
     <!-- Bluetooth controller support (Steam Controller BLE, HID devices) -->
     <uses-permission android:name="android.permission.BLUETOOTH" />

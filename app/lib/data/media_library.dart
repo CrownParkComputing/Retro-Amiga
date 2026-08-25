@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 
-
 import 'amiga_model.dart';
 import 'app_log.dart';
 import 'app_prefs.dart';
@@ -600,6 +599,29 @@ class MediaLibrary {
           continue;
         }
         if (entry is Directory) {
+          // AGS shared/game/save trees can contain tens of thousands of Amiga
+          // files that are contents of a mounted drive, not library entries.
+          // HDF images sit alongside them and are still indexed; skipping the
+          // payload directories turns a minutes-long scan into seconds.
+          final String lowerPath = entry.path.toLowerCase();
+          final String hardDriveRoot = '$mediaRoot/harddrives/'.toLowerCase();
+          final String directoryName = entry.path
+              .replaceAll(r'\', '/')
+              .split('/')
+              .last
+              .toLowerCase();
+          if (lowerPath.startsWith(hardDriveRoot) &&
+              const <String>{
+                'shared',
+                'share',
+                'games',
+                'game-data',
+                'save-data',
+                'savedata',
+                'saves',
+              }.contains(directoryName)) {
+            continue;
+          }
           walkDir(entry, depth + 1);
         } else if (entry is File) {
           final FileCategory? category = FileCategory.fromPath(entry.path);

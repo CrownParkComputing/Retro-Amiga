@@ -86,7 +86,22 @@ class HardDriveSet {
           images.add(entry.path);
         } else if (entry is Directory) {
           final String lower = name.toLowerCase();
-          if (lower == 'shared' || lower == 'share') shared.add(entry.path);
+          if (lower == 'shared' || lower == 'share') {
+            shared.add(entry.path);
+            // A shared AGS drive can hold tens of thousands of games and
+            // saves. It is mounted as a directory; none of its contents can
+            // be another HDF mount, so walking it only makes setup look hung.
+            continue;
+          }
+          if (const <String>{
+            'games',
+            'game-data',
+            'save-data',
+            'savedata',
+            'saves',
+          }.contains(lower)) {
+            continue;
+          }
           walk(entry, depth + 1);
         }
       }

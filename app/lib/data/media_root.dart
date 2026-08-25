@@ -45,7 +45,14 @@ class MediaRoot {
 
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     final String? stored = prefs.getString(_prefsKey);
-    if (stored != null && stored.isNotEmpty && await _isUsable(stored)) {
+    final bool oldAndroidSandbox =
+        Platform.isAndroid &&
+        stored != null &&
+        stored.replaceAll(r'\', '/').contains('/Android/data/com.uae4arm2026/');
+    if (stored != null &&
+        stored.isNotEmpty &&
+        !oldAndroidSandbox &&
+        await _isUsable(stored)) {
       _cached = stored;
       return stored;
     }
@@ -96,14 +103,11 @@ class MediaRoot {
   /// a launcher that files disks into somebody else's folders is worse than
   /// one that asks.
   static Future<String> defaultPath() async {
-    // The app's own external folder, not /sdcard/Amiga. Under scoped storage
-    // a shared folder like that can be neither listed nor written without
-    // all-files access, which Play gates behind a review this app does not
-    // pass and does not ask for. The emulator home is the one place on
-    // Android that always works, and it is already where the core keeps
-    // Kickstarts, Floppies and HardDrives. A collection elsewhere comes in
-    // through the folder picker: see MediaFolder.
-    if (Platform.isAndroid) return await HostPaths.emulatorHome();
+    // One shared library for every Retro application. The Android host
+    // resolves primary storage (shown as "Odin2" on that handheld), and the
+    // native core uses this exact path too. Media stays here in place; it is
+    // never duplicated into Android/data.
+    if (Platform.isAndroid) return await HostPaths.sharedAmigaDirectory();
     if (Platform.isIOS) return await HostPaths.documents();
     final Directory dir = Directory(
       '${Platform.environment['HOME'] ?? await HostPaths.documents()}'
@@ -284,7 +288,10 @@ class MediaImporter {
   /// reference zips live on the machine that built them. One that still
   /// holds something unrecognised is kept, moved aside into Archives/.
   static Future<int> _extractArchives(
-      MediaIndex index, String root, Set<FileCategory>? only) async {
+    MediaIndex index,
+    String root,
+    Set<FileCategory>? only,
+  ) async {
     int extracted = 0;
 
     for (final MediaFile file in index.files) {

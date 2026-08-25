@@ -44,11 +44,7 @@ class AgsSetup {
         .map((MapEntry<String, int> e) => e.key)
         .toList();
 
-    final List<String> roots = <String>[
-      await MediaRoot.path(),
-      '/sdcard',
-      '/storage',
-    ];
+    final List<String> roots = <String>['${await MediaRoot.path()}/HardDrives'];
 
     // The walk runs in its own isolate. It is synchronous filesystem work over
     // whatever is plugged in - an external drive can be enormous - and on the
@@ -85,14 +81,6 @@ class AgsSetup {
           final String name = entry.path.split('/').last.toLowerCase();
           if (name.contains('ags')) {
             folders.add(entry.path);
-          } else if (root == '/storage' &&
-              name != 'emulated' &&
-              name != 'self') {
-            // A card or a USB drive. An AGS set on one is usually at the root
-            // or one folder in - "AGS_UAE", or "Amiga/AGS_UAE" - so both are
-            // looked at, and any folder holding enough hard drives counts even
-            // when its name says nothing.
-            _addIfAgs(entry, folders, depth: 2);
           }
         }
       } on FileSystemException {
@@ -119,36 +107,6 @@ class AgsSetup {
           },
         )
         .toList();
-  }
-
-  /// Adds [dir] and, up to [depth] levels down, any folder that is an AGS set
-  /// or is named for one.
-  static void _addIfAgs(
-    Directory dir,
-    Set<String> folders, {
-    required int depth,
-    int budget = 400,
-  }) {
-    if (depth <= 0 || budget <= 0) return;
-    try {
-      if (inspect(dir.path) != null) folders.add(dir.path);
-      // A budget as well as a depth: an external drive can hold thousands of
-      // folders, and looking in every one of them to find a set of HDFs is not
-      // worth the wait even off the UI isolate.
-      int left = budget;
-      for (final FileSystemEntity child in dir.listSync(followLinks: false)) {
-        if (child is! Directory) continue;
-        if (--left <= 0) return;
-        final String name = child.path.split('/').last.toLowerCase();
-        if (name.startsWith('.') || name == 'android') continue;
-        if (name.contains('ags') || inspect(child.path) != null) {
-          folders.add(child.path);
-        }
-        _addIfAgs(child, folders, depth: depth - 1, budget: left);
-      }
-    } on FileSystemException {
-      // Unreadable mount, which is normal for some cards.
-    }
   }
 
   /// The machine an AGS set wants.

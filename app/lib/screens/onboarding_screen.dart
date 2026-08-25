@@ -8,6 +8,7 @@ import '../theme/amiga_theme.dart';
 import '../data/compliance_demo.dart';
 import '../data/aros_rom.dart';
 import '../data/file_category.dart';
+import '../data/host_paths.dart';
 import '../data/media_folder.dart';
 import '../data/media_library.dart';
 import '../data/media_root.dart';
@@ -161,13 +162,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     });
   }
 
-  /// Android's one way in: the user hands over a folder, and what it holds is
-  /// copied into the app's own media folder.
-  ///
-  /// There is no scan option on Android any more. Scoped storage will not let
-  /// this app walk shared storage, so a "scan for files" button could only
-  /// ever search the app's own folder - which the user has no easy way to put
-  /// anything into. Offering it was offering a button that finds nothing.
+  /// Android's one way in: the user grants a shared folder, which both the
+  /// launcher and native core then read in place.
   Future<void> _importFolder() async {
     // Always ask, even when a folder is already granted: picking the wrong
     // one is easy, and a button that silently reuses the previous choice
@@ -186,24 +182,24 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     try {
       final ImportResult result = await ImportProgressDialog.run<ImportResult>(
         context,
-        title: 'Importing Amiga files',
+        title: 'Reading Amiga library',
         initialMessage: 'Scanning the selected folder and AGS collection…',
-        operation: (ImportProgressUpdate update) =>
-            MediaFolderImporter.importAll(
-              onProgress: (int done, int total) {
-                update('Copying recognised files…', done: done, total: total);
-                if (mounted && total > 0) {
-                  setState(() => _notice = 'Copying $done of $total…');
-                }
-              },
-            ),
+        operation: (ImportProgressUpdate update) async {
+          final ImportResult imported = await MediaFolderImporter.importAll(
+            onProgress: (int done, int total) {
+              update('Indexing recognised files…', done: done, total: total);
+            },
+          );
+          update('Indexing the shared library…');
+          await _scan();
+          return imported;
+        },
       );
       if (!mounted) return;
       setState(
-        () => _notice = result.total == 0
-            ? 'Nothing the app recognises in that folder.'
-            : '${result.moved} copied, ${result.alreadyInPlace} already here'
-                  '${result.failed > 0 ? ', ${result.failed} failed' : ''}.',
+        () => _notice = result.failed > 0
+            ? '${result.failed} files could not be read.'
+            : 'Using this library in place. No media was copied.',
       );
     } on Exception catch (e) {
       if (mounted) setState(() => _notice = 'Import failed: $e');
@@ -211,8 +207,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     } finally {
       if (mounted) setState(() => _scanning = false);
     }
-    // Index what was just copied, so the sections below fill in.
-    await _scan();
   }
 
   /// [importMedia] false files the Kickstart and nothing else. The
@@ -290,6 +284,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Future<void> _storeCompliance() async {
     setState(() => _busyCompliance = true);
     try {
+      if (MediaFolder.isSupported &&
+          !await HostPaths.hasSharedStorageAccess() &&
+          !await HostPaths.requestSharedStorageAccess()) {
+        return;
+      }
       await ComplianceDemo.prepare();
       await AppPrefs.setComplianceMode(value: true);
       await AppPrefs.setDefaultModel(_model);

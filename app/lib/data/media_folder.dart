@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -6,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'app_log.dart';
 import 'file_category.dart';
 import 'hard_drive_set.dart';
+import 'host_paths.dart';
 import 'media_root.dart';
 
 /// One file the user's granted folder holds.
@@ -29,26 +31,11 @@ class FolderEntry {
   final int size;
 }
 
-class FolderCopy {
-  const FolderCopy({required this.entry, required this.destination});
-
-  final FolderEntry entry;
-  final String destination;
-}
-
-/// A folder the user picked, read through the Storage Access Framework.
+/// Chooses a directory in the user's shared Amiga library.
 ///
-/// Scoped storage will not let the app walk a folder like /sdcard/Amiga, and
-/// the permission that would - MANAGE_EXTERNAL_STORAGE - is one Play gates
-/// behind a review aimed at file managers, backup and antivirus apps. An
-/// undeclared one blocks the release outright. So the user grants one folder
-/// through the system picker instead, and that grant persists across restarts.
-///
-/// What comes back is a document tree, not a path. The emulator core opens
-/// files with plain POSIX calls and cannot take a URI, so this is an import
-/// source: [copyTo] writes the bytes into the app's own media folder, and
-/// everything downstream - the core's paths, save disks, WHDLoad boot - is
-/// unchanged.
+/// Android's picker supplies the friendly UI, while all-files access lets
+/// Dart and the native POSIX core use the selected path in place. No media is
+/// copied into the application's Android/data directory.
 class MediaFolder {
   const MediaFolder._();
 
@@ -106,7 +93,7 @@ class MediaFolder {
       if (volume == 'primary') {
         return path.isEmpty ? '/sdcard' : '/sdcard/$path';
       }
-      return path.isEmpty ? '/$volume' : '/$volume/$path';
+      return path.isEmpty ? '/storage/$volume' : '/storage/$volume/$path';
     } on FormatException {
       return uri;
     }
@@ -117,6 +104,10 @@ class MediaFolder {
   static Future<String?> pick({String? initialSubfolder}) async {
     if (!isSupported) return null;
     try {
+      if (!await HostPaths.hasSharedStorageAccess() &&
+          !await HostPaths.requestSharedStorageAccess()) {
+        return null;
+      }
       return await _channel.invokeMethod<String>(
         'pickMediaFolder',
         <String, Object?>{'initialSubfolder': initialSubfolder},
@@ -171,140 +162,29 @@ class MediaFolder {
       return const <FolderEntry>[];
     }
   }
-
-  /// Copies one entry into [destination], an ordinary path the core can open.
-  static Future<bool> copyTo(FolderEntry entry, String destination) async {
-    if (!isSupported) return false;
-    try {
-      return await _channel.invokeMethod<bool>(
-            'copyFromMediaFolder',
-            <String, Object>{
-              'documentId': entry.documentId,
-              'destination': destination,
-            },
-          ) ??
-          false;
-    } on PlatformException catch (e) {
-      AppLog.info('folder', 'copy of ${entry.name} failed: ${e.code}');
-      return false;
-    }
-  }
-
-  /// Copies a group through one platform call. Android previously created a
-  /// fresh native thread for every file, which made a several-thousand-file
-  /// HDF directory painfully slow and needlessly churned the runtime.
-  static Future<List<bool>> copyBatch(List<FolderCopy> copies) async {
-    if (!isSupported || copies.isEmpty) return const <bool>[];
-    try {
-      final List<Object?>? result = await _channel.invokeMethod<List<Object?>>(
-        'copyFromMediaFolderBatch',
-        <String, Object>{
-          'copies': <Map<String, Object>>[
-            for (final FolderCopy copy in copies)
-              <String, Object>{
-                'documentId': copy.entry.documentId,
-                'destination': copy.destination,
-              },
-          ],
-        },
-      );
-      return result?.map((Object? value) => value == true).toList() ??
-          List<bool>.filled(copies.length, false);
-    } on PlatformException catch (e) {
-      AppLog.info('folder', 'batch copy failed: ${e.code}');
-      return List<bool>.filled(copies.length, false);
-    }
-  }
 }
 
-/// Brings a granted folder's contents into the app's media root.
-///
-/// Copies rather than moves: the folder belongs to the user, not the app, and
-/// a launcher that empties somebody's /sdcard/Amiga because they pointed at it
-/// once is a launcher that eats collections. The cost is disk - the same file
-/// exists twice - which is why anything already imported is skipped rather
-/// than copied again on every scan.
+/// Adopts a granted shared folder without moving or copying its contents.
 class MediaFolderImporter {
   const MediaFolderImporter._();
 
-  /// Copies everything recognisable, reporting progress as it goes.
-  ///
-  /// [onProgress] is called with (done, total) so a ten-thousand-file
-  /// collection can show something other than a frozen screen.
+  /// Makes the chosen folder the media root. Indexing happens separately.
   static Future<ImportResult> importAll({
     void Function(int done, int total)? onProgress,
   }) async {
-    final List<FolderEntry> entries = await MediaFolder.list();
-
-    // Only files the app knows what to do with. A granted folder may be the
-    // top of somebody's storage, and copying every photo on the phone into an
-    // Amiga library helps nobody.
-    final List<_CategorisedFolderEntry> wanted = <_CategorisedFolderEntry>[
-      for (final FolderEntry entry in entries)
-        if (categoryFor(entry, entries) case final FileCategory category)
-          _CategorisedFolderEntry(entry, category),
-    ];
-
-    int copied = 0;
-    int alreadyThere = 0;
-    int failed = 0;
-    final List<FolderCopy> pending = <FolderCopy>[];
-
-    for (final _CategorisedFolderEntry item in wanted) {
-      final FolderEntry entry = item.entry;
-
-      final Directory target = await MediaRoot.folderFor(item.category);
-      final String relative = safeRelativeDirectory(entry.directory);
-      final Directory destinationFolder = relative.isEmpty
-          ? target
-          : Directory('${target.path}/$relative');
-      if (!destinationFolder.existsSync()) {
-        destinationFolder.createSync(recursive: true);
+    if (Platform.isAndroid) {
+      if (!await HostPaths.hasSharedStorageAccess()) {
+        throw StateError('shared Amiga library access has not been granted');
       }
-      final String destination = '${destinationFolder.path}/${entry.name}';
-
-      final File existing = File(destination);
-      if (existing.existsSync()) {
-        // Same name and same length is the same file. Comparing bytes would
-        // mean reading both copies of a 700MB hard drive image to learn
-        // nothing, on every single scan.
-        if (entry.size == 0 || existing.lengthSync() == entry.size) {
-          alreadyThere++;
-          continue;
-        }
+      final String? source = await MediaFolder.displayPath();
+      if (source != null && source.isNotEmpty) {
+        await MediaRoot.setPath(source);
+        AppLog.info('folder', 'using shared library in place at $source');
       }
-      pending.add(FolderCopy(entry: entry, destination: destination));
+      return const ImportResult(moved: 0, alreadyInPlace: 0, failed: 0);
     }
 
-    const int batchSize = 128;
-    for (int start = 0; start < pending.length; start += batchSize) {
-      final int end = start + batchSize < pending.length
-          ? start + batchSize
-          : pending.length;
-      final List<bool> results = await MediaFolder.copyBatch(
-        pending.sublist(start, end),
-      );
-      for (final bool result in results) {
-        if (result) {
-          copied++;
-        } else {
-          failed++;
-        }
-      }
-      onProgress?.call(alreadyThere + end, wanted.length);
-    }
-    onProgress?.call(wanted.length, wanted.length);
-
-    AppLog.info(
-      'folder',
-      'imported $copied, $alreadyThere already present'
-          '${failed > 0 ? ', $failed failed' : ''}',
-    );
-    return ImportResult(
-      moved: copied,
-      alreadyInPlace: alreadyThere,
-      failed: failed,
-    );
+    return const ImportResult(moved: 0, alreadyInPlace: 0, failed: 0);
   }
 
   /// Imports a folder as an Amiga hard-drive collection.
@@ -317,80 +197,24 @@ class MediaFolderImporter {
   static Future<HardDriveFolderImport?> importHardDriveTree({
     void Function(int done, int total)? onProgress,
   }) async {
-    final List<FolderEntry> entries = await MediaFolder.list();
-    if (entries.isEmpty) return null;
-
-    final String source = await MediaFolder.displayPath() ?? 'Imported drives';
-    final List<String> sourceParts = source
-        .replaceAll(r'\', '/')
-        .split('/')
-        .where((String part) => part.isNotEmpty)
-        .toList();
-    final String rawName = sourceParts.isEmpty
-        ? 'Imported drives'
-        : sourceParts.last;
-    final String namespace = _safeComponent(rawName);
-    final Directory hardDrives = await MediaRoot.folderFor(
-      FileCategory.hardDrives,
-    );
-    final Directory collection = Directory('${hardDrives.path}/$namespace');
-    if (!collection.existsSync()) collection.createSync(recursive: true);
-
-    int copied = 0;
-    int alreadyThere = 0;
-    int failed = 0;
-    final List<FolderCopy> pending = <FolderCopy>[];
-
-    for (final FolderEntry entry in entries) {
-      final String relative = safeRelativeDirectory(entry.directory);
-      final Directory destinationFolder = relative.isEmpty
-          ? collection
-          : Directory('${collection.path}/$relative');
-      final String destination =
-          '${destinationFolder.path}/${_safeComponent(entry.name)}';
-      final File existing = File(destination);
-      if (existing.existsSync() &&
-          (entry.size == 0 || existing.lengthSync() == entry.size)) {
-        alreadyThere++;
-        continue;
+    if (Platform.isAndroid) {
+      if (!await HostPaths.hasSharedStorageAccess()) {
+        throw StateError('shared Amiga library access has not been granted');
       }
-      pending.add(FolderCopy(entry: entry, destination: destination));
+      final String? source = await MediaFolder.displayPath();
+      if (source == null || source.isEmpty) return null;
+      final HardDriveSet? set = await Isolate.run(
+        () => HardDriveSet.inspect(source, allowDirectoryMount: true),
+      );
+      if (set == null) return null;
+      AppLog.info('folder', 'using hard-drive collection in place at $source');
+      return HardDriveFolderImport(
+        set: set,
+        result: const ImportResult(moved: 0, alreadyInPlace: 0, failed: 0),
+      );
     }
 
-    const int batchSize = 128;
-    for (int start = 0; start < pending.length; start += batchSize) {
-      final int end = start + batchSize < pending.length
-          ? start + batchSize
-          : pending.length;
-      final List<FolderCopy> batch = pending.sublist(start, end);
-      final List<bool> results = await MediaFolder.copyBatch(batch);
-      for (final bool result in results) {
-        if (result) {
-          copied++;
-        } else {
-          failed++;
-        }
-      }
-      onProgress?.call(alreadyThere + end, entries.length);
-    }
-    onProgress?.call(entries.length, entries.length);
-
-    final HardDriveSet? set = HardDriveSet.inspect(
-      collection.path,
-      allowDirectoryMount: true,
-    );
-    if (set == null) return null;
-    final ImportResult result = ImportResult(
-      moved: copied,
-      alreadyInPlace: alreadyThere,
-      failed: failed,
-    );
-    AppLog.info(
-      'folder',
-      'hard-drive collection ${set.name}: ${set.driveCount} mount(s), '
-          '$copied copied, $alreadyThere already present, $failed failed',
-    );
-    return HardDriveFolderImport(set: set, result: result);
+    return null;
   }
 
   /// Classifies an entry with enough folder context to keep CD sets intact.
@@ -433,14 +257,6 @@ class MediaFolderImporter {
         .join('/');
   }
 
-  static String _safeComponent(String value) {
-    final String safe = value
-        .replaceAll(RegExp(r'[/\\:\x00]'), '_')
-        .replaceAll('..', '_')
-        .trim();
-    return safe.isEmpty ? 'Imported drives' : safe;
-  }
-
   static String _extension(String name) {
     final int dot = name.lastIndexOf('.');
     if (dot < 0 || dot == name.length - 1) return '';
@@ -453,11 +269,4 @@ class HardDriveFolderImport {
 
   final HardDriveSet set;
   final ImportResult result;
-}
-
-class _CategorisedFolderEntry {
-  const _CategorisedFolderEntry(this.entry, this.category);
-
-  final FolderEntry entry;
-  final FileCategory category;
 }

@@ -8183,6 +8183,9 @@ std::string get_home_directory(const bool portable_mode)
 	}
 	return {};
 #elif defined(__ANDROID__)
+	const char* shared_root = getenv("RETRO_AMIGA_CONTENT_ROOT");
+	if (shared_root && shared_root[0] != '\0')
+		return normalize_path_string(shared_root);
 	const char* path = SDL_GetAndroidExternalStoragePath();
 	if (path) {
 		std::string home(path);
@@ -8305,6 +8308,11 @@ std::string get_config_directory(bool portable_mode)
 		return normalize_path_string(get_windows_executable_directory() + "\\" + get_configurations_directory_name());
 	}
 #elif defined(__ANDROID__)
+	const char* shared_root = getenv("RETRO_AMIGA_CONTENT_ROOT");
+	if (shared_root && shared_root[0] != '\0') {
+		auto config_dir = join_path(shared_root, get_configurations_directory_name());
+		return fix_trailing(config_dir);
+	}
 	const char* path = SDL_GetAndroidExternalStoragePath();
 	if (path) {
 		auto config_dir = join_path(path, get_configurations_directory_name());

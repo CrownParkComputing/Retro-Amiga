@@ -5,7 +5,6 @@ import android.content.ContentResolver
 import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
-import java.io.File
 
 /**
  * Access to a folder the user picked, through the Storage Access Framework.
@@ -18,11 +17,9 @@ import java.io.File
  * review, the user grants one folder through the system picker and the grant
  * is persisted across reboots and app restarts.
  *
- * What SAF hands back is a content:// document tree, not a path. The emulator
- * core opens Kickstarts and disk images with plain POSIX file calls and cannot
- * be given a URI, so the tree is used as an import SOURCE: it is enumerated
- * here, and [copyDocument] writes the bytes into the app's own media folder,
- * where every existing path in the app and the core keeps working unchanged.
+ * The tree grant supplies a friendly picker and remembers the chosen folder.
+ * All-files access separately lets Dart and the native POSIX core use its real
+ * shared-storage path in place; this class never copies media to Android/data.
  */
 object MediaFolderAccess {
 
@@ -186,35 +183,5 @@ object MediaFolderAccess {
 			}
 		}
 		return found
-	}
-
-	/**
-	 * Copies one document out of [tree] to [destination].
-	 *
-	 * Written to a .part file and renamed on success, so an import killed
-	 * halfway - a phone that sleeps mid-copy on a 700MB hard drive image -
-	 * cannot leave a truncated ADF that the core will happily try to boot.
-	 */
-	fun copyDocument(
-		resolver: ContentResolver,
-		tree: Uri,
-		documentId: String,
-		destination: String,
-	): Boolean {
-		val uri = DocumentsContract.buildDocumentUriUsingTree(tree, documentId)
-		val target = File(destination)
-		target.parentFile?.mkdirs()
-		val partial = File("$destination.part")
-		return try {
-			resolver.openInputStream(uri).use { input ->
-				if (input == null) return false
-				partial.outputStream().use { output -> input.copyTo(output, 1 shl 16) }
-			}
-			if (target.exists()) target.delete()
-			partial.renameTo(target)
-		} catch (e: Exception) {
-			partial.delete()
-			false
-		}
 	}
 }
