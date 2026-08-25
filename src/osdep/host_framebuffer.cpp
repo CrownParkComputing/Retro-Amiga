@@ -47,6 +47,16 @@ void uae4arm_host_set_framebuffer_output(bool enabled)
 	g_enabled.store(enabled, std::memory_order_release);
 	if (!enabled)
 		return;
+	{
+		std::lock_guard<std::mutex> lock(g_swap_mutex);
+		for (FrameBuffer& frame : g_frames) {
+			frame.pixels.clear();
+			frame.width = 0;
+			frame.height = 0;
+		}
+		g_front.store(0, std::memory_order_release);
+		g_serial.store(0, std::memory_order_release);
+	}
 
 	/*
 	 * Pick the offscreen video driver, here rather than in the caller.
@@ -89,6 +99,11 @@ void uae4arm_host_set_framebuffer_output(bool enabled)
 bool uae4arm_host_framebuffer_output(void)
 {
 	return g_enabled.load(std::memory_order_acquire);
+}
+
+uint64_t uae4arm_host_framebuffer_serial(void)
+{
+	return g_serial.load(std::memory_order_acquire);
 }
 
 void uae4arm_host_publish_frame(const SDL_Surface* surface)

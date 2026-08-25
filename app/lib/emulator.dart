@@ -81,8 +81,9 @@ class Emulator {
     await ConfigStore.repairEmulatorSettings();
 
     AppLog.info('launch', args.join(' '));
-    // The launcher's music has no business playing over a game, and on
-    // Android it would be a second process holding the audio device.
+    // The launcher's music has no business playing over a game. The core is
+    // in-process now, so stop() also closes the music stream before the core
+    // opens its own; two SDL playback streams caused underruns on Android.
     await MusicPlayer.stop(byUser: false);
     Session.markStarted();
 

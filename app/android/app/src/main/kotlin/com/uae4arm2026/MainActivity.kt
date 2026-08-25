@@ -1,8 +1,10 @@
 package com.uae4arm2026
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.hardware.input.InputManager
+import android.media.AudioManager
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -11,6 +13,7 @@ import android.os.Looper
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.util.concurrent.Executors
 
 /**
  * The Flutter launcher. It owns every screen the user configures things on;
@@ -21,6 +24,7 @@ class MainActivity : FlutterActivity() {
 
 	private companion object {
 		const val CHANNEL = "uae4arm2026/emulator"
+		private val mediaIoExecutor = Executors.newSingleThreadExecutor()
 
 		/**
 		 * The launcher's ProTracker player, which lives in the same native
@@ -108,6 +112,26 @@ class MainActivity : FlutterActivity() {
 	 * them would leave a handheld unable to move around its own menus.
 	 */
 	private var gameRunning = false
+
+	private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { change ->
+		channel?.invokeMethod(
+			"audioFocusChanged",
+			change == AudioManager.AUDIOFOCUS_GAIN,
+		)
+	}
+
+	private fun setGameAudioFocus(running: Boolean) {
+		val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+		if (running) {
+			audio.requestAudioFocus(
+				audioFocusListener,
+				AudioManager.STREAM_MUSIC,
+				AudioManager.AUDIOFOCUS_GAIN,
+			)
+		} else {
+			audio.abandonAudioFocus(audioFocusListener)
+		}
+	}
 
 	/** Last direction sent, so a repeat is not pushed on every motion event. */
 	private var lastDirection = 0
@@ -324,6 +348,7 @@ class MainActivity : FlutterActivity() {
 					"setGameRunning" -> {
 						gameRunning = call.argument<Boolean>("running") ?: false
 						if (!gameRunning) lastDirection = 0
+						setGameAudioFocus(gameRunning)
 						result.success(true)
 					}
 
@@ -360,7 +385,7 @@ class MainActivity : FlutterActivity() {
 							// Off the main thread: a large collection is tens
 							// of thousands of provider rows, and doing that on
 							// the UI thread is an ANR, not a slow scan.
-							Thread {
+							mediaIoExecutor.execute {
 								val entries = MediaFolderAccess.enumerate(
 									contentResolver,
 									tree,
@@ -377,7 +402,7 @@ class MainActivity : FlutterActivity() {
 								Handler(Looper.getMainLooper()).post {
 									result.success(payload)
 								}
-							}.start()
+							}
 						}
 					}
 
@@ -394,7 +419,7 @@ class MainActivity : FlutterActivity() {
 						} else if (tree == null) {
 							result.error("no_folder", "no folder has been granted", null)
 						} else {
-							Thread {
+							mediaIoExecutor.execute {
 								val ok = MediaFolderAccess.copyDocument(
 									contentResolver,
 									tree,
@@ -402,7 +427,34 @@ class MainActivity : FlutterActivity() {
 									destination,
 								)
 								Handler(Looper.getMainLooper()).post { result.success(ok) }
-							}.start()
+							}
+						}
+					}
+
+					"copyFromMediaFolderBatch" -> {
+						val copies = call.argument<List<Map<String, Any?>>>("copies")
+						val tree = MediaFolderAccess.grantedTree(this)
+						if (copies == null) {
+							result.error("bad_args", "copies are required", null)
+						} else if (tree == null) {
+							result.error("no_folder", "no folder has been granted", null)
+						} else {
+							mediaIoExecutor.execute {
+								val copied = copies.map { copy ->
+									val documentId = copy["documentId"] as? String
+									val destination = copy["destination"] as? String
+									documentId != null && destination != null &&
+										MediaFolderAccess.copyDocument(
+											contentResolver,
+											tree,
+											documentId,
+											destination,
+										)
+								}
+								Handler(Looper.getMainLooper()).post {
+									result.success(copied)
+								}
+							}
 						}
 					}
 					"musicPlay" -> {

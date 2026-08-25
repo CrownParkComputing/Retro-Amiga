@@ -30,6 +30,7 @@ class GameController {
   /// events reach the same pad the on-screen controls drive.
   static void Function(bool left, bool right, bool up, bool down)? onDirection;
   static void Function(int button, bool pressed)? onButton;
+  static ValueChanged<bool>? onAudioFocusChanged;
 
   /// Starts watching, and answers once with what is attached now.
   ///
@@ -58,6 +59,8 @@ class GameController {
               (a['button'] as num?)?.toInt() ?? 0,
               a['pressed'] as bool? ?? false,
             );
+          case 'audioFocusChanged':
+            onAudioFocusChanged?.call(call.arguments as bool? ?? false);
         }
         return null;
       });
@@ -85,8 +88,7 @@ class GameController {
 
   static Future<bool> refresh() async {
     try {
-      final bool has =
-          await _channel.invokeMethod<bool>('hasGamepad') ?? false;
+      final bool has = await _channel.invokeMethod<bool>('hasGamepad') ?? false;
       connected.value = has;
       return has;
     } on PlatformException {

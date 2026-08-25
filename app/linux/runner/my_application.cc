@@ -132,10 +132,14 @@ static void handle_method_call(FlMethodChannel* channel, FlMethodCall* call,
         play(fl_value_get_string(path));
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(fl_value_new_bool(ok)));
   } else if (g_strcmp0(method, "musicStop") == 0 ||
+             g_strcmp0(method, "musicReleaseAudio") == 0 ||
              g_strcmp0(method, "musicSetPaused") == 0 ||
              g_strcmp0(method, "musicSetVolume") == 0) {
     if (g_strcmp0(method, "musicStop") == 0) {
       if (MusicStop stop = core_symbol<MusicStop>("uae4arm_host_music_stop")) stop();
+    } else if (g_strcmp0(method, "musicReleaseAudio") == 0) {
+      if (MusicStop release = core_symbol<MusicStop>("uae4arm_host_music_release_audio"))
+        release();
     } else if (g_strcmp0(method, "musicSetPaused") == 0) {
       FlValue* arguments = fl_method_call_get_args(call);
       FlValue* paused = arguments != nullptr &&

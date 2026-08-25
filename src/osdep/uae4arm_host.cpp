@@ -27,6 +27,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #if defined(__linux__) || defined(_WIN32)
@@ -49,8 +50,12 @@ static bool pending_desktop_fullscreen = false;
 static std::string session_state_path;
 static std::string session_config_path;
 static std::string session_title;
+static std::mutex session_lock;
 
 static int pad_device(int pad);
+static void queue_onscreen_controller_request(int mode);
+static void queue_external_controller_mode_request(int jsem_mode);
+static void reset_host_queues(void);
 
 extern void reset_parse_cmdline();
 
@@ -76,7 +81,12 @@ int uae4arm_host_run(int argc, char** argv)
 	   no config, no WHDLoad archive - and boots default hardware with no
 	   Kickstart, which shows as a black screen. */
 	reset_parse_cmdline();
-	return amiberry_main(argc, argv);
+	const int result = amiberry_main(argc, argv);
+	/* Clear input left by a finger/controller releasing while the core was
+	 * unwinding. Doing this before amiberry_main races the newly spawned host
+	 * UI, which can legitimately enqueue its controller setup immediately. */
+	reset_host_queues();
+	return result;
 }
 
 void uae4arm_host_set_callbacks(const uae4arm_host_callbacks* callbacks)
@@ -113,38 +123,131 @@ void uae4arm_host_hide_virtual_keyboard(void)
 
 /* ---- inbound: host -> core -------------------------------------------- */
 
+namespace {
+
+struct CoreCommand {
+	enum class Kind {
+		Key,
+		Pause,
+		Restart,
+		InsertFloppy,
+		EjectFloppy,
+		Port0Joystick,
+		CorrectAspect,
+		MouseMove,
+		MouseButton,
+		SaveSession,
+		SaveState,
+		Launch,
+		Quit
+	};
+
+	Kind kind;
+	int a = 0;
+	int b = 0;
+	bool flag = false;
+	std::string path;
+	std::string extra;
+	std::string title;
+};
+
+std::mutex core_command_lock;
+std::deque<CoreCommand> core_commands;
+constexpr size_t CORE_COMMAND_SOFT_MAX = 512;
+
+bool core_command_is_coalescable(CoreCommand::Kind kind)
+{
+	return kind == CoreCommand::Kind::MouseMove ||
+		kind == CoreCommand::Kind::Pause ||
+		kind == CoreCommand::Kind::CorrectAspect ||
+		kind == CoreCommand::Kind::Port0Joystick;
+}
+
+void core_command_enqueue(CoreCommand command)
+{
+	std::lock_guard<std::mutex> guard(core_command_lock);
+
+	/* Pointer motion is a delta, so consecutive reports combine. This keeps a
+	 * busy Flutter gesture from filling the queue without dropping distance. */
+	if (command.kind == CoreCommand::Kind::MouseMove && !core_commands.empty() &&
+		core_commands.back().kind == CoreCommand::Kind::MouseMove) {
+		CoreCommand& previous = core_commands.back();
+		previous.a = std::clamp(previous.a + command.a, -32767, 32767);
+		previous.b = std::clamp(previous.b + command.b, -32767, 32767);
+		return;
+	}
+
+	/* Only the latest state matters for these switches. Do not do this for
+	 * keys/buttons: losing a release produces a permanently held control. */
+	if (core_command_is_coalescable(command.kind)) {
+		for (auto it = core_commands.rbegin(); it != core_commands.rend(); ++it) {
+			if (it->kind == command.kind) {
+				*it = std::move(command);
+				return;
+			}
+		}
+	}
+
+	if (core_commands.size() >= CORE_COMMAND_SOFT_MAX) {
+		auto disposable = std::find_if(core_commands.begin(), core_commands.end(),
+			[](const CoreCommand& queued) {
+				return core_command_is_coalescable(queued.kind);
+			});
+		if (disposable != core_commands.end())
+			core_commands.erase(disposable);
+		else if (core_command_is_coalescable(command.kind))
+			return;
+		/* Critical commands may exceed the soft cap briefly. A key-up, save or
+		 * quit is safer than a stuck key or a session silently not saved. */
+	}
+	core_commands.push_back(std::move(command));
+}
+
+void clear_core_commands()
+{
+	std::lock_guard<std::mutex> guard(core_command_lock);
+	core_commands.clear();
+}
+
+} // namespace
+
 void uae4arm_host_send_key(int amiga_keycode, bool pressed)
 {
-	inputdevice_do_keyboard(amiga_keycode, pressed ? 1 : 0);
+	CoreCommand command{CoreCommand::Kind::Key};
+	command.a = amiga_keycode;
+	command.flag = pressed;
+	core_command_enqueue(std::move(command));
 }
 
 void uae4arm_host_set_pause(bool paused)
 {
-	if (paused)
-		setpaused(1);
-	else
-		resumepaused(1);
+	CoreCommand command{CoreCommand::Kind::Pause};
+	command.flag = paused;
+	core_command_enqueue(std::move(command));
 }
 
 void uae4arm_host_restart(void)
 {
-	/* opengui 0 keeps the "-G" no-gui launch flag honoured (restart_program=2),
-	   which is what an in-game Reboot should do. */
-	uae_restart(&currprefs, 0, nullptr);
+	core_command_enqueue(CoreCommand{CoreCommand::Kind::Restart});
 }
 
 void uae4arm_host_insert_floppy(int drive, const char* path)
 {
 	if (drive < 0 || drive > 3 || !path || !*path)
 		return;
-	disk_insert(drive, path);
+	CoreCommand command{CoreCommand::Kind::InsertFloppy};
+	command.a = drive;
+	command.path = path;
+	core_command_enqueue(std::move(command));
 }
 
 void uae4arm_host_eject_floppy(int drive)
 {
 	if (drive < 0 || drive > 3)
 		return;
-	disk_eject(drive);
+	CoreCommand command{CoreCommand::Kind::EjectFloppy};
+	command.a = drive;
+	core_command_enqueue(std::move(command));
 }
 
 int uae4arm_host_get_floppy_count(void)
@@ -154,46 +257,16 @@ int uae4arm_host_get_floppy_count(void)
 
 void uae4arm_host_set_onscreen_controller(int mode)
 {
-	write_log("host: on-screen controller mode %d requested\n", mode);
-	if (mode == 0) {
-		changed_prefs.onscreen_joystick = false;
-		changed_prefs.onscreen_cd32pad = false;
-		if (onscreen_port1_override) {
-			changed_prefs.jports[1].id = saved_port1_id;
-			changed_prefs.jports[1].mode = saved_port1_mode;
-			onscreen_port1_override = false;
-		}
-		set_config_changed();
-		return;
-	}
-
-	const int pad = mode == 2 ? UAE4ARM_HOST_PAD_CD32 : UAE4ARM_HOST_PAD_JOYSTICK;
-	const int device = pad_device(pad);
-	if (device < 0)
-		return;
-	if (!onscreen_port1_override) {
-		saved_port1_id = changed_prefs.jports[1].id;
-		saved_port1_mode = changed_prefs.jports[1].mode;
-		onscreen_port1_override = true;
-	}
-	changed_prefs.jports[1].id = JSEM_JOYS + device;
-	changed_prefs.jports[1].mode = mode == 2 ? JSEM_MODE_JOYSTICK_CD32 : JSEM_MODE_JOYSTICK;
-	changed_prefs.onscreen_joystick = mode == 1;
-	changed_prefs.onscreen_cd32pad = mode == 2;
-	set_config_changed();
+	/* The host UI and the emulator run on different threads. Registering a
+	 * virtual pad or changing the input prefs here races inputdevice_vsync()
+	 * and used to corrupt the input table. Queue the whole request; the same
+	 * emulator-thread drain that applies button events applies this too. */
+	queue_onscreen_controller_request(mode);
 }
 
 void uae4arm_host_set_external_controller_mode(int jsem_mode)
 {
-	pending_external_controller_mode = jsem_mode;
-	changed_prefs.jports[1].mode = jsem_mode;
-	/* A connected Android/SDL controller is the first physical joystick. The
-	   launcher may have generated joyport1=none; selecting the external mode
-	   should make that controller usable immediately. A visible virtual pad
-	   temporarily owns the port and is restored by set_onscreen_controller(0). */
-	if (!onscreen_port1_override)
-		changed_prefs.jports[1].id = JSEM_JOYS;
-	set_config_changed();
+	queue_external_controller_mode_request(jsem_mode);
 }
 
 void uae4arm_host_apply_pending_controller_mode(void)
@@ -221,17 +294,17 @@ void uae4arm_host_set_port0_joystick(bool joystick)
 	   games want a second joystick there instead - JSEM_JOYS is the first
 	   physical stick, +1 the second, since port 1 will have taken the
 	   first. Turning it off puts the mouse back. */
-	changed_prefs.jports[0].id = joystick ? JSEM_JOYS + 1 : JSEM_MICE;
-	changed_prefs.jports[0].mode = joystick ? JSEM_MODE_JOYSTICK : JSEM_MODE_MOUSE;
-	set_config_changed();
-	write_log("host: port 0 -> %s\n", joystick ? "second joystick" : "mouse");
+	CoreCommand command{CoreCommand::Kind::Port0Joystick};
+	command.flag = joystick;
+	core_command_enqueue(std::move(command));
 }
 
 void uae4arm_host_set_correct_aspect(bool enabled)
 {
 	/* Same mechanism as the AKS_AUTO_CROP_IMAGE hotkey: applied live. */
-	changed_prefs.gfx_correct_aspect = enabled ? 1 : 0;
-	set_config_changed();
+	CoreCommand command{CoreCommand::Kind::CorrectAspect};
+	command.flag = enabled;
+	core_command_enqueue(std::move(command));
 }
 
 bool uae4arm_host_get_correct_aspect(void)
@@ -251,12 +324,13 @@ void uae4arm_host_quit(void)
 	/* The same call the emulator's own quit menu makes. The main loop picks
 	   it up on the next frame and unwinds, which is what lets the host know
 	   emulation is over rather than having to guess. */
-	uae_quit();
+	core_command_enqueue(CoreCommand{CoreCommand::Kind::Quit});
 }
 
 void uae4arm_host_set_session(const char* state_path, const char* config_path,
 	const char* title)
 {
+	std::lock_guard<std::mutex> guard(session_lock);
 	session_state_path = state_path ? state_path : "";
 	session_config_path = config_path ? config_path : "";
 	session_title = title ? title : "Amiga session";
@@ -264,11 +338,27 @@ void uae4arm_host_set_session(const char* state_path, const char* config_path,
 
 bool uae4arm_host_save_session(void)
 {
-	if (session_state_path.empty() || session_config_path.empty())
+	CoreCommand command{CoreCommand::Kind::SaveSession};
+	{
+		std::lock_guard<std::mutex> guard(session_lock);
+		if (session_state_path.empty() || session_config_path.empty())
+			return false;
+		command.path = session_state_path;
+		command.extra = session_config_path;
+		command.title = session_title;
+	}
+	core_command_enqueue(std::move(command));
+	return true;
+}
+
+static bool perform_save_session(const CoreCommand& command)
+{
+	if (command.path.empty() || command.extra.empty())
 		return false;
-	uae4arm_host_save_state(session_state_path.c_str());
+	savestate_initsave(command.path.c_str(), 1, true, true);
+	save_state(command.path.c_str(), _T("Amiga-Retro"));
 	std::error_code ec;
-	const std::filesystem::path state(session_state_path);
+	const std::filesystem::path state(command.path);
 	const std::filesystem::path directory = state.parent_path();
 	std::filesystem::create_directories(directory, ec);
 	if (ec || !std::filesystem::exists(state, ec))
@@ -290,14 +380,14 @@ bool uae4arm_host_save_session(void)
 			const std::size_t third = second == std::string::npos
 				? std::string::npos : line.find('\t', second + 1);
 			if (third == std::string::npos ||
-				line.substr(second + 1, third - second - 1) != session_state_path)
+				line.substr(second + 1, third - second - 1) != command.path)
 				lines.push_back(line);
 		}
 	}
 	const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
 		std::chrono::system_clock::now().time_since_epoch()).count();
-	lines.insert(lines.begin(), std::to_string(now) + "\t" + session_title + "\t" +
-		session_state_path + "\t" + session_config_path);
+	lines.insert(lines.begin(), std::to_string(now) + "\t" + command.title + "\t" +
+		command.path + "\t" + command.extra);
 	while (lines.size() > 5) {
 		const std::string dropped = lines.back();
 		lines.pop_back();
@@ -325,26 +415,12 @@ bool uae4arm_host_launch(const char* config_path, const char* whdload_archive)
 	const bool have_config = config_path && *config_path;
 	if (!have_archive && !have_config)
 		return false;
-
-	/* From the machine's defaults each time: a restart that inherited the
-	   last game's prefs would carry its memory, its ROM and its disks into
-	   the next one. */
-	default_prefs(&changed_prefs, true, 0);
-
-	if (have_config && target_cfgfile_load(&changed_prefs, config_path, CONFIG_TYPE_ALL, 0) == 0)
+	if (have_config && !std::filesystem::exists(config_path))
 		return false;
-
-	if (have_archive)
-	{
-		/* The same call --autoload makes. It writes the hardware the game's
-		   database entry asks for over what the config said, which is what
-		   makes a WHDLoad game work. */
-		whdload_auto_prefs(&changed_prefs, whdload_archive);
-	}
-
-	/* opengui 0 leaves restart_config empty, and real_main2 then takes
-	   changed_prefs as they stand - which is where the new machine is. */
-	uae_restart(&changed_prefs, 0, nullptr);
+	CoreCommand command{CoreCommand::Kind::Launch};
+	command.path = have_config ? config_path : "";
+	command.extra = have_archive ? whdload_archive : "";
+	core_command_enqueue(std::move(command));
 	return true;
 }
 
@@ -365,26 +441,20 @@ void uae4arm_host_mouse_move(int dx, int dy)
 {
 	if (dx == 0 && dy == 0)
 		return;
-	/* setmousestate drops deltas silently when the mouse device is not
-	   enabled in the current mapping, which reads as "the pointer ignores
-	   me" with nothing in the log. Say so, once per run. */
-	static bool reported;
-	if (!reported) {
-		reported = true;
-		write_log("host: touch mouse first delta (port0 id=%d mode=%d)\n",
-			currprefs.jports[0].id, currprefs.jports[0].mode);
-	}
-	/* Port 0, axes 0 and 1, relative: the fourth argument is what makes it
-	   relative rather than an absolute position. */
-	setmousestate(0, 0, dx, 0);
-	setmousestate(0, 1, dy, 0);
+	CoreCommand command{CoreCommand::Kind::MouseMove};
+	command.a = dx;
+	command.b = dy;
+	core_command_enqueue(std::move(command));
 }
 
 void uae4arm_host_mouse_button(int button, bool pressed)
 {
 	if (button < 0 || button > 2)
 		return;
-	setmousebuttonstate(0, button, pressed ? 1 : 0);
+	CoreCommand command{CoreCommand::Kind::MouseButton};
+	command.a = button;
+	command.flag = pressed;
+	core_command_enqueue(std::move(command));
 }
 
 /* ---- save states ------------------------------------------------------- */
@@ -393,11 +463,9 @@ void uae4arm_host_save_state(const char* path)
 {
 	if (!path || !*path)
 		return;
-	/* Same call the emulator's own save-state menu makes: compress, no
-	   dialogs, saving rather than loading. The core picks up the request on
-	   the next frame. */
-	savestate_initsave(path, 1, true, true);
-	save_state(path, _T("Amiga-Retro"));
+	CoreCommand command{CoreCommand::Kind::SaveState};
+	command.path = path;
+	core_command_enqueue(std::move(command));
 }
 
 /* ---- music ------------------------------------------------------------- */
@@ -449,6 +517,104 @@ void uae4arm_host_music_set_volume(float volume)
 	music_player_set_volume(volume);
 }
 
+static void drain_core_commands()
+{
+	std::deque<CoreCommand> commands;
+	{
+		std::lock_guard<std::mutex> guard(core_command_lock);
+		if (core_commands.empty())
+			return;
+		commands.swap(core_commands);
+	}
+
+	static bool mouse_reported = false;
+	for (const CoreCommand& command : commands) {
+		switch (command.kind) {
+		case CoreCommand::Kind::Key:
+			inputdevice_do_keyboard(command.a, command.flag ? 1 : 0);
+			break;
+
+		case CoreCommand::Kind::Pause:
+			if (command.flag)
+				setpaused(1);
+			else
+				resumepaused(1);
+			break;
+
+		case CoreCommand::Kind::Restart:
+			/* opengui 0 keeps the -G no-GUI launch honoured. */
+			uae_restart(&currprefs, 0, nullptr);
+			break;
+
+		case CoreCommand::Kind::InsertFloppy:
+			disk_insert(command.a, command.path.c_str());
+			break;
+
+		case CoreCommand::Kind::EjectFloppy:
+			disk_eject(command.a);
+			break;
+
+		case CoreCommand::Kind::Port0Joystick:
+			changed_prefs.jports[0].id = command.flag ? JSEM_JOYS + 1 : JSEM_MICE;
+			changed_prefs.jports[0].mode = command.flag
+				? JSEM_MODE_JOYSTICK : JSEM_MODE_MOUSE;
+			set_config_changed();
+			write_log("host: port 0 -> %s\n",
+				command.flag ? "second joystick" : "mouse");
+			break;
+
+		case CoreCommand::Kind::CorrectAspect:
+			changed_prefs.gfx_correct_aspect = command.flag ? 1 : 0;
+			set_config_changed();
+			break;
+
+		case CoreCommand::Kind::MouseMove:
+			if (!mouse_reported) {
+				mouse_reported = true;
+				write_log("host: touch mouse first delta (port0 id=%d mode=%d)\n",
+					currprefs.jports[0].id, currprefs.jports[0].mode);
+			}
+			setmousestate(0, 0, command.a, 0);
+			setmousestate(0, 1, command.b, 0);
+			break;
+
+		case CoreCommand::Kind::MouseButton:
+			setmousebuttonstate(0, command.a, command.flag ? 1 : 0);
+			break;
+
+		case CoreCommand::Kind::SaveSession:
+			perform_save_session(command);
+			break;
+
+		case CoreCommand::Kind::SaveState:
+			savestate_initsave(command.path.c_str(), 1, true, true);
+			save_state(command.path.c_str(), _T("Amiga-Retro"));
+			break;
+
+		case CoreCommand::Kind::Launch:
+			/* From defaults each time, so the previous machine's media and RAM do
+			 * not bleed into the next one. Config parsing and restart both mutate
+			 * global prefs and therefore belong on this thread too. */
+			default_prefs(&changed_prefs, true, 0);
+			if (!command.path.empty() &&
+				target_cfgfile_load(&changed_prefs, command.path.c_str(),
+					CONFIG_TYPE_ALL, 0) == 0) {
+				write_log("host: queued launch could not load %s\n",
+					command.path.c_str());
+				break;
+			}
+			if (!command.extra.empty())
+				whdload_auto_prefs(&changed_prefs, command.extra.c_str());
+			uae_restart(&changed_prefs, 0, nullptr);
+			break;
+
+		case CoreCommand::Kind::Quit:
+			uae_quit();
+			break;
+		}
+	}
+}
+
 /* ---- inbound: host-drawn controls ------------------------------------- */
 
 /* Number of buttons each virtual pad registers, used by release_all. */
@@ -486,7 +652,15 @@ static int pad_device(int pad)
 namespace {
 
 struct PadEvent {
-	enum class Kind { Attach, Axis, Direction, Button, ReleaseAll };
+	enum class Kind {
+		Attach,
+		Axis,
+		Direction,
+		Button,
+		ReleaseAll,
+		SetOnscreenController,
+		SetExternalControllerMode
+	};
 	Kind kind;
 	int pad;
 	int a;      /* axis index, or button index */
@@ -506,12 +680,104 @@ constexpr size_t PAD_QUEUE_MAX = 256;
 void pad_enqueue(const PadEvent& event)
 {
 	std::lock_guard<std::mutex> guard(pad_queue_lock);
-	if (pad_queue.size() >= PAD_QUEUE_MAX)
-		pad_queue.pop_front();
+	if (pad_queue.size() >= PAD_QUEUE_MAX) {
+		/* Motion is replaceable; releases and mode changes are not. Dropping the
+		 * oldest event indiscriminately is how a busy touch sequence leaves fire
+		 * held forever. */
+		auto disposable = std::find_if(pad_queue.begin(), pad_queue.end(),
+			[](const PadEvent& queued) {
+				return queued.kind == PadEvent::Kind::Axis ||
+					queued.kind == PadEvent::Kind::Direction ||
+					queued.kind == PadEvent::Kind::Attach;
+			});
+		if (disposable != pad_queue.end())
+			pad_queue.erase(disposable);
+		else if (event.kind == PadEvent::Kind::Axis ||
+			event.kind == PadEvent::Kind::Direction ||
+			event.kind == PadEvent::Kind::Attach)
+			return;
+	}
 	pad_queue.push_back(event);
 }
 
 } // namespace
+
+static void reset_host_queues(void)
+{
+	clear_core_commands();
+	{
+		std::lock_guard<std::mutex> guard(pad_queue_lock);
+		pad_queue.clear();
+	}
+	onscreen_port1_override = false;
+	pending_external_controller_mode = -1;
+	{
+		std::lock_guard<std::mutex> guard(session_lock);
+		session_state_path.clear();
+		session_config_path.clear();
+		session_title.clear();
+	}
+}
+
+static void queue_onscreen_controller_request(int mode)
+{
+	if (mode < 0 || mode > 2)
+		return;
+	pad_enqueue(PadEvent{PadEvent::Kind::SetOnscreenController, mode, 0, 0,
+		false, false, false, false});
+}
+
+static void queue_external_controller_mode_request(int jsem_mode)
+{
+	pad_enqueue(PadEvent{PadEvent::Kind::SetExternalControllerMode, jsem_mode,
+		0, 0, false, false, false, false});
+}
+
+/* These two helpers are emulator-thread only. In particular pad_device()
+ * registers a device and mutates di_joystick/num_joystick, so it must never
+ * be reached directly from Flutter's platform thread. */
+static void apply_onscreen_controller_request(int mode)
+{
+	write_log("host: on-screen controller mode %d requested\n", mode);
+	if (mode == 0) {
+		changed_prefs.onscreen_joystick = false;
+		changed_prefs.onscreen_cd32pad = false;
+		if (onscreen_port1_override) {
+			changed_prefs.jports[1].id = saved_port1_id;
+			changed_prefs.jports[1].mode = saved_port1_mode;
+			onscreen_port1_override = false;
+		}
+		set_config_changed();
+		return;
+	}
+
+	const int pad = mode == 2 ? UAE4ARM_HOST_PAD_CD32 : UAE4ARM_HOST_PAD_JOYSTICK;
+	const int device = pad_device(pad);
+	if (device < 0)
+		return;
+	if (!onscreen_port1_override) {
+		saved_port1_id = changed_prefs.jports[1].id;
+		saved_port1_mode = changed_prefs.jports[1].mode;
+		onscreen_port1_override = true;
+	}
+	changed_prefs.jports[1].id = JSEM_JOYS + device;
+	changed_prefs.jports[1].mode = mode == 2
+		? JSEM_MODE_JOYSTICK_CD32 : JSEM_MODE_JOYSTICK;
+	changed_prefs.onscreen_joystick = mode == 1;
+	changed_prefs.onscreen_cd32pad = mode == 2;
+	set_config_changed();
+}
+
+static void apply_external_controller_mode_request(int jsem_mode)
+{
+	pending_external_controller_mode = jsem_mode;
+	changed_prefs.jports[1].mode = jsem_mode;
+	/* The host-fed virtual pad is the first joystick on the in-process path.
+	 * A config may say joyport1=none; selecting a controller must override it. */
+	if (!onscreen_port1_override)
+		changed_prefs.jports[1].id = JSEM_JOYS;
+	set_config_changed();
+}
 
 void uae4arm_host_pad_attach(int pad)
 {
@@ -557,6 +823,7 @@ void uae4arm_host_pad_release_all(int pad)
  * queue is that it happens on one thread. */
 void uae4arm_host_drain_pad_events(void)
 {
+	drain_core_commands();
 	std::deque<PadEvent> events;
 	{
 		std::lock_guard<std::mutex> guard(pad_queue_lock);
@@ -566,6 +833,15 @@ void uae4arm_host_drain_pad_events(void)
 	}
 
 	for (const PadEvent& event : events) {
+		if (event.kind == PadEvent::Kind::SetOnscreenController) {
+			apply_onscreen_controller_request(event.pad);
+			continue;
+		}
+		if (event.kind == PadEvent::Kind::SetExternalControllerMode) {
+			apply_external_controller_mode_request(event.pad);
+			continue;
+		}
+
 		/* Registers on first use, on this thread. */
 		const int dev = pad_device(event.pad);
 		if (dev < 0)
@@ -626,7 +902,10 @@ void uae4arm_host_drain_pad_events(void)
 				setjoybuttonstate(dev, button, 0);
 			break;
 		}
+
+		case PadEvent::Kind::SetOnscreenController:
+		case PadEvent::Kind::SetExternalControllerMode:
+			break; /* Applied before pad_device(), above. */
 		}
 	}
 }
-

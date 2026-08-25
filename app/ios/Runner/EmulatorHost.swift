@@ -336,6 +336,11 @@ final class EmulatorHost {
     unsafeBitCast(fn, to: VoidFn.self)()
   }
 
+  func musicReleaseAudio() {
+    guard let fn = symbol("uae4arm_host_music_release_audio") else { return }
+    unsafeBitCast(fn, to: VoidFn.self)()
+  }
+
   func musicSetPaused(_ paused: Bool) {
     guard let fn = symbol("uae4arm_host_music_set_paused") else { return }
     unsafeBitCast(fn, to: SetBoolFn.self)(paused)

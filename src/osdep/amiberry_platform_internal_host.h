@@ -44,6 +44,8 @@ static inline bool osdep_platform_init_sdl()
 		}
 		return false;
 	}
+	write_log("SDL audio driver: %s\n",
+		SDL_GetCurrentAudioDriver() ? SDL_GetCurrentAudioDriver() : "none");
 
 	// SDL 3.2.x KMSDRM's default triple-buffer path leaves interval-0 page flips
 	// asynchronous, avoiding the immediate drain imposed by the double-buffer
@@ -63,12 +65,6 @@ static inline bool osdep_platform_init_sdl()
 
 	// Enable native IME for international text input
 	SDL_SetHint(SDL_HINT_IME_IMPLEMENTED_UI, "1");
-
-#ifdef __ANDROID__
-	// OpenSL ES is more reliable than AAudio on older Android versions
-	// (SDL3 has improved AAudio support, but OpenSL ES remains a safe fallback)
-	SDL_SetHint("SDL_AUDIODRIVER", "openslES");
-#endif
 
 #ifdef __ANDROID__
 	// Trap the Android back button so SDL delivers it as SDL_SCANCODE_AC_BACK

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../data/ags_setup.dart';
 import '../data/app_prefs.dart';
 import '../data/file_category.dart';
+import '../data/hard_drive_set.dart';
 import '../data/amiga_model.dart';
 import '../data/media_folder.dart';
 import '../data/media_library.dart';
@@ -25,6 +26,7 @@ class SettingsPanel extends StatefulWidget {
 
 class _SettingsPanelState extends State<SettingsPanel> {
   String _root = '';
+
   /// The folder the user granted on Android, shown instead of the internal
   /// destination: it is the one they chose and the only one they can change.
   String? _sourceFolder;
@@ -34,11 +36,11 @@ class _SettingsPanelState extends State<SettingsPanel> {
   bool _confirmFileDelete = true;
   StreamSubscription<MediaIndex>? _mediaChanges;
 
-  List<AgsInstall> _ags = <AgsInstall>[];
+  List<HardDriveSet> _ags = <HardDriveSet>[];
 
   /// Builds a config for an AGS set, with a Kickstart chosen the same way the
   /// wizard chooses one.
-  Future<String> _setUpAgs(AgsInstall install) async {
+  Future<String> _setUpAgs(HardDriveSet install) async {
     final List<MediaFile> roms = _index.of(FileCategory.roms);
     final MediaFile? rom = RomPicker.kickstartFor(AmigaModel.a1200, roms);
     if (rom == null) {
@@ -51,7 +53,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
   }
 
   Future<void> _findAgs() async {
-    final List<AgsInstall> found = await AgsSetup.find(_index);
+    final List<HardDriveSet> found = await AgsSetup.find(_index);
     if (!mounted) return;
     setState(() {
       _ags = found;
@@ -103,7 +105,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
     controller.dispose();
     if (folder == null || folder.trim().isEmpty) return;
 
-    final AgsInstall? install = AgsSetup.inspect(folder.trim());
+    final HardDriveSet? install = AgsSetup.inspect(folder.trim());
     if (!mounted) return;
     if (install == null) {
       setState(
@@ -112,7 +114,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
       );
       return;
     }
-    setState(() => _ags = <AgsInstall>[install]);
+    setState(() => _ags = <HardDriveSet>[install]);
   }
 
   @override
@@ -285,7 +287,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
                   ],
                 ),
               ),
-              for (final AgsInstall install in _ags)
+              for (final HardDriveSet install in _ags)
                 ListTile(
                   dense: true,
                   leading: const Icon(Icons.storage, size: 18),

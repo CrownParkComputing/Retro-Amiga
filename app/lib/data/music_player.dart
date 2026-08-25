@@ -65,6 +65,11 @@ class MusicPlayer {
   static Future<void> stop({bool byUser = true}) async {
     _silencedByUser = byUser;
     await _invoke<void>('musicStop');
+    // The emulator now runs in this process too. Leaving the launcher's idle
+    // SDL stream open while the core opens another one makes Android mix two
+    // devices, one permanently underrunning because its module was stopped.
+    // On slower phones that is the torn/cutting audio reported in games.
+    await _invoke<void>('musicReleaseAudio');
     _stopPolling();
     _emit(const MusicState());
   }

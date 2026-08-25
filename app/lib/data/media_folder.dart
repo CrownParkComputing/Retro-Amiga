@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import 'app_log.dart';
 import 'file_category.dart';
+import 'hard_drive_set.dart';
 import 'media_root.dart';
 
 /// One file the user's granted folder holds.
@@ -26,6 +27,13 @@ class FolderEntry {
   final String directory;
 
   final int size;
+}
+
+class FolderCopy {
+  const FolderCopy({required this.entry, required this.destination});
+
+  final FolderEntry entry;
+  final String destination;
 }
 
 /// A folder the user picked, read through the Storage Access Framework.
@@ -132,10 +140,10 @@ class MediaFolder {
   static Future<List<FolderEntry>> list({int fileLimit = 20000}) async {
     if (!isSupported) return const <FolderEntry>[];
     try {
-      final List<Object?>? raw = await _channel
-          .invokeMethod<List<Object?>>('listMediaFolder', <String, Object>{
-            'fileLimit': fileLimit,
-          });
+      final List<Object?>? raw = await _channel.invokeMethod<List<Object?>>(
+        'listMediaFolder',
+        <String, Object>{'fileLimit': fileLimit},
+      );
       if (raw == null) return const <FolderEntry>[];
 
       final List<FolderEntry> entries = <FolderEntry>[];
@@ -165,15 +173,43 @@ class MediaFolder {
   static Future<bool> copyTo(FolderEntry entry, String destination) async {
     if (!isSupported) return false;
     try {
-      return await _channel
-              .invokeMethod<bool>('copyFromMediaFolder', <String, Object>{
-                'documentId': entry.documentId,
-                'destination': destination,
-              }) ??
+      return await _channel.invokeMethod<bool>(
+            'copyFromMediaFolder',
+            <String, Object>{
+              'documentId': entry.documentId,
+              'destination': destination,
+            },
+          ) ??
           false;
     } on PlatformException catch (e) {
       AppLog.info('folder', 'copy of ${entry.name} failed: ${e.code}');
       return false;
+    }
+  }
+
+  /// Copies a group through one platform call. Android previously created a
+  /// fresh native thread for every file, which made a several-thousand-file
+  /// HDF directory painfully slow and needlessly churned the runtime.
+  static Future<List<bool>> copyBatch(List<FolderCopy> copies) async {
+    if (!isSupported || copies.isEmpty) return const <bool>[];
+    try {
+      final List<Object?>? result = await _channel.invokeMethod<List<Object?>>(
+        'copyFromMediaFolderBatch',
+        <String, Object>{
+          'copies': <Map<String, Object>>[
+            for (final FolderCopy copy in copies)
+              <String, Object>{
+                'documentId': copy.entry.documentId,
+                'destination': copy.destination,
+              },
+          ],
+        },
+      );
+      return result?.map((Object? value) => value == true).toList() ??
+          List<bool>.filled(copies.length, false);
+    } on PlatformException catch (e) {
+      AppLog.info('folder', 'batch copy failed: ${e.code}');
+      return List<bool>.filled(copies.length, false);
     }
   }
 }
@@ -200,25 +236,29 @@ class MediaFolderImporter {
     // Only files the app knows what to do with. A granted folder may be the
     // top of somebody's storage, and copying every photo on the phone into an
     // Amiga library helps nobody.
-    final List<FolderEntry> wanted = entries
-        .where(
-          (FolderEntry e) =>
-              FileCategory.fromPath(e.name) != null &&
-              FileCategory.fromPath(e.name) != FileCategory.archives,
-        )
-        .toList();
+    final List<_CategorisedFolderEntry> wanted = <_CategorisedFolderEntry>[
+      for (final FolderEntry entry in entries)
+        if (categoryFor(entry, entries) case final FileCategory category)
+          _CategorisedFolderEntry(entry, category),
+    ];
 
     int copied = 0;
     int alreadyThere = 0;
     int failed = 0;
+    final List<FolderCopy> pending = <FolderCopy>[];
 
-    for (int i = 0; i < wanted.length; i++) {
-      final FolderEntry entry = wanted[i];
-      onProgress?.call(i, wanted.length);
+    for (final _CategorisedFolderEntry item in wanted) {
+      final FolderEntry entry = item.entry;
 
-      final FileCategory category = FileCategory.fromPath(entry.name)!;
-      final Directory target = await MediaRoot.folderFor(category);
-      final String destination = '${target.path}/${entry.name}';
+      final Directory target = await MediaRoot.folderFor(item.category);
+      final String relative = safeRelativeDirectory(entry.directory);
+      final Directory destinationFolder = relative.isEmpty
+          ? target
+          : Directory('${target.path}/$relative');
+      if (!destinationFolder.existsSync()) {
+        destinationFolder.createSync(recursive: true);
+      }
+      final String destination = '${destinationFolder.path}/${entry.name}';
 
       final File existing = File(destination);
       if (existing.existsSync()) {
@@ -230,12 +270,25 @@ class MediaFolderImporter {
           continue;
         }
       }
+      pending.add(FolderCopy(entry: entry, destination: destination));
+    }
 
-      if (await MediaFolder.copyTo(entry, destination)) {
-        copied++;
-      } else {
-        failed++;
+    const int batchSize = 128;
+    for (int start = 0; start < pending.length; start += batchSize) {
+      final int end = start + batchSize < pending.length
+          ? start + batchSize
+          : pending.length;
+      final List<bool> results = await MediaFolder.copyBatch(
+        pending.sublist(start, end),
+      );
+      for (final bool result in results) {
+        if (result) {
+          copied++;
+        } else {
+          failed++;
+        }
       }
+      onProgress?.call(alreadyThere + end, wanted.length);
     }
     onProgress?.call(wanted.length, wanted.length);
 
@@ -250,4 +303,158 @@ class MediaFolderImporter {
       failed: failed,
     );
   }
+
+  /// Imports a folder as an Amiga hard-drive collection.
+  ///
+  /// Unlike the general media import this deliberately keeps every file. A
+  /// directory mounted as DH0 contains startup-sequences, tools and data with
+  /// no Amiga-media extension, while an AGS shared directory may contain save
+  /// data. Filtering either down to HDFs creates a pack that looks present but
+  /// cannot boot or save.
+  static Future<HardDriveFolderImport?> importHardDriveTree({
+    void Function(int done, int total)? onProgress,
+  }) async {
+    final List<FolderEntry> entries = await MediaFolder.list();
+    if (entries.isEmpty) return null;
+
+    final String source = await MediaFolder.displayPath() ?? 'Imported drives';
+    final List<String> sourceParts = source
+        .replaceAll(r'\', '/')
+        .split('/')
+        .where((String part) => part.isNotEmpty)
+        .toList();
+    final String rawName = sourceParts.isEmpty
+        ? 'Imported drives'
+        : sourceParts.last;
+    final String namespace = _safeComponent(rawName);
+    final Directory hardDrives = await MediaRoot.folderFor(
+      FileCategory.hardDrives,
+    );
+    final Directory collection = Directory('${hardDrives.path}/$namespace');
+    if (!collection.existsSync()) collection.createSync(recursive: true);
+
+    int copied = 0;
+    int alreadyThere = 0;
+    int failed = 0;
+    final List<FolderCopy> pending = <FolderCopy>[];
+
+    for (final FolderEntry entry in entries) {
+      final String relative = safeRelativeDirectory(entry.directory);
+      final Directory destinationFolder = relative.isEmpty
+          ? collection
+          : Directory('${collection.path}/$relative');
+      final String destination =
+          '${destinationFolder.path}/${_safeComponent(entry.name)}';
+      final File existing = File(destination);
+      if (existing.existsSync() &&
+          (entry.size == 0 || existing.lengthSync() == entry.size)) {
+        alreadyThere++;
+        continue;
+      }
+      pending.add(FolderCopy(entry: entry, destination: destination));
+    }
+
+    const int batchSize = 128;
+    for (int start = 0; start < pending.length; start += batchSize) {
+      final int end = start + batchSize < pending.length
+          ? start + batchSize
+          : pending.length;
+      final List<FolderCopy> batch = pending.sublist(start, end);
+      final List<bool> results = await MediaFolder.copyBatch(batch);
+      for (final bool result in results) {
+        if (result) {
+          copied++;
+        } else {
+          failed++;
+        }
+      }
+      onProgress?.call(alreadyThere + end, entries.length);
+    }
+    onProgress?.call(entries.length, entries.length);
+
+    final HardDriveSet? set = HardDriveSet.inspect(
+      collection.path,
+      allowDirectoryMount: true,
+    );
+    if (set == null) return null;
+    final ImportResult result = ImportResult(
+      moved: copied,
+      alreadyInPlace: alreadyThere,
+      failed: failed,
+    );
+    AppLog.info(
+      'folder',
+      'hard-drive collection ${set.name}: ${set.driveCount} mount(s), '
+          '$copied copied, $alreadyThere already present, $failed failed',
+    );
+    return HardDriveFolderImport(set: set, result: result);
+  }
+
+  /// Classifies an entry with enough folder context to keep CD sets intact.
+  ///
+  /// CUE sheets refer to companion BIN/WAV/FLAC/MP3 tracks. A filename-only
+  /// classifier sees BIN as a Kickstart and ignores the audio tracks, leaving
+  /// a CD that appears in the shelf but cannot boot. If a directory contains
+  /// a CUE, those companion files belong beside it in CDROMs.
+  @visibleForTesting
+  static FileCategory? categoryFor(
+    FolderEntry entry,
+    List<FolderEntry> allEntries,
+  ) {
+    final String extension = _extension(entry.name);
+    const Set<String> cueCompanions = <String>{'bin', 'wav', 'flac', 'mp3'};
+    if (cueCompanions.contains(extension)) {
+      final bool hasCue = allEntries.any(
+        (FolderEntry candidate) =>
+            candidate.directory == entry.directory &&
+            _extension(candidate.name) == 'cue',
+      );
+      if (hasCue) return FileCategory.cdImages;
+    }
+    return FileCategory.fromPath(entry.name);
+  }
+
+  /// Keeps the collection's folder structure without trusting provider names
+  /// as filesystem paths. This prevents equally named disks in separate game
+  /// folders overwriting each other and keeps AGS hard-drive sets together.
+  @visibleForTesting
+  static String safeRelativeDirectory(String directory) {
+    return directory
+        .replaceAll(r'\', '/')
+        .split('/')
+        .where(
+          (String component) =>
+              component.isNotEmpty && component != '.' && component != '..',
+        )
+        .map((String component) => component.replaceAll(':', '_'))
+        .join('/');
+  }
+
+  static String _safeComponent(String value) {
+    final String safe = value
+        .replaceAll(RegExp(r'[/\\:\x00]'), '_')
+        .replaceAll('..', '_')
+        .trim();
+    return safe.isEmpty ? 'Imported drives' : safe;
+  }
+
+  static String _extension(String name) {
+    final int dot = name.lastIndexOf('.');
+    if (dot < 0 || dot == name.length - 1) return '';
+    return name.substring(dot + 1).toLowerCase();
+  }
+}
+
+class HardDriveFolderImport {
+  const HardDriveFolderImport({required this.set, required this.result});
+
+  final HardDriveSet set;
+  final ImportResult result;
+}
+
+class _CategorisedFolderEntry {
+  const _CategorisedFolderEntry(this.entry, this.category);
+
+  final FolderEntry entry;
+  final FileCategory category;
 }

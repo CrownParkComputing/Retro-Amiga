@@ -50,6 +50,9 @@ struct sound_dp
 	int push_target_buffers;
 	int push_stable_writes;
 	int push_low_water_count;
+	unsigned int push_low_water_total;
+	int push_queue_min;
+	int push_queue_max;
 };
 
 #define SND_STATUSCNT 10
@@ -103,6 +106,9 @@ static void reset_push_timing_state(struct sound_data* sd)
 	s->push_target_buffers = PUSH_TARGET_BUFFERS_MAX;
 	s->push_stable_writes = 0;
 	s->push_low_water_count = 0;
+	s->push_low_water_total = 0;
+	s->push_queue_min = -1;
+	s->push_queue_max = 0;
 }
 
 static bool lock_audio_stream_sdl(SDL_AudioStream* stream)
@@ -155,10 +161,21 @@ static void clear_stream_state_sdl(struct sound_data* sd)
 static void update_push_target_latency(struct sound_data* sd, int queued)
 {
 	auto* s = sd->data;
+	if (s->push_queue_min < 0 || queued < s->push_queue_min)
+		s->push_queue_min = queued;
+	if (queued > s->push_queue_max)
+		s->push_queue_max = queued;
 	if (queued <= sd->sndbufsize) {
 		// Low water — count consecutive occurrences
 		s->push_low_water_count++;
+		s->push_low_water_total++;
 		s->push_stable_writes = 0;
+		if (s->push_low_water_total <= 8 ||
+			(s->push_low_water_total % 256) == 0) {
+			write_log("audio low-water: queued=%d chunk=%d count=%u range=%d..%d\n",
+				queued, sd->sndbufsize, s->push_low_water_total,
+				s->push_queue_min, s->push_queue_max);
+		}
 
 		// Only escalate after sustained pressure, not a single transient dip
 		// (e.g. autocrop dimension changes cause isolated 1-frame dips)
@@ -190,6 +207,16 @@ static void update_push_target_latency(struct sound_data* sd, int queued)
 	}
 }
 
+static void put_silence(SDL_AudioStream* stream, int bytes)
+{
+	static const uint8_t silence[4096] = {};
+	while (bytes > 0) {
+		const int chunk = std::min(bytes, static_cast<int>(sizeof silence));
+		SDL_PutAudioStreamData(stream, silence, chunk);
+		bytes -= chunk;
+	}
+}
+
 // SDL3 Audio stream get callback (pull mode)
 static void SDLCALL sdl3_audio_get_callback(void* userdata, SDL_AudioStream* astream, int additional_amount, int total_amount)
 {
@@ -197,18 +224,20 @@ static void SDLCALL sdl3_audio_get_callback(void* userdata, SDL_AudioStream* ast
 	auto* s = sd->data;
 
 	if (!s->stream_initialised || sd->mute) {
-		std::vector<uint8_t> silence(additional_amount, 0);
-		SDL_PutAudioStreamData(astream, silence.data(), additional_amount);
+		put_silence(astream, additional_amount);
 		if (sd->mute) s->silence_written++;
 		s->stream_initialised = 1;
 		return;
 	}
 
-	if (!s->framesperbuffer || sdp->deactive)
+	if (!s->framesperbuffer || sdp->deactive) {
+		put_silence(astream, additional_amount);
 		return;
+	}
 
 	if (s->pullbufferlen <= 0) {
 		gui_data.sndbuf_status = -1;
+		put_silence(astream, additional_amount);
 		return;
 	}
 
@@ -221,6 +250,9 @@ static void SDLCALL sdl3_audio_get_callback(void* userdata, SDL_AudioStream* ast
 		std::memmove(s->pullbuffer, s->pullbuffer + bytes_to_copy, s->pullbufferlen - bytes_to_copy);
 	}
 	s->pullbufferlen -= bytes_to_copy;
+	if (bytes_to_copy < static_cast<unsigned int>(additional_amount))
+		put_silence(astream,
+			additional_amount - static_cast<int>(bytes_to_copy));
 }
 
 int setup_sound (void)
@@ -513,11 +545,12 @@ static int open_audio_sdl(struct sound_data* sd, int index)
 	auto* const s = sd->data;
 	const auto freq = sd->freq;
 	const auto ch = sd->channels;
-	auto devname = sound_devices[index]->name;
-	const bool use_default_device = currprefs.soundcard_default || sound_devices[index] == nullptr;
+	const sound_device* requested_device = sound_devices[index];
+	const char* devname = requested_device ? requested_device->name : "Default";
+	const bool use_default_device = currprefs.soundcard_default || requested_device == nullptr;
 	const SDL_AudioDeviceID device_id = use_default_device
 		? SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK
-		: static_cast<SDL_AudioDeviceID>(sound_devices[index]->id);
+		: static_cast<SDL_AudioDeviceID>(requested_device->id);
 	sd->devicetype = SOUND_DEVICE_SDL2;
 	sd->sndbufsize = std::max(sd->sndbufsize, 0x80);
 	s->framesperbuffer = sd->sndbufsize;
@@ -579,8 +612,19 @@ static int open_audio_sdl(struct sound_data* sd, int index)
 		s->pullbufferlen = 0;
 	}
 	reset_push_timing_state(sd);
-	write_log("SDL3: CH=%d, FREQ=%d '%s' buffer %d/%d (%s)\n", ch, freq, sound_devices[index]->name,
-		s->sndbufsize, s->framesperbuffer, !s->pullmode ? _T("push") : _T("pull"));
+	SDL_AudioSpec actual = {};
+	int hardware_frames = 0;
+	const SDL_AudioDeviceID opened_device = SDL_GetAudioStreamDevice(s->stream);
+	const bool have_actual = opened_device != 0 &&
+		SDL_GetAudioDeviceFormat(opened_device, &actual, &hardware_frames);
+	write_log("SDL3: driver=%s CH=%d FREQ=%d actual=%dHz/%dch hw=%d "
+		"'%s' buffer %d/%d (%s)\n",
+		SDL_GetCurrentAudioDriver() ? SDL_GetCurrentAudioDriver() : "none",
+		ch, freq, have_actual ? actual.freq : 0,
+		have_actual ? actual.channels : 0,
+		have_actual ? hardware_frames : 0, devname,
+		s->sndbufsize, s->framesperbuffer,
+		!s->pullmode ? _T("push") : _T("pull"));
 	clearbuffer(sd);
 
 	return 1;

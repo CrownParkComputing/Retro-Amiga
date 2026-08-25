@@ -15,6 +15,7 @@ import 'data/music_player.dart';
 import 'emulator.dart';
 
 import 'data/app_prefs.dart';
+import 'data/legacy_migration.dart';
 import 'data/startup_import.dart';
 import 'data/whdload_support.dart';
 import 'screens/workbench_screen.dart';
@@ -140,13 +141,10 @@ class _RootState extends State<_Root> {
   Future<void> _load() async {
     bool complete = false;
     try {
+      // The launcher before Flutter kept .uae setups in the external app
+      // folder. Recover them before deciding this is a first run.
+      await LegacyMigration.run();
       complete = await AppPrefs.setupComplete();
-      // A newly deployed build goes through the walkthrough again, whatever
-      // was answered last time. It is the one screen that says what this
-      // install can actually see - the scan, where media lives, whether
-      // WHDLoad is ready - and after a deploy that is exactly what nobody
-      // knows.
-      if (complete && await AppPrefs.isNewBuild()) complete = false;
     } on Object {
       // A missing preference store means first run, not a failure.
     }

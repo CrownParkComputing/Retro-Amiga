@@ -179,10 +179,14 @@ bool FlutterWindow::OnCreate() {
           }
           MusicPlay play = CoreSymbol<MusicPlay>("uae4arm_host_music_play");
           result->Success(EncodableValue(play != nullptr && text != nullptr && play(text->c_str())));
-        } else if (method == "musicStop" || method == "musicSetPaused" ||
+        } else if (method == "musicStop" || method == "musicReleaseAudio" ||
+                   method == "musicSetPaused" ||
                    method == "musicSetVolume") {
           if (method == "musicStop") {
             if (MusicStop stop = CoreSymbol<MusicStop>("uae4arm_host_music_stop")) stop();
+          } else if (method == "musicReleaseAudio") {
+            if (MusicStop release = CoreSymbol<MusicStop>("uae4arm_host_music_release_audio"))
+              release();
           } else if (method == "musicSetPaused") {
             const auto* map = std::get_if<EncodableMap>(call.arguments());
             if (map != nullptr) {

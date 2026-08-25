@@ -6,110 +6,23 @@ import 'app_log.dart';
 import 'file_category.dart';
 import 'config_store.dart';
 import 'emulator_settings.dart';
+import 'hard_drive_set.dart';
 import 'media_library.dart';
 import 'media_root.dart';
-
-/// An AGS installation found on the device.
-///
-/// AGS - the Amiga Game Selector - is not one file but a set: a Workbench
-/// drive that boots, a stack of content drives, and a shared folder the Amiga
-/// side writes into. Setting it up by hand means adding ten drives in the
-/// right order with the right boot priorities, which is exactly the kind of
-/// thing worth doing once in code.
-class AgsInstall {
-  const AgsInstall({
-    required this.folder,
-    required this.bootDrive,
-    required this.drives,
-    required this.sharedFolder,
-  });
-
-  final String folder;
-
-  /// The drive that boots - Workbench, or whatever is standing in for it.
-  final String bootDrive;
-
-  /// Every other .hdf, in the order they will be mounted.
-  final List<String> drives;
-
-  /// The folder the Amiga sees as a writable volume, if there is one.
-  final String sharedFolder;
-
-  String get name => folder.split('/').last;
-
-  /// Boot drive, content drives, then the shared folder: the order the config
-  /// mounts them, DH0 upwards.
-  List<String> get allMounts => <String>[
-    bootDrive,
-    ...drives,
-    if (sharedFolder.isNotEmpty) sharedFolder,
-  ];
-
-  int get driveCount => 1 + drives.length;
-}
 
 /// Finds an AGS set and builds a config for it.
 class AgsSetup {
   const AgsSetup._();
-
-  /// Names that mean "this is the drive that boots". Checked in order.
-  static const List<String> _bootNames = <String>[
-    'workbench',
-    'system',
-    'boot',
-    'ags',
-  ];
 
   /// A folder is an AGS set if it holds several hard drives. Two is a pair of
   /// disks; four or more together is somebody's installation.
   static const int _minimumDrives = 4;
 
   /// Reads [folder] and describes what is there, or null if it is not a set.
-  static AgsInstall? inspect(String folder) {
-    final Directory dir = Directory(folder);
-    if (!dir.existsSync()) return null;
-
-    final List<String> hdfs = <String>[];
-    String shared = '';
-
-    try {
-      for (final FileSystemEntity entry in dir.listSync(followLinks: false)) {
-        final String name = entry.path.split('/').last;
-        final String lower = name.toLowerCase();
-        if (entry is File &&
-            (lower.endsWith('.hdf') || lower.endsWith('.hdz'))) {
-          hdfs.add(entry.path);
-        } else if (entry is Directory &&
-            (lower == 'shared' || lower == 'share')) {
-          shared = entry.path;
-        }
-      }
-    } on FileSystemException {
-      return null;
-    }
-
-    if (hdfs.length < _minimumDrives) return null;
-
-    // The boot drive first, and then the rest alphabetically so the mount
-    // order is the same every time the config is rebuilt.
-    hdfs.sort();
-    String boot = '';
-    for (final String candidate in _bootNames) {
-      boot = hdfs.firstWhere(
-        (String h) => h.split('/').last.toLowerCase().contains(candidate),
-        orElse: () => '',
-      );
-      if (boot.isNotEmpty) break;
-    }
-    // No obvious boot drive: the first one, since something has to boot.
-    if (boot.isEmpty) boot = hdfs.first;
-
-    return AgsInstall(
-      folder: folder,
-      bootDrive: boot,
-      drives: hdfs.where((String h) => h != boot).toList(),
-      sharedFolder: shared,
-    );
+  static HardDriveSet? inspect(String folder) {
+    final HardDriveSet? set = HardDriveSet.inspect(folder);
+    if (set == null || set.driveCount < _minimumDrives) return null;
+    return set;
   }
 
   /// Looks for an AGS set in the usual places.
@@ -118,7 +31,7 @@ class AgsSetup {
   /// every hard drive on the device is, and an AGS set is simply a folder that
   /// holds a lot of them. Removable storage is checked too, since a set is
   /// large enough that people keep it on a card.
-  static Future<List<AgsInstall>> find(MediaIndex index) async {
+  static Future<List<HardDriveSet>> find(MediaIndex index) async {
     // Folders the scan already found hard drives in. Cheap: no filesystem
     // access, just the index.
     final Map<String, int> counts = <String, int>{};
@@ -146,7 +59,7 @@ class AgsSetup {
 
     return found
         .map(
-          (Map<String, Object> m) => AgsInstall(
+          (Map<String, Object> m) => HardDriveSet(
             folder: m['folder']! as String,
             bootDrive: m['boot']! as String,
             drives: (m['drives']! as List<Object?>).cast<String>(),
@@ -187,18 +100,18 @@ class AgsSetup {
       }
     }
 
-    final List<AgsInstall> found = <AgsInstall>[];
+    final List<HardDriveSet> found = <HardDriveSet>[];
     for (final String folder in folders) {
-      final AgsInstall? install = inspect(folder);
+      final HardDriveSet? install = inspect(folder);
       if (install != null) found.add(install);
     }
     found.sort(
-      (AgsInstall a, AgsInstall b) => b.driveCount.compareTo(a.driveCount),
+      (HardDriveSet a, HardDriveSet b) => b.driveCount.compareTo(a.driveCount),
     );
 
     return found
         .map(
-          (AgsInstall i) => <String, Object>{
+          (HardDriveSet i) => <String, Object>{
             'folder': i.folder,
             'boot': i.bootDrive,
             'drives': i.drives,
@@ -243,7 +156,7 @@ class AgsSetup {
   /// Taken from the working config this replaces: an A1200 with the JIT, a
   /// Zorro III graphics card and enough Z3 memory for it. AGS runs its menu on
   /// the RTG screen, so without the card it starts and shows nothing useful.
-  static EmulatorSettings settingsFor(AgsInstall install, String romFile) {
+  static EmulatorSettings settingsFor(HardDriveSet install, String romFile) {
     return EmulatorSettings.fromModel(AmigaModel.a1200).copyWith(
       cpuModel: 68020,
       cpuCompatible: true,
@@ -260,7 +173,7 @@ class AgsSetup {
   }
 
   /// Writes the config and returns the file.
-  static Future<File> createConfig(AgsInstall install, String romFile) async {
+  static Future<File> createConfig(HardDriveSet install, String romFile) async {
     final File file = await ConfigStore.save(
       settingsFor(install, romFile),
       install.name.toLowerCase().contains('ags')

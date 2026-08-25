@@ -296,8 +296,11 @@ class ConfigGenerator {
     out.writeln('gfx_width=$activeWidth');
     out.writeln('gfx_height=$activeHeight');
     out.writeln('gfx_fullscreen_amiga=fullwindow');
-    out.writeln('gfx_correct_aspect=${_cfg(settings.correctAspect)}');
-    out.writeln('gfx_auto_crop=${_cfg(settings.autoCrop)}');
+    // These are Amiberry host options, not WinUAE hardware options. The
+    // target prefix is what routes them to target_parse_option(); without it
+    // the core reports both lines as unknown and silently ignores the UI.
+    out.writeln('amiberry.gfx_correct_aspect=${_cfg(settings.correctAspect)}');
+    out.writeln('amiberry.gfx_auto_crop=${_cfg(settings.autoCrop)}');
     out.writeln('show_leds=${_cfg(settings.showLeds)}');
 
     // Input

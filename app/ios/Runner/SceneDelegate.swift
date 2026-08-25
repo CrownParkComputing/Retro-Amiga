@@ -1,5 +1,6 @@
 import Flutter
 import GameController
+import AVFAudio
 import UIKit
 
 /// Adopts the window the app delegate already built, and registers the
@@ -32,6 +33,36 @@ class SceneDelegate: FlutterSceneDelegate {
   private var emulatorChannel: FlutterMethodChannel?
 
   private var controllerObservers: [NSObjectProtocol] = []
+  private var audioObservers: [NSObjectProtocol] = []
+
+  private func setGameAudioActive(_ active: Bool) {
+    let session = AVAudioSession.sharedInstance()
+    do {
+      if active {
+        try session.setCategory(
+          .playback, mode: .default, options: [.allowBluetoothA2DP])
+        try session.setActive(true)
+      } else {
+        try session.setActive(false, options: [.notifyOthersOnDeactivation])
+      }
+    } catch {
+      NSLog("uae4arm: AVAudioSession failed: %@", error.localizedDescription)
+    }
+  }
+
+  private func observeAudioInterruptions() {
+    audioObservers = [NotificationCenter.default.addObserver(
+      forName: AVAudioSession.interruptionNotification,
+      object: AVAudioSession.sharedInstance(),
+      queue: .main
+    ) { [weak self] notification in
+      guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey]
+              as? UInt,
+            let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+      self?.emulatorChannel?.invokeMethod(
+        "audioFocusChanged", arguments: type == .ended)
+    }]
+  }
 
   /// Tells the launcher when a controller comes or goes.
   ///
@@ -57,6 +88,9 @@ class SceneDelegate: FlutterSceneDelegate {
 
   deinit {
     for observer in controllerObservers {
+      NotificationCenter.default.removeObserver(observer)
+    }
+    for observer in audioObservers {
       NotificationCenter.default.removeObserver(observer)
     }
   }
@@ -142,6 +176,7 @@ class SceneDelegate: FlutterSceneDelegate {
       binaryMessenger: controller.binaryMessenger)
     emulatorChannel = channel
     observeControllers()
+    observeAudioInterruptions()
 
     channel.setMethodCallHandler { call, result in
       switch call.method {
@@ -159,6 +194,11 @@ class SceneDelegate: FlutterSceneDelegate {
       // EmulatorControls asks it for the two-player button.
       case "hasGamepad":
         result(!GCController.controllers().isEmpty)
+
+      case "setGameRunning":
+        let running = (call.arguments as? [String: Any])?["running"] as? Bool ?? false
+        setGameAudioActive(running)
+        result(true)
 
       // Something that changes every time a build is installed, so the
       // launcher can tell a new deploy from an ordinary start and show the
@@ -232,6 +272,10 @@ class SceneDelegate: FlutterSceneDelegate {
 
       case "musicStop":
         EmulatorHost.shared.musicStop()
+        result(nil)
+
+      case "musicReleaseAudio":
+        EmulatorHost.shared.musicReleaseAudio()
         result(nil)
 
       case "musicSetPaused":

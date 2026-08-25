@@ -85,27 +85,20 @@ class AmigaCore {
     }
   }
 
-  late final void Function(bool) _setFramebufferOutput = _lib.lookupFunction<
-      Void Function(Bool), void Function(bool)>(
-    'uae4arm_host_set_framebuffer_output',
-  );
+  late final void Function(bool) _setFramebufferOutput = _lib
+      .lookupFunction<Void Function(Bool), void Function(bool)>(
+        'uae4arm_host_set_framebuffer_output',
+      );
 
-  late final Pointer<Uint32> Function(
-    Pointer<Int32>,
-    Pointer<Int32>,
-    Pointer<Uint64>,
-  ) _getFramebuffer = _lib.lookupFunction<
-      Pointer<Uint32> Function(Pointer<Int32>, Pointer<Int32>, Pointer<Uint64>),
-      Pointer<Uint32> Function(Pointer<Int32>, Pointer<Int32>,
-          Pointer<Uint64>)>('uae4arm_host_get_framebuffer');
+  late final void Function(bool) _setLogfileEnabled = _lib
+      .lookupFunction<Void Function(Bool), void Function(bool)>(
+        'uae4arm_host_set_logfile_enabled',
+      );
 
-  late final void Function(bool) _setLogfileEnabled = _lib.lookupFunction<
-      Void Function(Bool),
-      void Function(bool)>('uae4arm_host_set_logfile_enabled');
-
-  late final Pointer<Utf8> Function() _logfilePath = _lib.lookupFunction<
-      Pointer<Utf8> Function(),
-      Pointer<Utf8> Function()>('uae4arm_host_logfile_path');
+  late final Pointer<Utf8> Function() _logfilePath = _lib
+      .lookupFunction<Pointer<Utf8> Function(), Pointer<Utf8> Function()>(
+        'uae4arm_host_logfile_path',
+      );
 
   /// Where the core is writing its log, or null when it is not writing one.
   /// The Logs page shows it: on a handheld there is no console, and logcat
@@ -127,23 +120,45 @@ class AmigaCore {
     Pointer<Int32>,
     Pointer<Int32>,
     Pointer<Uint64>,
-  ) _copyFramebuffer = _lib.lookupFunction<
-      Int32 Function(Pointer<Uint32>, Int32, Pointer<Int32>, Pointer<Int32>,
-          Pointer<Uint64>),
-      int Function(Pointer<Uint32>, int, Pointer<Int32>, Pointer<Int32>,
-          Pointer<Uint64>)>('uae4arm_host_copy_framebuffer');
+  )
+  _copyFramebuffer = _lib
+      .lookupFunction<
+        Int32 Function(
+          Pointer<Uint32>,
+          Int32,
+          Pointer<Int32>,
+          Pointer<Int32>,
+          Pointer<Uint64>,
+        ),
+        int Function(
+          Pointer<Uint32>,
+          int,
+          Pointer<Int32>,
+          Pointer<Int32>,
+          Pointer<Uint64>,
+        )
+      >('uae4arm_host_copy_framebuffer');
+
+  late final int Function() _framebufferSerial = _lib
+      .lookupFunction<Uint64 Function(), int Function()>(
+        'uae4arm_host_framebuffer_serial',
+      );
 
   /// Reused across frames; grows when the Amiga picks a bigger mode.
   Pointer<Uint32> _frameBuf = nullptr;
   int _frameCap = 0;
+  int _lastCopiedSerial = 0;
+  final Pointer<Int32> _frameWidth = calloc<Int32>();
+  final Pointer<Int32> _frameHeight = calloc<Int32>();
+  final Pointer<Uint64> _frameSerial = calloc<Uint64>();
 
-  late final void Function() _quit =
-      _lib.lookupFunction<Void Function(), void Function()>(
-    'uae4arm_host_quit',
-  );
+  late final void Function() _quit = _lib
+      .lookupFunction<Void Function(), void Function()>('uae4arm_host_quit');
 
-  late final void Function(bool) _setPaused = _lib.lookupFunction<
-      Void Function(Bool), void Function(bool)>('uae4arm_host_set_pause');
+  late final void Function(bool) _setPaused = _lib
+      .lookupFunction<Void Function(Bool), void Function(bool)>(
+        'uae4arm_host_set_pause',
+      );
 
   /// Whether this core is new enough to hand frames back. A core built before
   /// host_framebuffer.cpp existed simply has no such symbol, and the app must
@@ -151,7 +166,8 @@ class AmigaCore {
   bool get hasFramebufferOutput {
     try {
       _lib.lookup<NativeFunction<Void Function(Bool)>>(
-          'uae4arm_host_set_framebuffer_output');
+        'uae4arm_host_set_framebuffer_output',
+      );
       return true;
     } on ArgumentError {
       return false;
@@ -176,10 +192,7 @@ class AmigaCore {
     if (_running) {
       await stopAndWait();
     } else if (_exited != null && !_exited!.isCompleted) {
-      await _exited!.future.timeout(
-        const Duration(seconds: 20),
-        onTimeout: () {},
-      );
+      await _exited!.future.timeout(const Duration(seconds: 20));
     }
     _running = true;
     // On before the core starts, so the log covers the startup that fails.
@@ -201,23 +214,22 @@ class AmigaCore {
       _running = false;
       if (!exited.isCompleted) exited.complete();
     });
-    await Isolate.spawn(
-      _runCore,
-      <String>[_openedPath!, ...args],
-      onExit: onExit.sendPort,
-    );
+    await Isolate.spawn(_runCore, <String>[
+      _openedPath!,
+      ...args,
+    ], onExit: onExit.sendPort);
   }
 
   late final void Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>)
-      _setSession = _lib.lookupFunction<
-          Void Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>),
-          void Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>)>(
-    'uae4arm_host_set_session',
-  );
-  late final bool Function() _saveSession =
-      _lib.lookupFunction<Bool Function(), bool Function()>(
-    'uae4arm_host_save_session',
-  );
+  _setSession = _lib
+      .lookupFunction<
+        Void Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>),
+        void Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>)
+      >('uae4arm_host_set_session');
+  late final bool Function() _saveSession = _lib
+      .lookupFunction<Bool Function(), bool Function()>(
+        'uae4arm_host_save_session',
+      );
 
   /// Tells the core where this session's snapshot belongs, so [saveSession]
   /// has somewhere to put it and the Resume shelf has something to list.
@@ -251,10 +263,7 @@ class AmigaCore {
     quit();
     final exited = _exited;
     if (exited != null && !exited.isCompleted) {
-      await exited.future.timeout(
-        const Duration(seconds: 20),
-        onTimeout: () {},
-      );
+      await exited.future.timeout(const Duration(seconds: 20));
     }
   }
 
@@ -263,43 +272,56 @@ class AmigaCore {
   // Input and media, straight into the host API. These are the same doors the
   // :sdl Activity's JNI goes through; in-process there is no Activity, so the
   // panel's toolbar and touches call them directly.
-  late final void Function(int, bool) _sendKey = _lib.lookupFunction<
-      Void Function(Int32, Bool),
-      void Function(int, bool)>('uae4arm_host_send_key');
-  late final void Function(int, int) _mouseMove = _lib.lookupFunction<
-      Void Function(Int32, Int32),
-      void Function(int, int)>('uae4arm_host_mouse_move');
-  late final void Function(int, bool) _mouseButton = _lib.lookupFunction<
-      Void Function(Int32, Bool),
-      void Function(int, bool)>('uae4arm_host_mouse_button');
-  late final void Function(int, Pointer<Utf8>) _insertFloppy =
-      _lib.lookupFunction<Void Function(Int32, Pointer<Utf8>),
-          void Function(int, Pointer<Utf8>)>('uae4arm_host_insert_floppy');
-  late final int Function() _floppyCount =
-      _lib.lookupFunction<Int32 Function(), int Function()>(
-    'uae4arm_host_get_floppy_count',
-  );
+  late final void Function(int, bool) _sendKey = _lib
+      .lookupFunction<Void Function(Int32, Bool), void Function(int, bool)>(
+        'uae4arm_host_send_key',
+      );
+  late final void Function(int, int) _mouseMove = _lib
+      .lookupFunction<Void Function(Int32, Int32), void Function(int, int)>(
+        'uae4arm_host_mouse_move',
+      );
+  late final void Function(int, bool) _mouseButton = _lib
+      .lookupFunction<Void Function(Int32, Bool), void Function(int, bool)>(
+        'uae4arm_host_mouse_button',
+      );
+  late final void Function(int, Pointer<Utf8>) _insertFloppy = _lib
+      .lookupFunction<
+        Void Function(Int32, Pointer<Utf8>),
+        void Function(int, Pointer<Utf8>)
+      >('uae4arm_host_insert_floppy');
+  late final int Function() _floppyCount = _lib
+      .lookupFunction<Int32 Function(), int Function()>(
+        'uae4arm_host_get_floppy_count',
+      );
 
-  void sendKey(int amigaKeycode, bool pressed) => _sendKey(amigaKeycode, pressed);
-  late final void Function(int) _padAttach = _lib.lookupFunction<
-      Void Function(Int32), void Function(int)>('uae4arm_host_pad_attach');
-  late final void Function(int, bool, bool, bool, bool) _padDirection =
-      _lib.lookupFunction<Void Function(Int32, Bool, Bool, Bool, Bool),
-          void Function(int, bool, bool, bool, bool)>(
-    'uae4arm_host_pad_direction',
-  );
-  late final void Function(int, int, bool) _padButton = _lib.lookupFunction<
-      Void Function(Int32, Int32, Bool),
-      void Function(int, int, bool)>('uae4arm_host_pad_button');
-  late final void Function(int) _padReleaseAll = _lib.lookupFunction<
-      Void Function(Int32), void Function(int)>('uae4arm_host_pad_release_all');
-  late final void Function(int) _setOnscreenController = _lib.lookupFunction<
-      Void Function(Int32),
-      void Function(int)>('uae4arm_host_set_onscreen_controller');
-  late final void Function(int) _setExternalControllerMode =
-      _lib.lookupFunction<Void Function(Int32), void Function(int)>(
-    'uae4arm_host_set_external_controller_mode',
-  );
+  void sendKey(int amigaKeycode, bool pressed) =>
+      _sendKey(amigaKeycode, pressed);
+  late final void Function(int) _padAttach = _lib
+      .lookupFunction<Void Function(Int32), void Function(int)>(
+        'uae4arm_host_pad_attach',
+      );
+  late final void Function(int, bool, bool, bool, bool) _padDirection = _lib
+      .lookupFunction<
+        Void Function(Int32, Bool, Bool, Bool, Bool),
+        void Function(int, bool, bool, bool, bool)
+      >('uae4arm_host_pad_direction');
+  late final void Function(int, int, bool) _padButton = _lib
+      .lookupFunction<
+        Void Function(Int32, Int32, Bool),
+        void Function(int, int, bool)
+      >('uae4arm_host_pad_button');
+  late final void Function(int) _padReleaseAll = _lib
+      .lookupFunction<Void Function(Int32), void Function(int)>(
+        'uae4arm_host_pad_release_all',
+      );
+  late final void Function(int) _setOnscreenController = _lib
+      .lookupFunction<Void Function(Int32), void Function(int)>(
+        'uae4arm_host_set_onscreen_controller',
+      );
+  late final void Function(int) _setExternalControllerMode = _lib
+      .lookupFunction<Void Function(Int32), void Function(int)>(
+        'uae4arm_host_set_external_controller_mode',
+      );
 
   /// UAE4ARM_HOST_PAD_JOYSTICK / _CD32.
   void padAttach(int pad) => _padAttach(pad);
@@ -348,35 +370,45 @@ class AmigaCore {
   /// made at the wrong width is the picture smeared diagonally across the
   /// panel, which is exactly what the first frames through looked like.
   AmigaFrame? frame() {
-    final w = calloc<Int32>();
-    final h = calloc<Int32>();
-    final serial = calloc<Uint64>();
-    try {
-      // First call with the current buffer; if it is too small the call
-      // reports the needed size and we grow and retry once.
-      var n = _copyFramebuffer(_frameBuf, _frameCap, w, h, serial);
-      if (n == 0) {
-        final need = w.value * h.value;
-        if (need <= 0) return null;
-        if (need > _frameCap) {
-          if (_frameBuf != nullptr) calloc.free(_frameBuf);
-          _frameCap = need + (need >> 2); // headroom for small mode changes
-          _frameBuf = calloc<Uint32>(_frameCap);
-          n = _copyFramebuffer(_frameBuf, _frameCap, w, h, serial);
-        }
-        if (n == 0) return null;
+    // Most polls happen while paused, while a decode is finishing, or before
+    // the next emulated frame. Checking one atomic counter first avoids a
+    // full native memcpy and Dart allocation for those unchanged frames.
+    final int available = _framebufferSerial();
+    if (available == 0 || available == _lastCopiedSerial) return null;
+
+    // First call with the current buffer; if it is too small the call
+    // reports the needed size and we grow and retry once.
+    var n = _copyFramebuffer(
+      _frameBuf,
+      _frameCap,
+      _frameWidth,
+      _frameHeight,
+      _frameSerial,
+    );
+    if (n == 0) {
+      final need = _frameWidth.value * _frameHeight.value;
+      if (need <= 0) return null;
+      if (need > _frameCap) {
+        if (_frameBuf != nullptr) calloc.free(_frameBuf);
+        _frameCap = need + (need >> 2); // headroom for small mode changes
+        _frameBuf = calloc<Uint32>(_frameCap);
+        n = _copyFramebuffer(
+          _frameBuf,
+          _frameCap,
+          _frameWidth,
+          _frameHeight,
+          _frameSerial,
+        );
       }
-      return AmigaFrame(
-        width: w.value,
-        height: h.value,
-        serial: serial.value,
-        pixels: Uint32List.fromList(_frameBuf.asTypedList(n)),
-      );
-    } finally {
-      calloc.free(w);
-      calloc.free(h);
-      calloc.free(serial);
+      if (n == 0) return null;
     }
+    _lastCopiedSerial = _frameSerial.value;
+    return AmigaFrame(
+      width: _frameWidth.value,
+      height: _frameHeight.value,
+      serial: _frameSerial.value,
+      pixels: Uint32List.fromList(_frameBuf.asTypedList(n)),
+    );
   }
 }
 
@@ -406,17 +438,22 @@ void _runCore(List<String> pathAndArgs) {
   // surface. The driver is compiled into the core (SDL_OFFSCREEN_* symbols are
   // in the binary); without this SDL picks its Android driver and asks
   // SDLActivity for a window that does not exist in this process.
-  final setenv = DynamicLibrary.process().lookupFunction<
-      Int32 Function(Pointer<Utf8>, Pointer<Utf8>, Int32),
-      int Function(Pointer<Utf8>, Pointer<Utf8>, int)>('setenv');
+  final setenv = DynamicLibrary.process()
+      .lookupFunction<
+        Int32 Function(Pointer<Utf8>, Pointer<Utf8>, Int32),
+        int Function(Pointer<Utf8>, Pointer<Utf8>, int)
+      >('setenv');
   final name = 'SDL_VIDEODRIVER'.toNativeUtf8();
   final value = 'offscreen'.toNativeUtf8();
   setenv(name, value, 1);
   calloc.free(name);
   calloc.free(value);
 
-  final run = lib.lookupFunction<Int32 Function(Int32, Pointer<Pointer<Utf8>>),
-      int Function(int, Pointer<Pointer<Utf8>>)>('uae4arm_host_run');
+  final run = lib
+      .lookupFunction<
+        Int32 Function(Int32, Pointer<Pointer<Utf8>>),
+        int Function(int, Pointer<Pointer<Utf8>>)
+      >('uae4arm_host_run');
 
   final argv = calloc<Pointer<Utf8>>(args.length + 1);
   for (var i = 0; i < args.length; i++) {

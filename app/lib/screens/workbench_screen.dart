@@ -83,6 +83,7 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   // is in the panel. Fill is AppPrefs.screenFill (remembered, and shared with
   // the Video panel); the rest resets with the session.
   bool _mouseMode = false;
+
   /// Starts hidden when real hardware is attached: a handheld with its own
   /// sticks should not have touch controls drawn over them. Set for real in
   /// _startSession, which asks the host before the first frame of a game.
@@ -109,6 +110,7 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     });
     if (!_chromeVisible && mounted) setState(() => _chromeVisible = true);
   }
+
   PadLayout _layout = PadLayout.defaults;
 
   int get _pad => _layout.style == PadStyle.cd32 ? 2 : 1;
@@ -216,8 +218,9 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
 
   Future<void> _adoptRequestedSection() async {
     try {
-      final File request =
-          File('\${await HostPaths.appSupport()}/workbench_section');
+      final File request = File(
+        '\${await HostPaths.appSupport()}/workbench_section',
+      );
       if (!request.existsSync()) return;
       final String name = request.readAsStringSync().trim();
       request.deleteSync();
@@ -260,6 +263,13 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     // panel without going through _startSession left a controller doing
     // nothing at all.
     _bindPhysicalController();
+    GameController.onAudioFocusChanged = (bool focused) {
+      if (focused) {
+        Emulator.resumeIfSuspended();
+      } else {
+        Emulator.suspend();
+      }
+    };
     unawaited(GameController.start());
   }
 
@@ -279,6 +289,7 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     GameController.connected.removeListener(_onControllerChanged);
     GameController.onDirection = null;
     GameController.onButton = null;
+    GameController.onAudioFocusChanged = null;
     unawaited(GameController.setGameRunning(false));
     _mediaChanges?.cancel();
     _idleTimer?.cancel();
@@ -418,7 +429,9 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
                 ignoring: _idle && !Emulator.playing.value,
                 child: SafeArea(
                   child: Padding(
-                    padding: EdgeInsets.all(_hideChrome ? 0 : AmigaMetrics.gutter),
+                    padding: EdgeInsets.all(
+                      _hideChrome ? 0 : AmigaMetrics.gutter,
+                    ),
                     // The shell every Retro-* front end composes the same
                     // way: root padding, the rail in a width-capped box, one
                     // content panel at radius 8 with 10px of padding, and a
@@ -440,7 +453,8 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
                                   ),
                                   child: Sidebar(
                                     destinations: <SidebarDestination>[
-                                      for (final WorkbenchSection s in _sections)
+                                      for (final WorkbenchSection s
+                                          in _sections)
                                         SidebarDestination(
                                           s.title,
                                           icon: s.icon,
@@ -466,16 +480,16 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
                               ],
                               Expanded(
                                 child: Container(
-                                  padding:
-                                      EdgeInsets.all(_hideChrome ? 0 : 10),
+                                  padding: EdgeInsets.all(_hideChrome ? 0 : 10),
                                   decoration: _hideChrome
                                       ? const BoxDecoration(
                                           color: AmigaColors.panel,
                                         )
                                       : BoxDecoration(
                                           color: AmigaColors.panel,
-                                          borderRadius:
-                                              BorderRadius.circular(8),
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
                                           border: Border.all(
                                             color: AmigaColors.panelBorder,
                                           ),
@@ -525,10 +539,7 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
               _wake();
               setState(() => _sidebarHidden = !_sidebarHidden);
             },
-            icon: Icon(
-              _sidebarHidden ? Icons.menu : Icons.menu_open,
-              size: 18,
-            ),
+            icon: Icon(_sidebarHidden ? Icons.menu : Icons.menu_open, size: 18),
             color: AmigaColors.textDim,
             tooltip: _sidebarHidden ? 'Show sidebar' : 'Hide sidebar',
             visualDensity: VisualDensity.compact,
@@ -608,7 +619,7 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
           await _refreshSession();
           if (!mounted) return;
           setState(() {
-                  // Land on Resume, not the shelf: what the user wants in front of
+            // Land on Resume, not the shelf: what the user wants in front of
             // them after pausing is the way back in.
             _sidebarHidden = false;
             _section = WorkbenchSection.resume;
@@ -739,21 +750,27 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
       return Stack(
         children: <Widget>[
           Positioned.fill(
-            child: AmigaScreenView(
-              core: core,
-              fill: AppPrefs.screenFill.value,
-              mouseMode: _mouseMode,
-            ),
-          ),
-          // The chrome's wake-up call. UNDER the pad and the keyboard, so a
-          // touch they claim - a stick move, a fire press, a key - never
-          // reaches it, and only a touch on the picture itself brings the
-          // rail and the strip back. Translucent, so the same touch still
-          // works as the mouse when the mouse mode is on.
-          Positioned.fill(
+            // Observe the picture touch as an ANCESTOR of the mouse surface.
+            // A full-size Listener used to be a later Stack sibling. Stack
+            // hit-testing stops at that sibling, so it woke the chrome and
+            // prevented the AmigaScreenView underneath from ever receiving
+            // the same drag or tap. This is the exact "mouse opens the menu"
+            // failure reported by Workbench users.
             child: Listener(
               behavior: HitTestBehavior.translucent,
               onPointerDown: (_) => _wakeChrome(),
+              child: AmigaScreenView(
+                core: core,
+                // The in-process path copies and decodes a complete Amiga
+                // frame for every poll. On Android, 50 UI uploads per second
+                // starves modest devices and their audio callback; 30 keeps
+                // input responsive while halving that pressure.
+                pollInterval: Platform.isAndroid
+                    ? const Duration(milliseconds: 33)
+                    : const Duration(milliseconds: 20),
+                fill: AppPrefs.screenFill.value,
+                mouseMode: _mouseMode,
+              ),
             ),
           ),
           // The pad steps aside while the keyboard is up: both live along

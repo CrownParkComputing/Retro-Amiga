@@ -65,6 +65,10 @@ private final class DesktopCore {
     if let fn = symbol("uae4arm_host_music_stop") { unsafeBitCast(fn, to: VoidFn.self)() }
   }
 
+  func musicReleaseAudio() {
+    if let fn = symbol("uae4arm_host_music_release_audio") { unsafeBitCast(fn, to: VoidFn.self)() }
+  }
+
   func musicSetPaused(_ paused: Bool) {
     if let fn = symbol("uae4arm_host_music_set_paused") { unsafeBitCast(fn, to: SetBoolFn.self)(paused) }
   }
@@ -157,6 +161,10 @@ class MainFlutterWindow: NSWindow {
 
       case "musicStop":
         DesktopCore.shared.musicStop()
+        result(nil)
+
+      case "musicReleaseAudio":
+        DesktopCore.shared.musicReleaseAudio()
         result(nil)
 
       case "musicSetPaused":

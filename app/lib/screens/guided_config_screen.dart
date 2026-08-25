@@ -1,10 +1,17 @@
+import 'dart:io';
+import 'dart:isolate';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../data/amiga_model.dart';
 import '../data/config_store.dart';
 import '../data/emulator_settings.dart';
 import '../data/file_category.dart';
+import '../data/hard_drive_set.dart';
+import '../data/media_folder.dart';
 import '../data/media_library.dart';
+import '../data/media_root.dart';
 import '../emulator.dart';
 import '../widgets/amiga_logo.dart';
 import '../widgets/media_chooser.dart';
@@ -13,7 +20,8 @@ import '../widgets/media_chooser.dart';
 /// offered, where the wizard starts, and which steps it skips.
 enum WizardMode {
   floppy('Floppy disk', 'ADF, ADZ, IPF and the rest'),
-  hardDrive('Hard drive', 'HDF or a folder of files'),
+  hardDrive('Hard drive', 'One or more HDF images'),
+  hardDriveSet('AGS / HDF folder', 'AGS_UAE, dated packs or your own folder'),
   cd('CD game', 'CD32 or CDTV disc'),
   whdload('WHDLoad', 'An .lha archive'),
   custom('Something else', 'Pick everything yourself'),
@@ -31,6 +39,7 @@ enum WizardMode {
       case WizardMode.floppy:
         return 'assets/machines/floppy_inserted.png';
       case WizardMode.hardDrive:
+      case WizardMode.hardDriveSet:
         return 'assets/machines/drive_dh0.png';
       case WizardMode.cd:
         return 'assets/machines/cd32.png';
@@ -55,6 +64,7 @@ enum WizardMode {
           AmigaModel.a600,
         ];
       case WizardMode.hardDrive:
+      case WizardMode.hardDriveSet:
         return <AmigaModel>[
           AmigaModel.a1200,
           AmigaModel.a4000,
@@ -84,6 +94,7 @@ enum WizardMode {
         return AmigaModel.cd32;
       case WizardMode.whdload:
       case WizardMode.hardDrive:
+      case WizardMode.hardDriveSet:
         return AmigaModel.a1200;
       default:
         return AmigaModel.a500;
@@ -122,6 +133,7 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
   /// Whether the second-drive question has been answered with yes. Reset per
   /// wizard, not persisted: it is an answer about this setup, not a setting.
   bool _wantsSecondDrive = false;
+  String _selectedDriveSetName = '';
 
   /// `<media> (<machine>)`, from whatever media the setup has.
   String get _suggestedName {
@@ -133,12 +145,16 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
       return dot <= 0 ? name : name.substring(0, dot);
     }
 
-    final String media = <String>[
-      _settings.floppy0,
-      _settings.cdImage,
-      _settings.whdloadFilename,
-      ..._settings.hardDrives,
-    ].map(basename).firstWhere((String s) => s.isNotEmpty, orElse: () => '');
+    final String media = _selectedDriveSetName.isNotEmpty
+        ? _selectedDriveSetName
+        : <String>[
+                _settings.floppy0,
+                _settings.cdImage,
+                _settings.whdloadFilename,
+                ..._settings.hardDrives,
+              ]
+              .map(basename)
+              .firstWhere((String s) => s.isNotEmpty, orElse: () => '');
 
     final String machine = _settings.baseModel.displayName;
     if (media.isEmpty) return machine;
@@ -247,6 +263,7 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
           case WizardMode.floppy:
             return _settings.floppy0.isNotEmpty;
           case WizardMode.hardDrive:
+          case WizardMode.hardDriveSet:
             return _settings.hardDrives.any((String d) => d.isNotEmpty);
           case WizardMode.cd:
             return _settings.cdImage.isNotEmpty;
@@ -433,6 +450,30 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
               onSelected: (String p) => setState(
                 () => _settings = _settings.copyWith(hardDrives: <String>[p]),
               ),
+            );
+          case WizardMode.hardDriveSet:
+            return _HardDriveSetStep(
+              selected: _settings.hardDrives,
+              onSelected: (HardDriveSet set) => setState(() {
+                _selectedDriveSetName = set.name;
+                if (set.looksLikeAgs) {
+                  // AGS runs its selector on RTG and expects a quick A1200.
+                  // Preserve the ROM already chosen by this wizard.
+                  _settings = EmulatorSettings.fromModel(AmigaModel.a1200)
+                      .copyWith(
+                        cpuSpeed: 'max',
+                        fpuModel: 68882,
+                        jitCacheSize: 16384,
+                        chipRam: 4,
+                        z3Ram: 512,
+                        useRtg: true,
+                        romFile: _settings.romFile,
+                        hardDrives: set.allMounts,
+                      );
+                } else {
+                  _settings = _settings.copyWith(hardDrives: set.allMounts);
+                }
+              }),
             );
           case WizardMode.whdload:
             return _ChooseStep(
@@ -678,6 +719,296 @@ class _ChooseStep extends StatelessWidget {
         // Only shown when there is nothing to list, which is the one moment
         // when saying what was wanted actually helps.
         emptyHint: 'No $title found. $blurb',
+      ),
+    );
+  }
+}
+
+/// Chooses a complete directory-backed setup: AGS_UAE, a dated WHDLoad/HDF
+/// release, or any folder the user wants mounted as one machine.
+class _HardDriveSetStep extends StatefulWidget {
+  const _HardDriveSetStep({required this.selected, required this.onSelected});
+
+  final List<String> selected;
+  final ValueChanged<HardDriveSet> onSelected;
+
+  @override
+  State<_HardDriveSetStep> createState() => _HardDriveSetStepState();
+}
+
+class _HardDriveSetStepState extends State<_HardDriveSetStep> {
+  MediaIndex _index = const MediaIndex.empty();
+  bool _busy = false;
+  String? _notice;
+
+  @override
+  void initState() {
+    super.initState();
+    _reload();
+  }
+
+  Future<void> _reload({bool scan = false}) async {
+    final MediaIndex index = scan
+        ? await MediaLibrary.scan()
+        : await MediaLibrary.cached();
+    if (mounted) setState(() => _index = index);
+  }
+
+  List<HardDriveSet> get _sets {
+    final Map<String, List<MediaFile>> grouped = <String, List<MediaFile>>{};
+    for (final MediaFile file in _index.of(FileCategory.hardDrives)) {
+      grouped.putIfAbsent(file.directory, () => <MediaFile>[]).add(file);
+    }
+    final List<HardDriveSet> sets = <HardDriveSet>[
+      for (final MapEntry<String, List<MediaFile>> group in grouped.entries)
+        if (HardDriveSet.fromMediaFiles(group.key, group.value)
+            case final HardDriveSet set)
+          set,
+    ];
+    sets.sort((HardDriveSet a, HardDriveSet b) {
+      if (a.looksLikeAgs != b.looksLikeAgs) return a.looksLikeAgs ? -1 : 1;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+    return sets;
+  }
+
+  Future<void> _browseFiles() async {
+    setState(() {
+      _busy = true;
+      _notice = null;
+    });
+    try {
+      final FilePickerResult? picked = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: FileCategory.hardDrives.extensions.toList(),
+        allowMultiple: true,
+      );
+      if (picked == null) return;
+      final List<Map<String, String>> sources = <Map<String, String>>[
+        for (final PlatformFile file in picked.files)
+          if (file.path != null)
+            <String, String>{'path': file.path!, 'name': file.name},
+      ];
+      if (sources.isEmpty) return;
+
+      final Directory root = await MediaRoot.folderFor(FileCategory.hardDrives);
+      final Directory target = Directory('${root.path}/Selected HDFs');
+      final List<String> paths = await Isolate.run(() {
+        target.createSync(recursive: true);
+        final List<String> imported = <String>[];
+        for (final Map<String, String> item in sources) {
+          final File source = File(item['path']!);
+          if (!source.existsSync()) continue;
+          final String safeName = item['name']!
+              .replaceAll(RegExp(r'[/\\:\x00]'), '_')
+              .replaceAll('..', '_');
+          final File destination = File('${target.path}/$safeName');
+          if (!destination.existsSync() ||
+              destination.lengthSync() != source.lengthSync()) {
+            source.copySync(destination.path);
+          }
+          imported.add(destination.path);
+        }
+        return imported;
+      });
+      if (paths.isEmpty) {
+        if (mounted) setState(() => _notice = 'No readable HDF files chosen.');
+        return;
+      }
+      final HardDriveSet set = HardDriveSet.fromPaths(target.path, paths);
+      widget.onSelected(set);
+      await _reload(scan: true);
+      if (mounted) {
+        setState(() => _notice = '${set.driveCount} drive(s) selected.');
+      }
+    } on Object catch (error) {
+      if (mounted) setState(() => _notice = 'Could not add drives: $error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _browseFolder() async {
+    setState(() {
+      _busy = true;
+      _notice = null;
+    });
+    try {
+      HardDriveSet? set;
+      ImportResult? imported;
+      if (MediaFolder.isSupported) {
+        final String? picked = await MediaFolder.pick();
+        if (picked == null) return;
+        final HardDriveFolderImport? result =
+            await MediaFolderImporter.importHardDriveTree(
+              onProgress: (int done, int total) {
+                if (mounted) {
+                  setState(() => _notice = 'Copying $done of $total…');
+                }
+              },
+            );
+        set = result?.set;
+        imported = result?.result;
+      } else {
+        final String? folder = await FilePicker.platform.getDirectoryPath();
+        if (folder == null) return;
+        String localFolder = folder;
+        // A Files-provider grant on iOS is scoped to the picker operation.
+        // Persist the tree inside Documents before writing it into a config;
+        // otherwise the setup works once and loses access after relaunch.
+        if (Platform.isIOS) {
+          final Directory root = await MediaRoot.folderFor(
+            FileCategory.hardDrives,
+          );
+          final String sourceName = folder
+              .replaceAll(r'\', '/')
+              .split('/')
+              .where((String part) => part.isNotEmpty)
+              .last;
+          final String safeName = sourceName
+              .replaceAll(RegExp(r'[/\\:\x00]'), '_')
+              .replaceAll('..', '_');
+          localFolder = '${root.path}/$safeName';
+          final String destination = localFolder;
+          await Isolate.run(() {
+            final Directory source = Directory(folder);
+            final Directory target = Directory(destination)
+              ..createSync(recursive: true);
+            for (final FileSystemEntity entry in source.listSync(
+              recursive: true,
+              followLinks: false,
+            )) {
+              final String relative = entry.path.substring(
+                source.path.length + 1,
+              );
+              final String output = '${target.path}/$relative';
+              if (entry is Directory) {
+                Directory(output).createSync(recursive: true);
+              } else if (entry is File) {
+                File(output).parent.createSync(recursive: true);
+                entry.copySync(output);
+              }
+            }
+          });
+        }
+        set = await Isolate.run(
+          () => HardDriveSet.inspect(localFolder, allowDirectoryMount: true),
+        );
+      }
+      if (set == null) {
+        if (mounted) {
+          setState(() => _notice = 'That folder could not be read.');
+        }
+        return;
+      }
+      final HardDriveSet selectedSet = set;
+      widget.onSelected(selectedSet);
+      await _reload(scan: MediaFolder.isSupported);
+      if (mounted) {
+        final String profile = selectedSet.looksLikeAgs ? ' · AGS preset' : '';
+        final String copies = imported == null
+            ? ''
+            : ' · ${imported.moved} copied'
+                  '${imported.failed > 0 ? ', ${imported.failed} failed' : ''}';
+        setState(
+          () => _notice =
+              '${selectedSet.name}: ${selectedSet.driveCount} mount(s)'
+              '$profile$copies',
+        );
+      }
+    } on Object catch (error) {
+      if (mounted) setState(() => _notice = 'Could not add folder: $error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  bool _selected(HardDriveSet set) {
+    if (set.allMounts.length != widget.selected.length) return false;
+    for (int i = 0; i < set.allMounts.length; i++) {
+      if (set.allMounts[i] != widget.selected[i]) return false;
+    }
+    return true;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final List<HardDriveSet> sets = _sets;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Expanded(
+                child: Text(
+                  'Mount a whole pack in boot-drive order, or mount a normal '
+                  'directory as DH0.',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _browseFiles,
+                icon: const Icon(Icons.storage, size: 18),
+                label: const Text('HDFs'),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                onPressed: _busy ? null : _browseFolder,
+                icon: const Icon(Icons.drive_folder_upload, size: 18),
+                label: const Text('Folder'),
+              ),
+            ],
+          ),
+          if (_busy) const LinearProgressIndicator(),
+          if (_notice != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Text(
+                _notice!,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+          Expanded(
+            child: sets.isEmpty
+                ? const Center(
+                    child: Text(
+                      'No HDF folders indexed yet. Choose Folder for AGS_UAE, '
+                      'a dated WHDLoad pack, or your own directory.',
+                      textAlign: TextAlign.center,
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: sets.length,
+                    itemBuilder: (BuildContext context, int index) {
+                      final HardDriveSet set = sets[index];
+                      final bool selected = _selected(set);
+                      return Card(
+                        child: ListTile(
+                          leading: Icon(
+                            set.looksLikeAgs ? Icons.grid_view : Icons.storage,
+                          ),
+                          title: Text(set.name),
+                          subtitle: Text(
+                            '${set.driveCount} drive(s) · boots '
+                            '${set.bootDrive.split(RegExp(r'[/\\]')).last}'
+                            '${set.looksLikeAgs ? ' · AGS/RTG' : ''}',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: selected
+                              ? const Icon(Icons.check_circle)
+                              : const Icon(Icons.chevron_right),
+                          selected: selected,
+                          onTap: () => widget.onSelected(set),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
     );
   }

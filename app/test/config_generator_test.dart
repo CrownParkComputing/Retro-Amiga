@@ -51,8 +51,8 @@ void main() {
         'sound_channels=',
         'gfx_width=',
         'gfx_height=',
-        'gfx_correct_aspect=',
-        'gfx_auto_crop=',
+        'amiberry.gfx_correct_aspect=',
+        'amiberry.gfx_auto_crop=',
       ]) {
         expect(output, contains(key));
       }

@@ -33,6 +33,9 @@ extern "C" {
 void uae4arm_host_set_framebuffer_output(bool enabled);
 bool uae4arm_host_framebuffer_output(void);
 
+/** Cheap change check for polling hosts. No pixel buffer is locked or copied. */
+uint64_t uae4arm_host_framebuffer_serial(void);
+
 /**
  * The most recent frame, as tightly packed 32-bit pixels, or NULL before the
  * first one.
