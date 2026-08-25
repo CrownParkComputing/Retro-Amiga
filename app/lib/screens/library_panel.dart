@@ -63,20 +63,105 @@ class _LibraryPanelState extends State<LibraryPanel> {
   List<SavedConfig> _configs = <SavedConfig>[];
   StreamSubscription<MediaIndex>? _mediaChanges;
 
+  /// What the tabs, the search box and the letter strip have left, worked out
+  /// once per change rather than once per build.
+  ///
+  /// These used to be getters, and `build` reached them along three separate
+  /// routes -- the letter strip, then `_visible`, which asked for the initials
+  /// again and then filtered again. With the six tab counts on top of it, one
+  /// rebuild made ten passes over the whole library and sorted it three
+  /// times. On a shelf of a few thousand files that is what a keystroke cost.
+  List<MediaFile> _matching = <MediaFile>[];
+  List<MediaFile> _visible = <MediaFile>[];
+  List<String> _initials = <String>[];
+  Map<FileCategory, int> _counts = <FileCategory, int>{};
+  int _amigaTotal = 0;
+
+  /// The setup that uses a given file, by path.
+  ///
+  /// A linear scan of the setups per row meant every list row was O(setups),
+  /// paid again on every scroll frame.
+  Map<String, SavedConfig> _setups = <String, SavedConfig>{};
+
+  /// Typing is faster than filtering a large shelf. Without this the filter
+  /// ran on every character and the field itself went stiff.
+  Timer? _searchDebounce;
+  static const Duration _searchDelay = Duration(milliseconds: 150);
+
   @override
   void initState() {
     super.initState();
     _mediaChanges = MediaLibrary.changes.listen((MediaIndex index) {
       if (!mounted) return;
-      setState(() => _files = index.files);
+      setState(() {
+        _files = index.files;
+        _recompute();
+      });
     });
     _load();
   }
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _mediaChanges?.cancel();
     super.dispose();
+  }
+
+  /// Rebuilds everything derived from [_files], [_configs] and the three
+  /// filters. Call from inside the `setState` that changed one of them.
+  void _recompute() {
+    _setups = <String, SavedConfig>{};
+    for (final SavedConfig config in _configs) {
+      for (final MediaFile file in _files) {
+        if (!_setups.containsKey(file.path) && config.uses(file.path)) {
+          _setups[file.path] = config;
+        }
+      }
+    }
+
+    _counts = <FileCategory, int>{};
+    _amigaTotal = 0;
+    for (final MediaFile file in _files) {
+      _counts[file.category] = (_counts[file.category] ?? 0) + 1;
+      // Matches what "All" actually shows, which is Amiga media only.
+      if (file.category != FileCategory.roms &&
+          file.category != FileCategory.archives) {
+        _amigaTotal++;
+      }
+    }
+
+    final String needle = _search.trim().toLowerCase();
+    _matching =
+        _files.where((MediaFile file) {
+          // Archives are not listed at all. A zip is not Amiga media until
+          // something opens it, and on a handheld the great majority are other
+          // machines' games - 1800 of them here, against 115 Amiga files. They
+          // are still offered inside the wizard, where the folder they sit in
+          // says whether they belong.
+          if (file.category == FileCategory.archives) return false;
+          // Kickstarts appear only on their own tab: a ROM is not a game.
+          if (file.category == FileCategory.roms &&
+              _selected != FileCategory.roms) {
+            return false;
+          }
+          if (_selected != null && file.category != _selected) return false;
+          if (needle.isEmpty) return true;
+          return file.titleLower.contains(needle);
+        }).toList()..sort(
+          (MediaFile a, MediaFile b) => a.titleLower.compareTo(b.titleLower),
+        );
+
+    _initials = AlphabetFilter.from(_matching.map((MediaFile f) => f.title));
+    // A letter that no longer leads anywhere is not a filter, it is an empty
+    // list. Fall back to everything rather than showing nothing.
+    if (!_initials.contains(_initial)) {
+      _visible = _matching;
+    } else {
+      _visible = _matching
+          .where((MediaFile f) => f.initial == _initial)
+          .toList();
+    }
   }
 
   Future<void> _load({bool rescan = false}) async {
@@ -100,6 +185,7 @@ class _LibraryPanelState extends State<LibraryPanel> {
         _files = index.files;
         _configs = configs;
         _loading = false;
+        _recompute();
       });
     } on Object catch (e) {
       if (!mounted) return;
@@ -108,55 +194,6 @@ class _LibraryPanelState extends State<LibraryPanel> {
         _loading = false;
       });
     }
-  }
-
-  /// The setup that already uses [file], if there is one.
-  SavedConfig? _setupFor(MediaFile file) {
-    for (final SavedConfig config in _configs) {
-      if (config.uses(file.path)) return config;
-    }
-    return null;
-  }
-
-  int _countOf(FileCategory category) =>
-      _files.where((MediaFile f) => f.category == category).length;
-
-  /// The initials present in what the tabs and the search have left, so the
-  /// strip only ever offers letters that lead somewhere.
-  List<String> get _initials =>
-      AlphabetFilter.from(_matching.map((MediaFile f) => f.title));
-
-  List<MediaFile> get _visible {
-    final String? initial = _initials.contains(_initial) ? _initial : null;
-    final List<MediaFile> matching = _matching;
-    if (initial == null) return matching;
-    return matching
-        .where((MediaFile f) => AlphabetFilter.initialOf(f.title) == initial)
-        .toList();
-  }
-
-  /// Everything the tabs and the search box allow, before the letter strip.
-  List<MediaFile> get _matching {
-    final String needle = _search.trim().toLowerCase();
-    return _files.where((MediaFile file) {
-      // Archives are not listed at all. A zip is not Amiga media until
-      // something opens it, and on a handheld the great majority are other
-      // machines' games - 1800 of them here, against 115 Amiga files. They
-      // are still offered inside the wizard, where the folder they sit in
-      // says whether they belong.
-      if (file.category == FileCategory.archives) return false;
-      // Kickstarts appear only on their own tab: a ROM is not a game.
-      if (file.category == FileCategory.roms &&
-          _selected != FileCategory.roms) {
-        return false;
-      }
-      if (_selected != null && file.category != _selected) return false;
-      if (needle.isEmpty) return true;
-      return file.name.toLowerCase().contains(needle);
-    }).toList()..sort(
-      (MediaFile a, MediaFile b) =>
-          a.title.toLowerCase().compareTo(b.title.toLowerCase()),
-    );
   }
 
   @override
@@ -171,7 +208,10 @@ class _LibraryPanelState extends State<LibraryPanel> {
           child: AlphabetFilter(
             initials: _initials,
             selected: _initial,
-            onSelected: (String? value) => setState(() => _initial = value),
+            onSelected: (String? value) => setState(() {
+              _initial = value;
+              _recompute();
+            }),
           ),
         ),
         _tabRow(),
@@ -183,15 +223,6 @@ class _LibraryPanelState extends State<LibraryPanel> {
   }
 
   Widget _tabRow() {
-    // Matches what "All" actually shows, which is Amiga media only.
-    final int total = _files
-        .where(
-          (MediaFile f) =>
-              f.category != FileCategory.roms &&
-              f.category != FileCategory.archives,
-        )
-        .length;
-
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.fromLTRB(10, 4, 10, 4),
@@ -199,16 +230,22 @@ class _LibraryPanelState extends State<LibraryPanel> {
         children: <Widget>[
           _TabPill(
             label: 'All',
-            count: total,
+            count: _amigaTotal,
             selected: _selected == null,
-            onTap: () => setState(() => _selected = null),
+            onTap: () => setState(() {
+              _selected = null;
+              _recompute();
+            }),
           ),
           for (final FileCategory category in _tabs)
             _TabPill(
               label: category.displayName,
-              count: _countOf(category),
+              count: _counts[category] ?? 0,
               selected: _selected == category,
-              onTap: () => setState(() => _selected = category),
+              onTap: () => setState(() {
+                _selected = category;
+                _recompute();
+              }),
             ),
         ],
       ),
@@ -224,7 +261,7 @@ class _LibraryPanelState extends State<LibraryPanel> {
             child: SizedBox(
               height: 38,
               child: TextField(
-                onChanged: (String value) => setState(() => _search = value),
+                onChanged: _onSearchChanged,
                 style: const TextStyle(fontSize: 14),
                 decoration: const InputDecoration(
                   isDense: true,
@@ -244,6 +281,22 @@ class _LibraryPanelState extends State<LibraryPanel> {
         ],
       ),
     );
+  }
+
+  /// Held back briefly rather than filtered per character.
+  ///
+  /// The field itself must stay live, so the text is the platform's; only the
+  /// work behind it waits. A short delay is invisible to someone typing and is
+  /// the difference between one pass over the library and one per keystroke.
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(_searchDelay, () {
+      if (!mounted) return;
+      setState(() {
+        _search = value;
+        _recompute();
+      });
+    });
   }
 
   Widget _body() {
@@ -278,7 +331,7 @@ class _LibraryPanelState extends State<LibraryPanel> {
         final MediaFile file = visible[i];
         return _FileRow(
           file: file,
-          setup: _setupFor(file),
+          setup: _setups[file.path],
           onPlay: _play,
           onSetUp: () => _setUp(file),
           onPlayMusic: file.category == FileCategory.music
@@ -327,7 +380,7 @@ class _LibraryPanelState extends State<LibraryPanel> {
   }
 
   Future<void> _rename(MediaFile file) async {
-    if (_setupFor(file) != null) {
+    if (_setups[file.path] != null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Remove this file from its setup before renaming it.'),
@@ -375,7 +428,7 @@ class _LibraryPanelState extends State<LibraryPanel> {
   }
 
   Future<void> _delete(MediaFile file) async {
-    if (_setupFor(file) != null) {
+    if (_setups[file.path] != null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Remove this file from its setup before deleting it.'),

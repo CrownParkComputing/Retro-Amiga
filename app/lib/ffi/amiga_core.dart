@@ -3,6 +3,7 @@ import 'dart:ffi';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
+import 'dart:ui' as ui show Size;
 
 import 'package:ffi/ffi.dart';
 
@@ -144,9 +145,23 @@ class AmigaCore {
         'uae4arm_host_framebuffer_serial',
       );
 
+  late final void Function(Pointer<Int32>, Pointer<Int32>) _framebufferSize =
+      _lib
+          .lookupFunction<
+            Void Function(Pointer<Int32>, Pointer<Int32>),
+            void Function(Pointer<Int32>, Pointer<Int32>)
+          >('uae4arm_host_framebuffer_size');
+
   /// Reused across frames; grows when the Amiga picks a bigger mode.
   Pointer<Uint32> _frameBuf = nullptr;
   int _frameCap = 0;
+
+  /// A byte view over [_frameBuf], rebuilt only when the buffer is
+  /// reallocated. [frame] hands a sub-view of this out rather than a fresh
+  /// list: at 752x576 a copy is 1.7MB, and allocating that per frame at 30Hz
+  /// put ~50MB/s of short-lived garbage through the young generation, which
+  /// is most of what made the in-process picture stutter on modest Androids.
+  Uint8List? _frameBytes;
   int _lastCopiedSerial = 0;
   final Pointer<Int32> _frameWidth = calloc<Int32>();
   final Pointer<Int32> _frameHeight = calloc<Int32>();
@@ -362,6 +377,28 @@ class AmigaCore {
     _quit();
   }
 
+  /// The Amiga's current mode, without touching a pixel.
+  ///
+  /// The texture path needs this and only this: the frames themselves are
+  /// pushed to the compositor by the platform, but the panel still has to know
+  /// the shape to fit the picture into, and the Amiga changes mode mid-game.
+  /// Cheap enough to ask every vsync -- two stores and a mutex the publisher
+  /// holds only for a pointer swap.
+  ///
+  /// `Size.zero` before the first frame, or on a core too old to have the
+  /// symbol.
+  ui.Size frameSize() {
+    try {
+      _framebufferSize(_frameWidth, _frameHeight);
+    } on ArgumentError {
+      return ui.Size.zero;
+    }
+    return ui.Size(
+      _frameWidth.value.toDouble(),
+      _frameHeight.value.toDouble(),
+    );
+  }
+
   /// The current frame, or null before the core has drawn one.
   ///
   /// Copied natively under the publisher's lock, so width, height and pixels
@@ -392,6 +429,7 @@ class AmigaCore {
         if (_frameBuf != nullptr) calloc.free(_frameBuf);
         _frameCap = need + (need >> 2); // headroom for small mode changes
         _frameBuf = calloc<Uint32>(_frameCap);
+        _frameBytes = null; // the old view points at freed memory
         n = _copyFramebuffer(
           _frameBuf,
           _frameCap,
@@ -403,21 +441,35 @@ class AmigaCore {
       if (n == 0) return null;
     }
     _lastCopiedSerial = _frameSerial.value;
+    // A view over the native buffer, NOT a copy. See [AmigaFrame.pixels] for
+    // the lifetime this places on the caller.
+    final Uint8List bytes = _frameBytes ??= _frameBuf
+        .cast<Uint8>()
+        .asTypedList(_frameCap * 4);
     return AmigaFrame(
       width: _frameWidth.value,
       height: _frameHeight.value,
       serial: _frameSerial.value,
-      pixels: Uint32List.fromList(_frameBuf.asTypedList(n)),
+      pixels: Uint8List.sublistView(bytes, 0, n * 4),
     );
   }
 }
 
-/// One published frame, already copied out of the core's buffer.
+/// One published frame, copied out of the core under the publisher's lock.
 class AmigaFrame {
   final int width;
   final int height;
   final int serial;
-  final Uint32List pixels;
+
+  /// The pixels, as SDL_PIXELFORMAT_ABGR8888 -- which on a little-endian
+  /// machine is R,G,B,A in memory, i.e. Flutter's rgba8888.
+  ///
+  /// BORROWED, not owned: this is a view straight onto the core's staging
+  /// buffer, and the next [AmigaCore.frame] overwrites it in place. Anything
+  /// that outlives the current frame must copy. The one consumer,
+  /// AmigaScreenView, does not poll again until its upload has finished, so
+  /// the buffer is quiet for as long as the view is in use.
+  final Uint8List pixels;
 
   const AmigaFrame({
     required this.width,

@@ -36,6 +36,26 @@ public final class HostSupport {
 	 * two, and requiring both leaves a device with real sticks showing touch
 	 * controls over them.
 	 *
+	 * BUT the source bits alone are not enough, and believing them shipped a
+	 * version of this app on which plain tablets had no usable controls at
+	 * all. A Lenovo Tab and an Honor Pad both answered yes here -- Android
+	 * hands SOURCE_JOYSTICK, and sometimes SOURCE_GAMEPAD, to all sorts of
+	 * things that are not controllers: styluses, some touchscreen digitisers,
+	 * TV and Bluetooth remotes, and OEM sensor HIDs that isVirtual() does not
+	 * flag. The launcher then hid the on-screen pad, and the reports were
+	 * exactly what that would look like: "the on-screen buttons usually don't
+	 * work", "only the keyboard works, not the buttons".
+	 *
+	 * So a device has to prove it: it must carry the buttons a gamepad has.
+	 * hasKeys asks the driver's real key bitmap rather than the source
+	 * advertisement, which is what tells a controller apart from a remote
+	 * that merely claims a gamepad source.
+	 *
+	 * The asymmetry is deliberate and worth stating. Showing touch controls
+	 * over a real pad is an annoyance the user can turn off in one tap.
+	 * Hiding them from a device with no pad leaves the game unplayable and no
+	 * obvious way back. When in doubt this must answer NO.
+	 *
 	 * This lives here rather than in the emulator activity because the
 	 * launcher needs the same answer: the in-process panel draws its own pad
 	 * and had no way to ask.
@@ -44,14 +64,47 @@ public final class HostSupport {
 		for (int id : android.view.InputDevice.getDeviceIds()) {
 			android.view.InputDevice device = android.view.InputDevice.getDevice(id);
 			if (device == null || device.isVirtual()) continue;
+
 			int sources = device.getSources();
 			boolean gamepad = (sources & android.view.InputDevice.SOURCE_GAMEPAD)
 				== android.view.InputDevice.SOURCE_GAMEPAD;
 			boolean joystick = (sources & android.view.InputDevice.SOURCE_JOYSTICK)
 				== android.view.InputDevice.SOURCE_JOYSTICK;
-			if (gamepad || joystick) return true;
+			if (!gamepad && !joystick) continue;
+
+			if (hasGamepadButtons(device)) return true;
 		}
 		return false;
+	}
+
+	/**
+	 * Whether the device really has a gamepad's buttons.
+	 *
+	 * A face button and a direction, because either alone still matches
+	 * things that are not controllers: a TV remote reports d-pad keys, and a
+	 * few HID oddities report BUTTON_A without anything to steer with. Both
+	 * together is a pad.
+	 */
+	private static boolean hasGamepadButtons(android.view.InputDevice device) {
+		final boolean[] keys = device.hasKeys(
+			android.view.KeyEvent.KEYCODE_BUTTON_A,
+			android.view.KeyEvent.KEYCODE_BUTTON_B,
+			android.view.KeyEvent.KEYCODE_BUTTON_X,
+			android.view.KeyEvent.KEYCODE_BUTTON_Y,
+			android.view.KeyEvent.KEYCODE_DPAD_UP,
+			android.view.KeyEvent.KEYCODE_DPAD_LEFT);
+
+		final boolean face = keys[0] || keys[1] || keys[2] || keys[3];
+		final boolean direction = keys[4] || keys[5] || hasStick(device);
+		return face && direction;
+	}
+
+	/** A stick counts as a direction: some pads report no d-pad keys at all. */
+	private static boolean hasStick(android.view.InputDevice device) {
+		return device.getMotionRange(
+				android.view.MotionEvent.AXIS_X, android.view.InputDevice.SOURCE_JOYSTICK) != null
+			|| device.getMotionRange(
+				android.view.MotionEvent.AXIS_HAT_X, android.view.InputDevice.SOURCE_JOYSTICK) != null;
 	}
 
 	/** Config keys shared with the core's .uae files. */

@@ -86,6 +86,21 @@ enum FileCategory {
     return fromExtension(name.substring(dot + 1));
   }
 
+  /// Whether [path] is a hard-drive container in a place explicitly reserved
+  /// for hard drives.
+  ///
+  /// Zeb's full WHDLoad releases are raw RDB disk images named `.img`. That
+  /// suffix is normally a floppy, so it must not be classified globally as a
+  /// hard drive. Inside `HardDrives`, however, the folder is the user's
+  /// unambiguous instruction and the raw image must be mounted as a hardfile.
+  static bool isHardDriveImage(String path, {bool allowRawImage = false}) {
+    final int dot = path.lastIndexOf('.');
+    if (dot < 0 || dot == path.length - 1) return false;
+    final String extension = path.substring(dot + 1).toLowerCase();
+    return hardDrives.extensions.contains(extension) ||
+        (allowRawImage && extension == 'img');
+  }
+
   /// Archives can hold any of the above, so a picker for [category] should
   /// offer them too rather than hide a zipped disk image.
   static Set<String> pickerExtensionsFor(FileCategory category) => <String>{

@@ -20,6 +20,7 @@ import '../data/music_player.dart';
 import '../data/save_states.dart';
 import '../data/session.dart';
 import '../ffi/amiga_core.dart';
+import '../ffi/amiga_texture.dart';
 import '../widgets/amiga_keyboard_overlay.dart';
 import '../widgets/amiga_screen_view.dart';
 import '../widgets/pad_overlay.dart';
@@ -101,6 +102,30 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   bool _chromeVisible = true;
   Timer? _chromeTimer;
 
+  /// Pointers currently down on the picture, so a second finger can be told
+  /// from a first.
+  final Set<int> _pointers = <int>{};
+
+  /// A touch on the picture, which is not always a request for the chrome.
+  ///
+  /// It used to be: any pointer down brought the rail and the status strip
+  /// back. That is right when the touch IS the interface -- tapping the
+  /// picture to get at the controls -- and wrong the moment the touch is the
+  /// game's. In mouse mode every click is the game's, and a player driving a
+  /// mouse-led game got the chrome over the top of it on every single click.
+  /// The report read "whenever I try to use the mouse, it always takes me to
+  /// the menu, and I can't do anything in the game", which is precisely this.
+  ///
+  /// So in mouse mode a single pointer is left entirely to the Amiga, and a
+  /// SECOND finger is what asks for the chrome. Nothing in Workbench or in a
+  /// mouse-driven game uses two fingers, and it is a gesture that cannot
+  /// happen by accident while pointing at something.
+  void _onPictureTouched(PointerDownEvent event) {
+    _pointers.add(event.pointer);
+    if (_mouseMode && _pointers.length < 2) return;
+    _wakeChrome();
+  }
+
   void _wakeChrome() {
     _chromeTimer?.cancel();
     _chromeTimer = Timer(const Duration(seconds: 3), () {
@@ -114,6 +139,24 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   PadLayout _layout = PadLayout.defaults;
 
   int get _pad => _layout.style == PadStyle.cd32 ? 2 : 1;
+
+  /// Redraws for the Fill toggle, and does nothing else.
+  ///
+  /// This used to be wired straight to [_onPlayingChanged], which is a
+  /// different event entirely, and the consequences were the two worst
+  /// reports on the last release. Toggling Fill mid-game ran the whole
+  /// start-of-session path again: it reset the mouse mode, dropped the
+  /// keyboard, brought the chrome back -- the "it switches between the large
+  /// screen and the settings view on its own" complaint -- and then called
+  /// _startSession a second time, which re-registers the pad with a core that
+  /// is already running. That last part is the exact re-entry into the input
+  /// device table that _padTarget exists to prevent, and it aborts out of
+  /// Scudo, so it is a strong candidate for the crashes too.
+  ///
+  /// A remembered preference changing is a repaint. Nothing more.
+  void _onScreenFillChanged() {
+    if (mounted) setState(() {});
+  }
 
   /// Opens the panel the in-game rail asked for, if it asked for one.
   ///
@@ -246,7 +289,7 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     super.initState();
     _adoptRequestedSection();
     AppPrefs.loadScreenFill();
-    AppPrefs.screenFill.addListener(_onPlayingChanged);
+    AppPrefs.screenFill.addListener(_onScreenFillChanged);
     // The panel swaps to the machine when a session starts, and back when it
     // ends, without anything else having to know.
     Emulator.playing.addListener(_onPlayingChanged);
@@ -284,7 +327,7 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   @override
   void dispose() {
     Emulator.playing.removeListener(_onPlayingChanged);
-    AppPrefs.screenFill.removeListener(_onPlayingChanged);
+    AppPrefs.screenFill.removeListener(_onScreenFillChanged);
     WidgetsBinding.instance.removeObserver(_watch);
     GameController.connected.removeListener(_onControllerChanged);
     GameController.onDirection = null;
@@ -758,15 +801,19 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
             // failure reported by Workbench users.
             child: Listener(
               behavior: HitTestBehavior.translucent,
-              onPointerDown: (_) => _wakeChrome(),
+              onPointerDown: _onPictureTouched,
+              onPointerUp: (PointerUpEvent event) => _pointers.remove(event.pointer),
+              onPointerCancel: (PointerCancelEvent event) =>
+                  _pointers.remove(event.pointer),
               child: AmigaScreenView(
                 core: core,
-                // The in-process path copies and decodes a complete Amiga
-                // frame for every poll. On Android, 50 UI uploads per second
-                // starves modest devices and their audio callback; 30 keeps
-                // input responsive while halving that pressure.
-                pollInterval: Platform.isAndroid
-                    ? const Duration(milliseconds: 33)
+                // Only the fallback path pays per frame, and only where there
+                // is no external texture to composite instead. Where there is
+                // -- Android and iOS both -- a frame is one memcpy into the
+                // compositor's own buffer, so the cap that used to be needed
+                // to keep the audio callback fed is not.
+                pollInterval: AmigaTexture.isSupported
+                    ? Duration.zero
                     : const Duration(milliseconds: 20),
                 fill: AppPrefs.screenFill.value,
                 mouseMode: _mouseMode,

@@ -82,7 +82,12 @@ class HardDriveSet {
         final String name = _basename(entry.path);
         if (name.startsWith('.')) continue;
         if (entry is File &&
-            FileCategory.fromPath(entry.path) == FileCategory.hardDrives) {
+            FileCategory.isHardDriveImage(
+              entry.path,
+              // inspect() is only used for a folder the user placed under
+              // HardDrives, so a raw Zeb .img is unambiguously a hard disk.
+              allowRawImage: true,
+            )) {
           images.add(entry.path);
         } else if (entry is Directory) {
           final String lower = name.toLowerCase();
@@ -175,6 +180,62 @@ class HardDriveSet {
       drives: images.where((String image) => image != boot).toList(),
       sharedFolder: shared.isEmpty ? '' : shared.first,
     );
+  }
+
+  /// Complete setups found below the library's `HardDrives` directory.
+  ///
+  /// A setup is one named child folder. Loose images directly in HardDrives
+  /// stay separate choices; combining every top-level HDF into one pretend
+  /// machine was the old scanner's most damaging false positive.
+  static List<HardDriveSet> discoverIn(MediaIndex index, String hardDriveRoot) {
+    final String root = hardDriveRoot
+        .replaceAll(r'\', '/')
+        .replaceAll(RegExp(r'/+$'), '');
+    final Map<String, List<String>> grouped = <String, List<String>>{};
+    for (final MediaFile file in index.of(FileCategory.hardDrives)) {
+      final String path = file.path.replaceAll(r'\', '/');
+      if (!path.toLowerCase().startsWith('${root.toLowerCase()}/')) continue;
+      final String relative = path.substring(root.length + 1);
+      final int slash = relative.indexOf('/');
+      if (slash <= 0) continue; // a loose image, not a packaged setup
+      final String folder = '$root/${relative.substring(0, slash)}';
+      grouped.putIfAbsent(folder, () => <String>[]).add(file.path);
+    }
+
+    final List<HardDriveSet> sets = <HardDriveSet>[
+      for (final MapEntry<String, List<String>> group in grouped.entries)
+        fromPaths(
+          group.key,
+          group.value,
+          sharedFolders: <String>[
+            for (final String name in const <String>[
+              'Shared',
+              'shared',
+              'Share',
+              'share',
+            ])
+              if (Directory('${group.key}/$name').existsSync())
+                '${group.key}/$name',
+          ],
+        ),
+    ];
+    sets.sort((HardDriveSet a, HardDriveSet b) {
+      if (a.looksLikeAgs != b.looksLikeAgs) return a.looksLikeAgs ? -1 : 1;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+    return sets;
+  }
+
+  /// Zeb's dated full-disk WHDLoad image. It is a 68020 Workbench setup, not
+  /// an AGS/RTG collection, and its README explicitly requires Kickstarts in
+  /// Devs:Kickstarts.
+  bool get looksLikeZebWhdload {
+    final String identity = <String>[
+      folder,
+      bootDrive,
+      ...drives,
+    ].join('/').toLowerCase();
+    return identity.contains('zeb') && identity.contains('whd');
   }
 
   static String _basename(String path) {

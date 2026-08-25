@@ -326,6 +326,17 @@ final class EmulatorHost {
     return dlsym(handle, name)
   }
 
+  /// The same lookup, for the other things in this app that talk to the core.
+  ///
+  /// AmigaTexturePlugin needs four of its own entry points, and there is
+  /// nowhere else to get them: the core is dlopen'd from the bundle rather
+  /// than linked, so there are no headers and no static symbols to bind
+  /// against. Returns nil on a core built before those entry points existed,
+  /// which is the caller's cue to fall back.
+  func coreSymbol(_ name: String) -> UnsafeMutableRawPointer? {
+    return symbol(name)
+  }
+
   func musicPlay(path: String) -> Bool {
     guard let fn = symbol("uae4arm_host_music_play") else { return false }
     return path.withCString { unsafeBitCast(fn, to: PlayFn.self)($0) }

@@ -10,29 +10,51 @@ import 'compliance_demo.dart';
 import 'file_category.dart';
 import 'host_paths.dart';
 import 'media_root.dart';
+import '../widgets/alphabet_filter.dart';
 
 /// One file the scan found.
 class MediaFile {
-  const MediaFile({
-    required this.path,
-    required this.category,
-    required this.size,
-  });
+  MediaFile({required this.path, required this.category, required this.size})
+    : name = _basename(path),
+      title = _titleOf(_basename(path)) {
+    // Held rather than derived on demand, because the shelf's filter compares
+    // against it once per file per keystroke and `toLowerCase` allocates. On
+    // a device holding a few thousand files that was several megabytes of
+    // string churn per typed character.
+    titleLower = title.toLowerCase();
+    initial = AlphabetFilter.initialOf(title);
+  }
 
   final String path;
   final FileCategory category;
   final int size;
 
-  String get name {
-    final int slash = path.lastIndexOf(RegExp(r'[/\\]'));
-    return slash < 0 ? path : path.substring(slash + 1);
-  }
+  /// The file's own name, extension and all.
+  final String name;
 
   /// The name without its extension, which is what a setup should be called:
   /// "Lotus Turbo Challenge", not "Lotus Turbo Challenge.adf".
-  String get title {
-    final String base = name;
+  final String title;
 
+  /// [title] folded for comparison, and the letter it files under. Both are
+  /// worked out once here rather than per build; see the constructor.
+  late final String titleLower;
+  late final String initial;
+
+  /// Compiled once for the whole class.
+  ///
+  /// These were `RegExp(r'[/\\]')` written inline in four getters, so every
+  /// read of a name or a folder compiled a pattern -- and a list row reads
+  /// three of them. A separator does not need a regular expression at all,
+  /// but while there is one it should be built once.
+  static final RegExp _separator = RegExp(r'[/\\]');
+
+  static String _basename(String path) {
+    final int slash = path.lastIndexOf(_separator);
+    return slash < 0 ? path : path.substring(slash + 1);
+  }
+
+  static String _titleOf(String base) {
     // Amiga names put the type first - mod.axel_f - so the title is what
     // follows the prefix, not what precedes the last dot. Stripping the
     // extension the usual way would leave every module called "mod".
@@ -49,16 +71,16 @@ class MediaFile {
 
   /// The full path of the directory holding it.
   String get directory {
-    final int slash = path.lastIndexOf(RegExp(r'[/\\]'));
+    final int slash = path.lastIndexOf(_separator);
     return slash <= 0 ? '' : path.substring(0, slash);
   }
 
   /// The folder it sits in, shown to tell two files of the same name apart.
   String get folder {
-    final int slash = path.lastIndexOf(RegExp(r'[/\\]'));
+    final int slash = path.lastIndexOf(_separator);
     if (slash <= 0) return '';
     final String dir = path.substring(0, slash);
-    final int parent = dir.lastIndexOf(RegExp(r'[/\\]'));
+    final int parent = dir.lastIndexOf(_separator);
     return parent < 0 ? dir : dir.substring(parent + 1);
   }
 
@@ -624,7 +646,19 @@ class MediaLibrary {
           }
           walkDir(entry, depth + 1);
         } else if (entry is File) {
-          final FileCategory? category = FileCategory.fromPath(entry.path);
+          FileCategory? category = FileCategory.fromPath(entry.path);
+          // A raw .img is usually a floppy, except when the user deliberately
+          // placed it under HardDrives. Zeb's 16GB WHDLoad images use exactly
+          // that extension and contain an RDB with several partitions.
+          final String normalPath = entry.path.replaceAll(r'\', '/');
+          final String normalHardDriveRoot = '$mediaRoot/HardDrives/'
+              .replaceAll(r'\', '/');
+          if (normalPath.toLowerCase().startsWith(
+                normalHardDriveRoot.toLowerCase(),
+              ) &&
+              FileCategory.isHardDriveImage(entry.path, allowRawImage: true)) {
+            category = FileCategory.hardDrives;
+          }
           if (category == null) continue;
 
           // A zip is not Amiga media until something opens it, and a handheld

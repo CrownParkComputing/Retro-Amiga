@@ -251,6 +251,31 @@ void main() {
       expect(output, contains('filesystem2=rw,DH0:WB:"/games/WB",0'));
     });
 
+    test('the Zeb bootstrap outranks the image RDB', () {
+      final EmulatorSettings settings =
+          EmulatorSettings.fromModel(AmigaModel.a1200).copyWith(
+            hardDrives: <String>[
+              '/Amiga/WHDBoot/zeb-bootstrap',
+              '/Amiga/WHDBoot/save-data',
+              '/Amiga/HardDrives/Zeb WHDLoad/Zeb.img',
+            ],
+          );
+
+      final String output = ConfigGenerator.generate(
+        settings,
+        isDirectoryPath: (String path) => !path.endsWith('.img'),
+        hasRdb: (String path) => path.endsWith('.img'),
+      );
+
+      expect(
+        output,
+        contains(
+          'filesystem2=rw,DH0:zeb-bootstrap:'
+          '"/Amiga/WHDBoot/zeb-bootstrap",10',
+        ),
+      );
+    });
+
     test(
       'an rdb hardfile gets auto geometry, and real ide on ide machines',
       () {

@@ -229,6 +229,14 @@ class MediaFolderImporter {
     List<FolderEntry> allEntries,
   ) {
     final String extension = _extension(entry.name);
+    final List<String> folders = entry.directory
+        .replaceAll(r'\', '/')
+        .split('/')
+        .map((String part) => part.toLowerCase())
+        .toList();
+    if (extension == 'img' && folders.contains('harddrives')) {
+      return FileCategory.hardDrives;
+    }
     const Set<String> cueCompanions = <String>{'bin', 'wav', 'flac', 'mp3'};
     if (cueCompanions.contains(extension)) {
       final bool hasCue = allEntries.any(

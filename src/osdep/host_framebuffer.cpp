@@ -221,6 +221,53 @@ int uae4arm_host_copy_framebuffer(uint32_t* dst, int dst_capacity,
 	return count;
 }
 
+void uae4arm_host_framebuffer_size(int* out_width, int* out_height)
+{
+	std::lock_guard<std::mutex> lock(g_swap_mutex);
+	const FrameBuffer& fb = g_frames[g_front.load(std::memory_order_acquire)];
+	if (out_width)
+		*out_width = fb.pixels.empty() ? 0 : fb.width;
+	if (out_height)
+		*out_height = fb.pixels.empty() ? 0 : fb.height;
+}
+
+int uae4arm_host_copy_framebuffer_strided(uint32_t* dst, int dst_stride,
+                                          int dst_rows, int* out_width,
+                                          int* out_height,
+                                          uint64_t* out_serial)
+{
+	std::lock_guard<std::mutex> lock(g_swap_mutex);
+	const FrameBuffer& fb = g_frames[g_front.load(std::memory_order_acquire)];
+	if (out_serial)
+		*out_serial = g_serial.load(std::memory_order_acquire);
+	if (out_width)
+		*out_width = fb.width;
+	if (out_height)
+		*out_height = fb.height;
+	if (fb.pixels.empty() || dst == nullptr)
+		return 0;
+	if (fb.width <= 0 || fb.height <= 0)
+		return 0;
+	/* Refuse rather than shear: a destination too narrow or too short for the
+	 * mode the Amiga just switched to is the caller's cue to resize it. */
+	if (fb.width > dst_stride || fb.height > dst_rows)
+		return 0;
+
+	const uint32_t* src = fb.pixels.data();
+	if (dst_stride == fb.width) {
+		std::memcpy(dst, src,
+			static_cast<size_t>(fb.width) * static_cast<size_t>(fb.height) *
+			sizeof(uint32_t));
+	} else {
+		for (int y = 0; y < fb.height; y++) {
+			std::memcpy(dst + static_cast<size_t>(y) * dst_stride,
+				src + static_cast<size_t>(y) * fb.width,
+				static_cast<size_t>(fb.width) * sizeof(uint32_t));
+		}
+	}
+	return fb.width * fb.height;
+}
+
 const uint32_t* uae4arm_host_get_framebuffer(int* out_width, int* out_height,
                                              uint64_t* out_serial)
 {

@@ -293,6 +293,15 @@ class MainActivity : FlutterActivity() {
 		super.onPause()
 	}
 
+	override fun onDestroy() {
+		// The texture holds a compositor surface and a Choreographer callback,
+		// neither of which the engine tears down for us. Left running, the
+		// callback keeps waking the display for an activity that is gone.
+		texturePlugin?.dispose()
+		texturePlugin = null
+		super.onDestroy()
+	}
+
 	override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
 		super.onActivityResult(requestCode, resultCode, data)
 		if (requestCode != MediaFolderAccess.REQUEST_PICK_FOLDER) return
@@ -315,8 +324,19 @@ class MainActivity : FlutterActivity() {
 		}
 	}
 
+	/**
+	 * The external-texture path for the in-process panel. Registered
+	 * unconditionally: it hands out nothing until Dart asks, and Dart only
+	 * asks while a game is in the panel.
+	 */
+	private var texturePlugin: AmigaTexturePlugin? = null
+
 	override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
 		super.configureFlutterEngine(flutterEngine)
+
+		AmigaTexturePlugin(flutterEngine.renderer)
+			.also { texturePlugin = it }
+			.register(flutterEngine)
 
 		MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
 			.also { channel = it }

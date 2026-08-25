@@ -9,6 +9,7 @@ import '../data/compliance_demo.dart';
 import '../data/aros_rom.dart';
 import '../data/file_category.dart';
 import '../data/host_paths.dart';
+import '../data/hard_drive_set.dart';
 import '../data/media_folder.dart';
 import '../data/media_library.dart';
 import '../data/media_root.dart';
@@ -99,6 +100,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   );
   bool _installingWhdload = false;
   String? _whdloadNotice;
+
+  List<HardDriveSet> get _hardDriveSetups => _root.isEmpty
+      ? const <HardDriveSet>[]
+      : HardDriveSet.discoverIn(_index, '$_root/HardDrives');
 
   /// Puts the WHDLoad system files where the core's booter looks, and copies
   /// the Kickstarts it symlinks by name.
@@ -250,15 +255,20 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         await MediaRoot.setPath(root);
       }
 
-      // Any Kickstarts the scan found belong in the booter's own folder. Doing
-      // it here means the setup screen's idea of "ready" matches what a game
-      // will find when it starts.
+      // Do this after shared access and the real scan. main() also attempts it
+      // early, but on a new Android install that happens before the one-time
+      // storage grant and cannot possibly see Zeb's/other WHDLoad Kickstarts.
+      // The support files and renamed ROM aliases live under the shared Amiga
+      // root, never Android/data.
+      await WhdloadSupport.installFromBundle();
       await WhdloadSupport.installKickstarts(index);
+      final WhdloadStatus whdload = await WhdloadSupport.status();
 
       if (mounted) {
         setState(() {
           _index = index;
           _root = root;
+          _whdload = whdload;
           _scanning = false;
           _scanned = true;
         });
@@ -416,9 +426,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   ? 'Kickstart ROMs, floppies, hard drives, CD images and '
                         'WHDLoad archives. You supply your own: choose the '
                         'Retro-Applications/Amiga folder on your device '
-                        '(shown under Odin2 on that handheld). AGS_UAE, dated '
-                        'WHDLoad packs and your own HDF folders can then be '
-                        'added intact from the setup wizard.'
+                        '(shown under Odin2 on that handheld). Put AGS_UAE, '
+                        'Zeb WHDLoad and other complete setups in their own '
+                        'folders inside HardDrives; they are detected '
+                        'automatically.'
                   : 'Kickstart ROMs, floppies, hard drives, CD images and '
                         'WHDLoad archives. You supply your own: drop them - '
                         'zipped is fine - into this app\'s folder in the '
@@ -488,7 +499,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             if (_scanned || !_index.isEmpty) ...<Widget>[
               _SectionHeader(
                 _hasRom ? '✓' : '!',
-                _index.isEmpty ? 'Nothing found' : 'What was found',
+                _index.isEmpty
+                    ? 'Nothing found in the selected folder'
+                    : 'Found in ${_sourceFolder ?? _root}',
               ),
               const SizedBox(height: 8),
               ..._shown.map((FileCategory category) {
@@ -506,12 +519,41 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     ),
                   ),
                   title: Text(category.displayName),
+                  subtitle: count == 0
+                      ? null
+                      : Text(
+                          _index
+                              .of(category)
+                              .take(3)
+                              .map((MediaFile file) => file.name)
+                              .join(' · '),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                   trailing: Text(
                     count == 0 ? 'none' : '$count',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 );
               }),
+              if (_hardDriveSetups.isNotEmpty) ...<Widget>[
+                const Divider(),
+                for (final HardDriveSet setup in _hardDriveSetups)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      setup.looksLikeAgs ? Icons.grid_view : Icons.storage,
+                    ),
+                    title: Text(setup.name),
+                    subtitle: Text(
+                      '${setup.driveCount} drive(s) · boots '
+                      '${setup.bootDrive.split(RegExp(r'[/\\]')).last}'
+                      '${setup.looksLikeAgs ? ' · AGS/RTG' : ''}'
+                      '${setup.looksLikeZebWhdload ? ' · Zeb WHDLoad' : ''}',
+                    ),
+                    trailing: const Text('setup'),
+                  ),
+              ],
               // No error card for "no Kickstart" any more: the app installs
               // the AROS pair on every launch, so there is always one, and a
               // red panel saying otherwise would be untrue. The AROS section

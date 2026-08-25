@@ -31,6 +31,7 @@ class SceneDelegate: FlutterSceneDelegate {
 
   /// Held so controller arrivals can be pushed to Dart after registration.
   private var emulatorChannel: FlutterMethodChannel?
+  private var texturePlugin: AmigaTexturePlugin?
 
   private var controllerObservers: [NSObjectProtocol] = []
   private var audioObservers: [NSObjectProtocol] = []
@@ -160,6 +161,14 @@ class SceneDelegate: FlutterSceneDelegate {
     registerEmulatorChannel()
   }
 
+  func sceneDidDisconnect(_ scene: UIScene) {
+    // The texture holds a display link and a pair of pixel buffers, neither of
+    // which the engine tears down for us. Left running, the link keeps waking
+    // the display for a scene that is gone.
+    texturePlugin?.dispose()
+    texturePlugin = nil
+  }
+
   private func registerEmulatorChannel() {
     guard let controller = window?.rootViewController as? FlutterViewController else {
       NSLog("uae4arm: no FlutterViewController on this scene; emulator channel not registered")
@@ -170,6 +179,12 @@ class SceneDelegate: FlutterSceneDelegate {
     // AppDelegate already does it, and a second pass aborts the app with
     // "Duplicate plugin key". On an Xcode build our own AppDelegate covers it,
     // so both paths are handled without this.
+
+    // The in-process panel's picture, as a texture the compositor owns rather
+    // than an image decoded per frame. Registered here for the same reason the
+    // emulator channel is: this is where the FlutterViewController exists.
+    // Held so the display link and its buffers go when the scene does.
+    texturePlugin = AmigaTexturePlugin.register(with: controller)
 
     let channel = FlutterMethodChannel(
       name: SceneDelegate.channelName,

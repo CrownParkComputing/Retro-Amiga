@@ -211,6 +211,8 @@ set(SOURCE_FILES
         src/osdep/fsdb_host.cpp
         src/osdep/clipboard.cpp
         src/osdep/host_framebuffer.cpp
+        src/osdep/host_texture.cpp
+        src/osdep/host_texture_platform.cpp
         src/osdep/uae4arm_host.cpp
         src/osdep/protracker.cpp
         src/osdep/music_player.cpp

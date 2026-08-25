@@ -41,6 +41,18 @@ void main() {
     );
   });
 
+  test('a raw Zeb image under HardDrives is a hard drive, not a floppy', () {
+    final FolderEntry image = entry(
+      'Zebs-WHDLoad-15-Feb.img',
+      directory: 'HardDrives/Zeb WHDLoad 15 Feb',
+    );
+
+    expect(
+      MediaFolderImporter.categoryFor(image, <FolderEntry>[image]),
+      FileCategory.hardDrives,
+    );
+  });
+
   test(
     'nested folders are retained and traversal components are discarded',
     () {

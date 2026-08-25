@@ -68,6 +68,33 @@ int uae4arm_host_copy_framebuffer(uint32_t* dst, int dst_capacity,
                                   int* out_width, int* out_height,
                                   uint64_t* out_serial);
 
+/**
+ * The current frame's size, without touching a pixel.
+ *
+ * For hosts that must size a destination -- a compositor surface, a pixel
+ * buffer -- before they have anywhere to copy into. Both receive 0 before the
+ * first frame.
+ */
+void uae4arm_host_framebuffer_size(int* out_width, int* out_height);
+
+/**
+ * As uae4arm_host_copy_framebuffer, but into a destination whose rows are
+ * [dst_stride] pixels apart rather than tightly packed.
+ *
+ * This is what a compositor hands out: ANativeWindow_lock and
+ * CVPixelBufferGetBaseAddress both return a buffer padded to the hardware's
+ * alignment, and a tight copy into one shears the picture by a few pixels per
+ * row. [dst_rows] is the destination's height, so a frame taller than the
+ * surface is refused rather than written past the end.
+ *
+ * Copies row by row when the strides differ and in one memcpy when they do
+ * not, so the packed case costs no more than it did.
+ */
+int uae4arm_host_copy_framebuffer_strided(uint32_t* dst, int dst_stride,
+                                          int dst_rows, int* out_width,
+                                          int* out_height,
+                                          uint64_t* out_serial);
+
 #ifdef __cplusplus
 }
 

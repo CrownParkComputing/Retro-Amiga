@@ -241,7 +241,12 @@ class ConfigGenerator {
 
       final String name = _baseName(path).isEmpty ? 'DH$i' : _baseName(path);
       // Only the first drive boots.
-      final int bootPri = bootPriSet ? -128 : 0;
+      final bool zebBootstrap =
+          !bootPriSet && _baseName(path) == 'zeb-bootstrap';
+      // Zeb's RDB also contains a bootable Workbench partition. Give the
+      // bootstrap directory a clear priority so its Kickstart-copy script
+      // runs first, then hands control to Zeb's own startup-sequence.
+      final int bootPri = bootPriSet ? -128 : (zebBootstrap ? 10 : 0);
       bootPriSet = true;
 
       if (isDir(path)) {
