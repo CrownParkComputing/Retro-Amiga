@@ -98,6 +98,33 @@ class MainActivity : FlutterActivity() {
 			amigaLibraryRoots().firstOrNull() ?: sharedAmigaDirectory().absolutePath,
 			true,
 		)
+
+		// The real size of this screen, for the core's RTG mode list.
+		//
+		// Headless has no window and no display, so SDL's offscreen driver
+		// reports a fixed 1024x768 desktop -- and that single fake mode was
+		// the only resolution Picasso96 was ever offered. A graphics card with
+		// 32MB on it opened Workbench at 1024x768 on a 1080p handheld, which
+		// reads as the collection choosing badly rather than as the card
+		// having nothing else to choose from. The core cannot ask Android for
+		// this; the launcher can. See display_modes.cpp.
+		// The PANEL, not the window. resources.displayMetrics subtracts the
+		// system bars, which on this device turned 1920x1080 into 1920x1026 --
+		// so the one resolution the screen can actually show was the one the
+		// card was not offered.
+		val bounds = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+			windowManager.currentWindowMetrics.bounds
+		} else {
+			null
+		}
+		val metrics = resources.displayMetrics
+		val rawWidth = bounds?.width() ?: metrics.widthPixels
+		val rawHeight = bounds?.height() ?: metrics.heightPixels
+		val wide = maxOf(rawWidth, rawHeight)
+		val tall = minOf(rawWidth, rawHeight)
+		if (wide > 0 && tall > 0) {
+			Os.setenv("RETRO_AMIGA_DISPLAY", "${wide}x${tall}", true)
+		}
 		super.onCreate(savedInstanceState)
 	}
 

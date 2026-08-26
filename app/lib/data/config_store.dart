@@ -390,7 +390,7 @@ class ConfigStore {
   /// rebuilt. Anything worth keeping should be saved under its own name,
   /// where it becomes an ordinary setup on the Games shelf and is never
   /// touched again.
-  static const int collectionRecipeVersion = 6;
+  static const int collectionRecipeVersion = 7;
 
   static String collectionStamp(int version) =>
       '$collectionMarker v$version';

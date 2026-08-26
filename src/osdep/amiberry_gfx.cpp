@@ -1115,9 +1115,24 @@ void show_screen(const int monid, int mode)
 			 * lives in the renderer, which headless never runs. So the
 			 * surface stayed the black rectangle it was created as while the
 			 * game played perfectly: right size, right format, no pixels. */
-			const struct vidbuffer* vb = avidinfo->inbuffer;
+			/*
+			 * With a graphics card on screen, the picture is not in the
+			 * chipset's buffer.
+			 *
+			 * inbuffer is where the chipset draws, and preferring it is right
+			 * for every native screenmode. The moment Workbench opens on an
+			 * RTG screen the chipset goes idle -- the log says "Chipset
+			 * emulation inactive" -- and that buffer keeps its last contents
+			 * or none at all, while Picasso96 draws into the outbuffer the
+			 * board resized for it. Publishing inbuffer then hands the app a
+			 * valid, correctly sized, entirely black frame, which is exactly
+			 * what a user sees after choosing a 1920x1080 mode: the machine
+			 * running perfectly behind a black panel.
+			 */
+			const struct vidbuffer* vb = ad->picasso_on
+				? avidinfo->outbuffer : avidinfo->inbuffer;
 			if (vb == nullptr || vb->bufmem == nullptr)
-				vb = avidinfo->outbuffer;
+				vb = ad->picasso_on ? avidinfo->inbuffer : avidinfo->outbuffer;
 			SDL_Surface* surface = get_amiga_surface(monid);
 			static int reported = 0;
 			if (vb != nullptr && vb->bufmem != nullptr && vb->outwidth > 0
@@ -1129,11 +1144,20 @@ void show_screen(const int monid, int mode)
 					: hmon->currentmode.amiga_width;
 				int ph = vb->outheight > 0 ? vb->outheight
 					: hmon->currentmode.amiga_height;
-				if (!reported) {
+				/* Said again whenever the shape changes, not only once: a
+				 * screen-mode switch is exactly when this goes wrong, and
+				 * once-per-run reporting is silent for all of them. */
+				static int last_w = 0, last_h = 0, last_rtg = -1;
+				if (!reported || pw != last_w || ph != last_h ||
+					static_cast<int>(ad->picasso_on) != last_rtg) {
 					reported = 1;
-					write_log("host framebuffer: source is a vidbuffer "
-						"(%dx%d pitch %d bufmem %p)\n", pw, ph, vb->rowbytes,
-						(const void*)vb->bufmem);
+					last_w = pw;
+					last_h = ph;
+					last_rtg = static_cast<int>(ad->picasso_on);
+					write_log("host framebuffer: source is the %s vidbuffer "
+						"(%dx%d pitch %d bufmem %p)\n",
+						ad->picasso_on ? "RTG" : "chipset", pw, ph,
+						vb->rowbytes, (const void*)vb->bufmem);
 				}
 				uae4arm_host_publish_frame_pixels(
 					vb->bufmem, pw, ph, vb->rowbytes);
@@ -1144,20 +1168,27 @@ void show_screen(const int monid, int mode)
 				 * lockscr() has pointed the vidbuffer at it. Getting this
 				 * wrong publishes a valid, entirely black frame, so the log
 				 * says which was chosen. */
-				if (!reported) {
+				/* Re-reported whenever the shape or the RTG state changes.
+				 * A screen-mode switch is the moment this path gets it wrong,
+				 * and once-per-run logging is silent for every one of them. */
+				static int surf_w = 0, surf_h = 0, surf_rtg = -1;
+				if (!reported || surface->w != surf_w || surface->h != surf_h ||
+					static_cast<int>(ad->picasso_on) != surf_rtg) {
 					reported = 1;
+					surf_w = surface->w;
+					surf_h = surface->h;
+					surf_rtg = static_cast<int>(ad->picasso_on);
 					const struct vidbuffer* ib = avidinfo->inbuffer;
 					const struct vidbuffer* ob = avidinfo->outbuffer;
-					write_log("host framebuffer: source is amiga_surface %dx%d; "
-						"inbuffer=%p (in %dx%d out %dx%d alloc %dx%d) "
+					write_log("host framebuffer: source is amiga_surface %dx%d "
+						"(rtg=%d); inbuffer=%p (in %dx%d out %dx%d alloc %dx%d) "
 						"outbuffer=%p (in %dx%d out %dx%d alloc %dx%d) same=%d\n",
-						surface->w, surface->h,
+						surface->w, surface->h, surf_rtg,
 						(const void*)ib, ib ? ib->inwidth : -1, ib ? ib->inheight : -1,
 						ib ? ib->outwidth : -1, ib ? ib->outheight : -1,
 						ib ? ib->width_allocated : -1, ib ? ib->height_allocated : -1,
 						(const void*)ob, ob ? ob->inwidth : -1, ob ? ob->inheight : -1,
 						ob ? ob->outwidth : -1, ob ? ob->outheight : -1,
-						ob ? ob->width_allocated : -1, ob ? ob->height_allocated : -1,
 						ib == ob);
 				}
 				/* The WHOLE surface, deliberately.
@@ -1420,6 +1451,47 @@ void gfx_unlock_picasso(const int monid, const bool dorender)
 	}
 	//SDL_UnlockTexture(amiga_texture);
 	if (dorender) {
+		/*
+		 * Headless publishes the RTG frame here, and must.
+		 *
+		 * An RTG frame reaches the screen through amiberry_renderframe(),
+		 * which needs a renderer -- and headless has none, so it returns
+		 * false, show_screen_maybe() is never called, and the tap in
+		 * show_screen() that hands frames to the app never runs. The
+		 * chipset path is unaffected because drawing.cpp calls show_screen()
+		 * directly for it.
+		 *
+		 * So RTG has never been publishable in this mode: the machine runs,
+		 * Picasso96 draws, and the app is handed nothing at all. On screen
+		 * that is a black panel from the moment Workbench opens on a
+		 * graphics-card screen -- and it looks like the emulator hanging
+		 * rather than the picture never being collected.
+		 *
+		 * gfx_lock_picasso2 hands Picasso96 amiga_surface's own pixels, so
+		 * the finished frame is already there; it is cropped to the RTG
+		 * mode's size because the surface can be larger than the screen.
+		 */
+		if (currprefs.headless && uae4arm_host_framebuffer_output()) {
+			SDL_Surface* surface = get_amiga_surface(monid);
+			static int said = 0;
+			if (!said) {
+				said = 1;
+				const struct picasso_vidbuf_description* v =
+					&picasso_vidinfo[monid];
+				write_log("host framebuffer: RTG publish reached "
+					"(surface=%p %dx%d, rtg %dx%d)\n", (const void*)surface,
+					surface ? surface->w : -1, surface ? surface->h : -1,
+					v->width, v->height);
+			}
+			if (surface != nullptr) {
+				const struct picasso_vidbuf_description* vidinfo =
+					&picasso_vidinfo[monid];
+				uae4arm_host_publish_frame_region(
+					surface, vidinfo->width, vidinfo->height);
+				mon->render_ok = true;
+			}
+			return;
+		}
 		if (amiberry_renderframe(monid, true, false)) {
 			mon->render_ok = true;
 			show_screen_maybe(monid, true);

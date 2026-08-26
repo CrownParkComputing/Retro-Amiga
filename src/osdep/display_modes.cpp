@@ -798,6 +798,52 @@ void sortdisplays()
 				write_log(_T("No fullscreen modes from SDL, synthesizing from desktop %dx%d\n"), desktop->w, desktop->h);
 				addmode(md, desktop, 0);
 			}
+			/*
+			 * ...and a ladder of real ones, because that single mode is the
+			 * only thing Picasso96 will ever be offered.
+			 *
+			 * With framebuffer output there is no window and no display: SDL's
+			 * offscreen driver reports a fixed 1024x768 desktop, so a
+			 * graphics card with 32MB on it could be asked for exactly one
+			 * resolution, and an RTG Workbench opened at 1024x768 on a 1080p
+			 * handheld whatever the config asked for. It looked like the
+			 * collection choosing badly; it was the card having nothing else
+			 * to choose from.
+			 *
+			 * RETRO_AMIGA_DISPLAY carries the host's real size -- the launcher
+			 * knows it and the core cannot ask for it -- and everything at or
+			 * below that is registered. Absent, this does nothing and the
+			 * desktop mode above stands.
+			 */
+			const char* display = getenv("RETRO_AMIGA_DISPLAY");
+			int host_w = 0, host_h = 0;
+			if (display && sscanf(display, "%dx%d", &host_w, &host_h) == 2 &&
+				host_w > 0 && host_h > 0) {
+				static const int ladder[][2] = {
+					{640, 480}, {800, 600}, {1024, 768}, {1280, 720},
+					{1280, 1024}, {1440, 900}, {1680, 1050}, {1920, 1080},
+				};
+				write_log(_T("Headless: registering RTG modes up to %dx%d\n"),
+					host_w, host_h);
+				for (const auto& size : ladder) {
+					if (size[0] > host_w || size[1] > host_h)
+						continue;
+					SDL_DisplayMode synthetic = {};
+					synthetic.w = size[0];
+					synthetic.h = size[1];
+					synthetic.format = SDL_PIXELFORMAT_XRGB8888;
+					synthetic.refresh_rate = 60;
+					addmode(md, &synthetic, 0);
+				}
+				/* The host's own size last, so it is there even when it is
+				 * not one of the standard shapes a handheld rarely matches. */
+				SDL_DisplayMode exact = {};
+				exact.w = host_w;
+				exact.h = host_h;
+				exact.format = SDL_PIXELFORMAT_XRGB8888;
+				exact.refresh_rate = 60;
+				addmode(md, &exact, 0);
+			}
 		}
 		sortmodes(md);
 		modesList(md);

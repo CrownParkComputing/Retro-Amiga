@@ -189,7 +189,18 @@ void uae4arm_host_publish_frame_pixels(const void* pixels_in, int width,
 	 * how many times the emulation locked a buffer to draw says which end to
 	 * look at.
 	 */
-	if (serial == 1 || serial == 100 || serial == 300) {
+	/* Counted on every change of shape as well as at fixed serials.
+	 *
+	 * A screen-mode switch is exactly when a frame goes black, and reporting
+	 * only at frames 1, 100 and 300 means the one frame worth counting is
+	 * never the one counted. */
+	static int counted_w = 0, counted_h = 0;
+	const bool shape_changed = (w != counted_w || h != counted_h);
+	if (shape_changed) {
+		counted_w = w;
+		counted_h = h;
+	}
+	if (serial == 1 || serial == 100 || serial == 300 || shape_changed) {
 		extern unsigned long host_lockscr_calls, host_lockscr_ok,
 			host_lockscr_nowindow, host_lockscr_nosurface;
 		size_t lit = 0;
