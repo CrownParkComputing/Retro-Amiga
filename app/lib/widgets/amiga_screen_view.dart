@@ -111,6 +111,14 @@ class _AmigaScreenViewState extends State<AmigaScreenView>
   AmigaTexture? _texture;
   bool _attaching = false;
 
+  /// The texture path, once given up on, is not tried again this session.
+  bool _textureRefused = false;
+
+  /// How many ticks have gone by with the core publishing frames, the texture
+  /// path attached, and nothing reaching the compositor. -1 once the path has
+  /// proved itself. See [_watchTexture].
+  int _texturePostedNothing = 0;
+
   bool _uploading = false;
   int _lastSerial = -1;
   Duration _lastUpload = const Duration(days: -1);
@@ -123,7 +131,7 @@ class _AmigaScreenViewState extends State<AmigaScreenView>
   }
 
   Future<void> _attach() async {
-    if (!AmigaTexture.isSupported) return;
+    if (!AmigaTexture.isSupported || _textureRefused) return;
     _attaching = true;
     try {
       final AmigaTexture? texture = await AmigaTexture.create();
@@ -161,8 +169,9 @@ class _AmigaScreenViewState extends State<AmigaScreenView>
       // Frames are the platform's business here -- it pushes them to the
       // compositor without Dart in the loop at all, and the picture is drawn
       // into a fixed 4:3 box, so a mode change needs nothing from this side.
-      // All that is left is noticing the first frame, to take the placeholder
-      // down. Two stores behind an uncontended mutex.
+      // All that is left is watching that it IS happening, and noticing the
+      // first frame to take the placeholder down.
+      if (!_watchTexture()) return;
       if (!_started.value && !widget.core.frameSize().isEmpty) {
         _started.value = true;
       }
@@ -183,6 +192,46 @@ class _AmigaScreenViewState extends State<AmigaScreenView>
     _lastUpload = elapsed;
     unawaited(_upload(frame));
   }
+
+  /// Checks the texture path is actually delivering, and abandons it if not.
+  ///
+  /// A created texture is not a working one. Flutter's SurfaceProducer is
+  /// backed by an ImageReader in `ImageFormat.PRIVATE` with GPU-only usage,
+  /// which a CPU producer cannot lock; the platform side then fails every
+  /// present, silently, because a skipped frame is a normal thing for it to
+  /// report. What the user sees is a black panel and hears working sound --
+  /// which is exactly the report this exists to make impossible.
+  ///
+  /// The test is unambiguous: the core has published frames and the sink has
+  /// posted none of them. Waiting [_textureGraceFrames] ticks -- about a
+  /// second, one tick being one displayed frame -- covers a slow first surface
+  /// without leaving a genuinely broken path up long enough to notice.
+  ///
+  /// Returns false when the texture has just been dropped, so the caller stops
+  /// treating this tick as a texture tick.
+  bool _watchTexture() {
+    if (widget.core.texturePostedSerial() > 0) {
+      // Proven. Stop asking: this runs every vsync for the rest of the
+      // session, and it is two FFI calls when it does.
+      _texturePostedNothing = -1;
+      return true;
+    }
+    if (_texturePostedNothing < 0) return true;
+    if (widget.core.publishedSerial() == 0) return true;
+    if (++_texturePostedNothing < _textureGraceFrames) return true;
+
+    // Give it up. The fallback needs nothing but Dart, so there is nothing to
+    // set up: dropping _texture is enough for the next tick to poll, upload
+    // and paint.
+    final AmigaTexture? dead = _texture;
+    _textureRefused = true;
+    setState(() => _texture = null);
+    unawaited(dead?.dispose());
+    return false;
+  }
+
+  /// Ticks, i.e. displayed frames, the texture path gets to prove itself over.
+  static const int _textureGraceFrames = 60;
 
   Future<void> _upload(AmigaFrame frame) async {
     _uploading = true;

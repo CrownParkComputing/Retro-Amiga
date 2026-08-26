@@ -1,6 +1,7 @@
 package com.uae4arm2026
 
 import android.view.Choreographer
+import android.view.Surface
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.view.TextureRegistry
@@ -15,6 +16,29 @@ import io.flutter.view.TextureRegistry
  * room. Flutter can composite a surface the app owns instead, and that turns
  * the whole thing into one memcpy from the emulator's front buffer into the
  * buffer the compositor is about to read.
+ *
+ * ## Why a SurfaceTexture and not a SurfaceProducer
+ *
+ * The obvious registry entry is `createSurfaceProducer()`, and it is the one
+ * this used at first. It does not work for a CPU producer. On API 29+ the
+ * producer is an ImageReader built with `ImageFormat.PRIVATE` and
+ * `HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE` -- an opaque, GPU-only buffer.
+ * `ANativeWindow_lock` on it has nothing CPU-writable to hand back, so it
+ * fails; every present failed with it, and because failing to present is not
+ * an error anywhere in the path, the result was a black panel with working
+ * sound. `setSize()` on it does not help: the format is the problem, not the
+ * geometry.
+ *
+ * A SurfaceTexture's surface is a plain BufferQueue. It hands out CPU-writable
+ * buffers, it takes its geometry from the producer -- so the native side can
+ * follow a mode change immediately rather than waiting to be resized -- and
+ * posting a buffer marks the texture frame available without anything having
+ * to call `scheduleFrame`.
+ *
+ * Both ends still have to agree on the size, though: the producer's geometry
+ * is set natively and the consumer's default buffer size is set here, in
+ * [resizeToFrame], from the same number. Letting them drift is what draws the
+ * picture into the corner of the panel.
  *
  * Nothing about a frame passes through Dart or through a platform channel.
  * The channel is used twice a session -- to hand the texture id up and to tear
@@ -38,15 +62,13 @@ class AmigaTexturePlugin(private val registry: TextureRegistry) {
 		@JvmStatic external fun nativeFrameSize(): Long
 	}
 
-	private var producer: TextureRegistry.SurfaceProducer? = null
+	private var entry: TextureRegistry.SurfaceTextureEntry? = null
+	private var surface: Surface? = null
 	private var frameCallback: Choreographer.FrameCallback? = null
 
-	/** What the producer is currently sized to, so a resize is only done once. */
+	/** What the SurfaceTexture is currently sized to. */
 	private var width = 0
 	private var height = 0
-
-	/** True between onSurfaceCleanup and the next onSurfaceAvailable. */
-	private var surfaceLost = false
 
 	fun register(engine: FlutterEngine) {
 		MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL)
@@ -64,62 +86,49 @@ class AmigaTexturePlugin(private val registry: TextureRegistry) {
 
 	private fun create(): Map<String, Any>? {
 		dispose()
-		val entry = try {
-			registry.createSurfaceProducer()
+		val created = try {
+			registry.createSurfaceTexture()
 		} catch (error: Throwable) {
-			// No producer means no texture path, which is a fallback and not a
+			// No entry means no texture path, which is a fallback and not a
 			// failure: Dart takes the copy-and-decode route instead.
 			return null
 		}
-		producer = entry
-		// A first size so the surface exists before the Amiga has drawn
-		// anything. It is replaced the moment a real frame reports its mode.
+		entry = created
+		// A first size so there is a buffer queue before the Amiga has drawn
+		// anything. Both ends move off it together -- native through
+		// ANativeWindow_setBuffersGeometry, this side through resizeToFrame --
+		// the moment a frame reports a different mode.
 		width = 720
 		height = 568
-		entry.setSize(width, height)
-		entry.setCallback(object : TextureRegistry.SurfaceProducer.Callback {
-			override fun onSurfaceAvailable() {
-				// A new surface is a different buffer queue, so the handle the
-				// native side is holding is stale. Re-attaching also clears
-				// the "already posted" serial, so the next frame repaints
-				// rather than being skipped as unchanged.
-				surfaceLost = false
-				attach()
-			}
-
-			override fun onSurfaceCleanup() {
-				// Detach BEFORE the surface goes: a present landing after the
-				// compositor has released the buffer queue writes to memory
-				// that is no longer ours.
-				surfaceLost = true
-				nativeDetachSurface()
-			}
-		})
-		if (!attach()) {
+		created.surfaceTexture().setDefaultBufferSize(width, height)
+		val target = Surface(created.surfaceTexture())
+		surface = target
+		if (!attach(target)) {
 			dispose()
 			return null
 		}
 		startFrameLoop()
-		return mapOf("id" to entry.id(), "width" to width, "height" to height)
+		return mapOf("id" to created.id(), "width" to width, "height" to height)
 	}
 
-	private fun attach(): Boolean {
-		val entry = producer ?: return false
-		return try {
-			nativeAttachSurface(entry.getSurface())
+	private fun attach(target: Surface): Boolean =
+		try {
+			nativeAttachSurface(target)
 		} catch (error: UnsatisfiedLinkError) {
 			// A core built before host_texture.cpp existed. Same answer as no
-			// producer at all: fall back.
+			// entry at all: fall back.
 			false
 		}
-	}
 
 	private fun startFrameLoop() {
 		val choreographer = Choreographer.getInstance()
 		val callback = object : Choreographer.FrameCallback {
 			override fun doFrame(frameTimeNanos: Long) {
-				if (producer == null) return
-				pumpFrame()
+				if (entry == null) return
+				resizeToFrame()
+				// Posting a buffer is what marks the texture frame available,
+				// so there is nothing to schedule.
+				nativePresent()
 				choreographer.postFrameCallback(this)
 			}
 		}
@@ -127,30 +136,32 @@ class AmigaTexturePlugin(private val registry: TextureRegistry) {
 		choreographer.postFrameCallback(callback)
 	}
 
-	private fun pumpFrame() {
-		val entry = producer ?: return
-		if (surfaceLost) return
-
-		// The Amiga changes display mode mid-game, and the native side refuses
-		// to fill a buffer that is not exactly the frame's size rather than
-		// shear the picture or leave a margin of stale pixels. Resizing here
-		// is what lets it start filling again.
+	/**
+	 * Keeps the CONSUMER's idea of the buffer size in step with the producer's.
+	 *
+	 * The native side sets the producer geometry itself, which is what lets a
+	 * mode change take effect immediately. That is only half of it: a
+	 * SurfaceTexture also has a default buffer size, and Flutter samples the
+	 * texture through the transform matrix that goes with it. Let the two drift
+	 * apart -- native producing 752x576, or the 1920x1080 the headless surface
+	 * fallback can publish, into a texture still declared 720x568 -- and the
+	 * compositor draws the frame at the wrong scale, which on screen is the
+	 * picture shrunk into the top-left corner of the panel.
+	 *
+	 * That is the "resuming a game shrinks it to the top left" report. Resume
+	 * is where it shows up first because a restored state brings its own
+	 * display mode, which is usually not the one the surface was created with.
+	 */
+	private fun resizeToFrame() {
+		val created = entry ?: return
 		val packed = nativeFrameSize()
 		val frameWidth = (packed ushr 32).toInt()
 		val frameHeight = (packed and 0xFFFFFFFFL).toInt()
-		if (frameWidth > 0 && frameHeight > 0 &&
-			(frameWidth != width || frameHeight != height)
-		) {
-			width = frameWidth
-			height = frameHeight
-			entry.setSize(width, height)
-			// setSize can hand back a different surface, and the native side
-			// is holding the old one.
-			attach()
-			return
-		}
-
-		if (nativePresent()) entry.scheduleFrame()
+		if (frameWidth <= 0 || frameHeight <= 0) return
+		if (frameWidth == width && frameHeight == height) return
+		width = frameWidth
+		height = frameHeight
+		created.surfaceTexture().setDefaultBufferSize(width, height)
 	}
 
 	/** Releases the surface and stops the frame loop. Safe to call twice. */
@@ -158,14 +169,17 @@ class AmigaTexturePlugin(private val registry: TextureRegistry) {
 		frameCallback?.let { Choreographer.getInstance().removeFrameCallback(it) }
 		frameCallback = null
 		try {
+			// Sink first: present() must stop before the surface it writes to
+			// is released, not after.
 			nativeDetachSurface()
 		} catch (error: UnsatisfiedLinkError) {
 			// Never attached; nothing to let go of.
 		}
-		producer?.release()
-		producer = null
+		surface?.release()
+		surface = null
+		entry?.release()
+		entry = null
 		width = 0
 		height = 0
-		surfaceLost = false
 	}
 }

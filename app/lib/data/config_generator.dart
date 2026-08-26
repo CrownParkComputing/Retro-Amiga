@@ -4,6 +4,17 @@ import 'amiga_model.dart';
 import 'emulator_settings.dart';
 import 'file_category.dart';
 
+/// Whether this platform can run the core's JIT at all.
+///
+/// Everywhere but iOS. Apple does not allow an app to make memory both
+/// writable and executable, which is the whole mechanism -- so a config that
+/// asks for one there does not run slowly, it runs into a core that cannot
+/// honour the request. Android and Linux are fine.
+///
+/// Exposed rather than kept private so the UI can stop offering a switch that
+/// could never do anything, instead of silently ignoring it.
+bool get jitAvailable => !Platform.isIOS;
+
 /// Turns settings into a .uae file.
 ///
 /// Key names match cfgfile_save_options() in the core. The awkward parts are
@@ -90,16 +101,34 @@ class ConfigGenerator {
 
   /// [isDirectoryPath] and [hasRdb] are injectable so tests can generate
   /// configs for paths that do not exist on the machine running them.
+  /// The largest image the emulated A600/A1200/A4000 IDE controller can boot.
+  ///
+  /// The real hardware's IDE, and the OS 3.1 driver that talks to it, address
+  /// a disk with 32 bits of BYTE offset -- so 4GB is the wall. Past it the
+  /// drive mounts, reports nonsense geometry and boots nothing.
+  static const int ideMaxImageBytes = 4 * 1024 * 1024 * 1024;
+
+  static int _imageSize(String path) {
+    if (path.startsWith('content://')) return 0;
+    try {
+      return File(path).lengthSync();
+    } on FileSystemException {
+      return 0;
+    }
+  }
+
   static String generate(
     EmulatorSettings settings, {
     bool Function(String path)? isDirectoryPath,
     bool Function(String path)? hasRdb,
+    int Function(String path)? sizeOf,
   }) {
     final bool Function(String) isDir =
         isDirectoryPath ??
         (String path) =>
             !path.startsWith('content://') && Directory(path).existsSync();
     final bool Function(String) rdb = hasRdb ?? hasRdbSignature;
+    final int Function(String) sizeOfImage = sizeOf ?? _imageSize;
 
     final StringBuffer out = StringBuffer();
     final String normalizedCdImage = _normalizeCdImageValue(settings.cdImage);
@@ -114,20 +143,30 @@ class ConfigGenerator {
 
     // CPU
     out.writeln('cpu_model=${settings.cpuModel}');
+    // The one place that decides whether this machine gets a JIT.
+    //
+    // Written here rather than trusted from the settings because the settings
+    // come from five different places -- the editor's switch, the wizard's
+    // switch, the AGS setup, the collection recipes -- and every one of them
+    // used to turn JIT on without asking which platform it was for. On iOS
+    // that is not a slow config, it is an impossible one.
+    final int jitCache = jitAvailable ? settings.jitCacheSize : 0;
     // "More compatible" together with JIT is a known-bad pairing: it forces
     // the slow exact instruction paths, so self-modifying code (WHDLoad ROM
     // decrypters and friends) runs orders of magnitude slower. The core only
     // auto-disables this for 68040+, so force it off for JIT'd 020/030 too.
-    final bool cpuCompatible =
-        settings.cpuCompatible && settings.jitCacheSize == 0;
+    //
+    // With no JIT the pairing does not arise, and cpu_compatible is what the
+    // user asked for.
+    final bool cpuCompatible = settings.cpuCompatible && jitCache == 0;
     out.writeln('cpu_compatible=${_cfg(cpuCompatible)}');
     out.writeln('cpu_24bit_addressing=${_cfg(settings.address24Bit)}');
     out.writeln('cpu_speed=${settings.cpuSpeed}');
     if (settings.fpuModel > 0) {
       out.writeln('fpu_model=${settings.fpuModel}');
     }
-    if (settings.jitCacheSize > 0) {
-      out.writeln('cachesize=${settings.jitCacheSize}');
+    if (jitCache > 0) {
+      out.writeln('cachesize=$jitCache');
       out.writeln('compfpu=${_cfg(settings.jitFpu)}');
     }
 
@@ -172,10 +211,21 @@ class ConfigGenerator {
     // RTG
     if (settings.useRtg) {
       out.writeln('gfxcard_type=ZorroIII');
-      out.writeln('gfxcard_size=16');
+      out.writeln('gfxcard_size=${settings.rtgMemory}');
       out.writeln('rtg_nocustom=true');
       out.writeln('rtg_noautomodes=false');
       out.writeln('gfx_fullscreen_picasso=fullwindow');
+      if (settings.rtgTrueColour) {
+        // Which pixel formats the card offers, as picasso96_modeflags.
+        //
+        // Left unset the card advertises a conservative set and Workbench
+        // settles for 8- or 16-bit, which on a screen this size is visibly
+        // banded. 0x3ffe is every format but NONE -- chunky through
+        // A8R8G8B8 -- and is the value PiMiga's own working Amiberry config
+        // uses, so it is a copy of something known to run rather than a
+        // guess at a bitmask.
+        out.writeln('rtg_modes=0x3ffe');
+      }
     } else {
       out.writeln('gfxcard_size=0');
       out.writeln('rtg_nocustom=false');
@@ -235,6 +285,22 @@ class ConfigGenerator {
     final int driveCount = settings.hardDrives
         .where((String d) => d.isNotEmpty)
         .length;
+    // One image past the IDE's reach puts the WHOLE set on the UAE
+    // controller, because the boot drive is the one that matters and mixing
+    // controllers for a two-drive set buys nothing.
+    //
+    // This is what stops the big curated distributions booting. AmigaVision
+    // is one 10GB image plus an 84MB saves drive; Zeb's WHDLoad pack is a
+    // single 25GB image. Both are two drives or fewer, so both landed on the
+    // emulated A1200 IDE and neither could boot -- while AGS, with twelve
+    // drives, was pushed onto uaehf.device by the count alone and worked.
+    // The size was never being asked about.
+    final bool anyImageTooBigForIde = settings.hardDrives.any(
+      (String path) =>
+          path.isNotEmpty &&
+          !isDir(path) &&
+          sizeOfImage(path) >= ideMaxImageBytes,
+    );
     for (int i = 0; i < settings.hardDrives.length; i++) {
       final String path = settings.hardDrives[i];
       if (path.isEmpty) continue;
@@ -262,7 +328,10 @@ class ConfigGenerator {
             settings.baseModel == AmigaModel.a600 ||
             settings.baseModel == AmigaModel.a1200 ||
             settings.baseModel == AmigaModel.a4000;
-        final bool useIde = rdbPresent && ideCapable && driveCount <= 2;
+        final bool useIde = rdbPresent &&
+            ideCapable &&
+            driveCount <= 2 &&
+            !anyImageTooBigForIde;
         final String controller = useIde
             ? 'ide$physicalUnit'
             : 'uae$physicalUnit';

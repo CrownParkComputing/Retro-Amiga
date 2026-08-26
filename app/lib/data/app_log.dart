@@ -58,6 +58,19 @@ class AppLog {
       _add(LogEntry(LogLevel.error, source, message));
 
   static void _add(LogEntry entry) {
+    // Also to the system log.
+    //
+    // The buffer and its file both live in the app's private storage, which
+    // on a phone can only be read from the phone -- so the one situation
+    // where this log is most wanted, someone reproducing a fault with a cable
+    // attached, was the one where it could not be reached.
+    //
+    // `print`, not `developer.log`: the latter is all but inert in a release
+    // build, which is the only build that ships and therefore the only one
+    // anybody ever reproduces a fault on. This lands in logcat under the
+    // `flutter` tag.
+    // ignore: avoid_print
+    print('RetroAmiga ${entry.level.name}: ${entry.source}: ${entry.message}');
     _entries.addLast(entry);
     while (_entries.length > _maxEntries) {
       _entries.removeFirst();

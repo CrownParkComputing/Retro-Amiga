@@ -7,6 +7,7 @@ import '../data/amiga_collections.dart';
 import '../data/amiga_model.dart';
 import '../data/app_prefs.dart';
 import '../theme/amiga_theme.dart';
+import 'getting_started.dart';
 import '../data/compliance_demo.dart';
 import '../data/aros_rom.dart';
 import '../data/file_category.dart';
@@ -53,6 +54,18 @@ class OnboardingScreen extends StatefulWidget {
 /// been picked or a single file counted -- and on a new build it was never
 /// shown at all. These are the three things that actually happen, in order.
 enum _Phase {
+  /// Hello. The logo, one sentence, one button.
+  ///
+  /// A first run used to open on "Two ways in" -- a choice, before anything
+  /// had said what the app was or what it was about to ask for. Someone who
+  /// has never run an emulator has no basis for answering it. So the app
+  /// introduces itself first, explains what an Amiga needs and where this
+  /// platform lets files live, and only then asks.
+  welcome,
+
+  /// The two teaching pages, on the main path rather than behind a button.
+  primer,
+
   /// Compliance, or your own folder. Nothing else on screen.
   gate,
 
@@ -73,10 +86,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   bool _scanning = false;
   bool _scanned = false;
 
-  late _Phase _phase = widget.verifyOnly ? _Phase.scanning : _Phase.gate;
-
-  /// Which walkthrough page is showing. See _detailPages.
-  int _detailsPage = 0;
+  late _Phase _phase = widget.verifyOnly ? _Phase.scanning : _Phase.welcome;
 
   /// The running count and the folder being walked.
   ///
@@ -85,6 +95,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   /// over for one progress line.
   final ValueNotifier<({int found, String folder})> _progress =
       ValueNotifier<({int found, String folder})>((found: 0, folder: ''));
+
+  /// What the scan is doing right now.
+  ///
+  /// The count alone was not enough to look like anything was happening: the
+  /// folder listing is a single call into the platform that returns
+  /// everything at once, so on a large card the number sat at zero for the
+  /// part of the scan that takes the longest. Naming the stage is what makes
+  /// the wait legible.
+  final ValueNotifier<String> _stage = ValueNotifier<String>('');
 
   /// The folder the user picked, shown so a wrong choice is visible.
   String? _sourceFolder;
@@ -146,9 +165,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   );
   bool _installingWhdload = false;
   String? _whdloadNotice;
-
-  /// Which known packs the scan recognised, and where. See AmigaCollection.
-  Map<AmigaCollection, String> _collections = <AmigaCollection, String>{};
 
   List<HardDriveSet> get _hardDriveSetups => _root.isEmpty
       ? const <HardDriveSet>[]
@@ -227,6 +243,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   @override
   void dispose() {
     _progress.dispose();
+    _stage.dispose();
     super.dispose();
   }
 
@@ -260,7 +277,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       _scanning = true;
       _scanned = false;
       _index = const MediaIndex.empty();
-      _collections = <AmigaCollection, String>{};
       _phase = _Phase.scanning;
       _notice = 'Reading the folder…';
     });
@@ -297,11 +313,24 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   /// Scan, not something a walkthrough does to their collection while they
   /// are still reading the first screen.
   Future<void> _scan({bool importMedia = true}) async {
+    // Always the scanning page, wherever the scan was asked for.
+    //
+    // "Scan again" used to leave the user on the results page with a hairline
+    // progress bar over numbers that were about to change, which reads as
+    // nothing happening at all. A scan is a thing the user asked for and
+    // waits on; it gets a screen.
     setState(() {
       _scanning = true;
       _notice = null;
-      if (_phase == _Phase.gate) _phase = _Phase.scanning;
+      _phase = _Phase.scanning;
     });
+    _progress.value = (found: 0, folder: '');
+    _stage.value = 'Looking for your Amiga folder…';
+    // A fast scan is still a scan, and one that flashes past leaves the user
+    // unsure it ran. Not padding for its own sake: the screen it would
+    // otherwise flicker through is the only place the folder being read is
+    // named.
+    final Stopwatch elapsed = Stopwatch()..start();
 
     // No permission gate: the library root is the app's own folder, which
     // every Android lets it read. A collection sitting somewhere else - the
@@ -318,12 +347,30 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       // On entry that is the Kickstart alone -- enough for the walkthrough to
       // report a ROM and for the machine to boot. Pressing Scan is what takes
       // the floppies and music out of their zips.
+      _stage.value = 'Reading the folder listing…';
       await StartupImport.run(includeMedia: importMedia);
       final MediaIndex index = await MediaLibrary.scan(
         onProgress: (int found, String folder) {
-          if (mounted) _progress.value = (found: found, folder: folder);
+          if (!mounted) return;
+          _progress.value = (found: found, folder: folder);
+          _stage.value = 'Indexing what is in the folder…';
         },
       );
+
+      // The granted folder IS the library, and it outranks anything derived.
+      //
+      // Without this the header and the scan could disagree: the index was
+      // built from the granted tree while the path on screen came from
+      // MediaRoot, which resolves independently and had every chance of
+      // landing on internal storage -- where the AROS pair alone is enough to
+      // make the folder look populated. The wizard would find a card full of
+      // games and then name a different, empty folder as the place it found
+      // them.
+      final String? grantedFolder = await MediaFolder.displayPath();
+      if (grantedFolder != null && grantedFolder.isNotEmpty) {
+        await MediaRoot.setPath(grantedFolder);
+        if (mounted) setState(() => _sourceFolder = grantedFolder);
+      }
 
       // Adopt the folder the collection already lives in, unless the user has
       // chosen one. A device that has been running the old launcher keeps its
@@ -342,16 +389,21 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       // storage grant and cannot possibly see Zeb's/other WHDLoad Kickstarts.
       // The support files and renamed ROM aliases live under the shared Amiga
       // root, never Android/data.
+      _stage.value = 'Checking Kickstarts and WHDLoad support…';
       await WhdloadSupport.installFromBundle();
       await WhdloadSupport.installKickstarts(index);
       final WhdloadStatus whdload = await WhdloadSupport.status();
+
+      const Duration visible = Duration(milliseconds: 700);
+      if (elapsed.elapsed < visible) {
+        await Future<void>.delayed(visible - elapsed.elapsed);
+      }
 
       if (mounted) {
         setState(() {
           _index = index;
           _root = root;
           _whdload = whdload;
-          _collections = AmigaCollection.findIn(index);
           _scanning = false;
           _scanned = true;
           _phase = _Phase.results;
@@ -422,6 +474,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     return Scaffold(
       body: SafeArea(
         child: switch (_phase) {
+          _Phase.welcome => _welcomeView(),
+          _Phase.primer => _primerView(),
           _Phase.gate => _gateView(),
           _Phase.scanning => _scanningView(),
           _Phase.results => _resultsView(),
@@ -431,22 +485,111 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
+  /// Hello: the logo, one sentence, one button.
+  ///
+  /// Deliberately almost empty. It is the first thing a new install shows and
+  /// its whole job is to say what this is and give one obvious way forward --
+  /// not to ask anything, because at this point the reader has no basis for
+  /// answering. The way out for someone who has done this before is there,
+  /// quietly, underneath.
+  Widget _welcomeView() {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            // The app's own icon, which is what the user tapped to get
+            // here. A generic Amiga tick on the first screen of a first run
+            // does not confirm they opened the thing they meant to.
+            Center(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(22),
+                child: Image.asset(
+                  'assets/images/app_icon.png',
+                  height: 104,
+                  width: 104,
+                  fit: BoxFit.cover,
+                  filterQuality: FilterQuality.medium,
+                  errorBuilder:
+                      (BuildContext c, Object e, StackTrace? s) =>
+                          const AmigaLogo(height: 72),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Retro-Amiga',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'An Amiga, running on this device. Setup takes a couple of '
+              'minutes, and you do not need any files of your own to start.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AmigaColors.textDim, height: 1.5),
+            ),
+            const SizedBox(height: 32),
+            FilledButton(
+              onPressed: () => setState(() => _phase = _Phase.primer),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(vertical: 14),
+                child: Text('Get started'),
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: () => setState(() => _phase = _Phase.gate),
+              child: const Text('I have done this before'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// The two pages that teach, before the first question.
+  ///
+  /// What an Amiga needs, and where this platform lets files live. Both used
+  /// to be optional reading behind a button on the results page -- which is
+  /// after the folder has been chosen, so the page explaining how to choose a
+  /// folder could only be found by someone who had already managed it.
+  Widget _primerView() {
+    return GettingStartedGuide(
+      steps: <GuideStep>[
+        GettingStartedSteps.whatYouNeed(),
+        GettingStartedSteps.whereFilesGo(),
+      ],
+      closeLabel: 'Choose how to start',
+      onClose: () => setState(() => _phase = _Phase.gate),
+      onBack: () => setState(() => _phase = _Phase.welcome),
+    );
+  }
+
   /// One choice, and nothing under it to scroll past.
   Widget _gateView() {
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       children: <Widget>[
             const SizedBox(height: 16),
-            Image.asset(
-              'assets/images/retro_recomp_logo.png',
-              height: 56,
-              fit: BoxFit.contain,
-            ),
-            const SizedBox(height: 12),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: <Widget>[
-                const AmigaLogo(height: 30),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.asset(
+                    'assets/images/app_icon.png',
+                    height: 44,
+                    width: 44,
+                    fit: BoxFit.cover,
+                    filterQuality: FilterQuality.medium,
+                    errorBuilder:
+                        (BuildContext c, Object e, StackTrace? s) =>
+                            const AmigaLogo(height: 30),
+                  ),
+                ),
                 const SizedBox(width: 12),
                 Text(
                   'Retro-Amiga',
@@ -558,6 +701,16 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   ? 'Re-checking your Amiga folder'
                   : 'Reading your Amiga folder',
               style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 12),
+            ValueListenableBuilder<String>(
+              valueListenable: _stage,
+              builder: (BuildContext context, String stage, Widget? child) =>
+                  Text(
+                    stage,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: AmigaColors.textDim),
+                  ),
             ),
             const SizedBox(height: 20),
             const LinearProgressIndicator(),
@@ -735,13 +888,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               ],
               const SizedBox(width: 12),
               OutlinedButton(
-                onPressed: () => setState(() {
-                  _detailsPage = 0;
-                  _phase = _Phase.details;
-                }),
+                onPressed: () => setState(() => _phase = _Phase.details),
                 child: const Padding(
                   padding: EdgeInsets.symmetric(vertical: 12),
-                  child: Text('Setup details'),
+                  // Named for what a first-timer is looking for. "Setup
+                  // details" reads as small print you can skip, which is
+                  // exactly what the people who most needed it did.
+                  child: Text('How do I…?'),
                 ),
               ),
             ],
@@ -812,67 +965,72 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     ];
   }
 
-  /// The right column: the packs by name, then any drive set that was found.
+  /// The right column: what was actually found, named.
+  ///
+  /// This used to be two lists. "Known collections" ticked off all four packs,
+  /// found or not; "Drive sets" listed the folders the scan had found, tagged
+  /// AGS or Zeb. They were the same information written twice -- and the pair
+  /// disagreed the moment one recognised something the other did not, which
+  /// is worse than either alone.
+  ///
+  /// One list now, of the setups that are really there, each named for what
+  /// it is and what it will be configured as. Nothing found says so in one
+  /// line, which is the answer that was worth keeping from the old list: it
+  /// is the difference between "the app cannot see my card" and "the app can
+  /// see my card and the pack is not on it".
   List<Widget> _collectionRows() {
     return <Widget>[
-      Text('Known collections', style: Theme.of(context).textTheme.titleSmall),
+      Text('What was found', style: Theme.of(context).textTheme.titleSmall),
       const SizedBox(height: 4),
-      ...AmigaCollection.values.map((AmigaCollection collection) {
-        final String? where = _collections[collection];
-        final bool found = where != null;
-        return ListTile(
-          contentPadding: EdgeInsets.zero,
-          dense: true,
-          visualDensity: VisualDensity.compact,
-          leading: Icon(
-            found ? Icons.check_circle : Icons.remove_circle_outline,
-            size: 20,
-            color: found ? const Color(0xFF00E28A) : AmigaColors.textDim,
+      if (_hardDriveSetups.isEmpty)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Text(
+            _index.countOf(FileCategory.hardDrives) > 0
+                ? 'Hard-drive images, but no complete setup. Keep each pack in '
+                      'its own folder under HardDrives.'
+                : 'No hard-drive setups. Put AGS, AmigaVision, PiMiga or a '
+                      'WHDLoad pack in its own folder under HardDrives and '
+                      'scan again.',
+            style: const TextStyle(fontSize: 11, color: AmigaColors.textDim),
           ),
-          title: Text(collection.displayName),
-          subtitle: Text(
-            found ? where : collection.description,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 11,
-              color: found ? null : AmigaColors.textDim,
-            ),
-          ),
-          trailing: Text(
-            found ? 'found' : 'not found',
-            style: TextStyle(
-              color: found ? null : AmigaColors.textDim,
-              fontSize: 12,
-            ),
-          ),
-        );
-      }),
-      if (_hardDriveSetups.isNotEmpty) ...<Widget>[
-        const SizedBox(height: 8),
-        Text('Drive sets', style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: 4),
-        for (final HardDriveSet setup in _hardDriveSetups)
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            dense: true,
-            visualDensity: VisualDensity.compact,
-            leading: Icon(
-              setup.looksLikeAgs ? Icons.grid_view : Icons.storage,
-              size: 20,
-            ),
-            title: Text(setup.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: Text(
-              '${setup.driveCount} drive(s)'
-              '${setup.looksLikeAgs ? ' · AGS/RTG' : ''}'
-              '${setup.looksLikeZebWhdload ? ' · Zeb WHDLoad' : ''}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 11),
-            ),
-          ),
-      ],
+        ),
+      for (final HardDriveSet setup in _hardDriveSetups)
+        _foundRow(setup),
     ];
+  }
+
+  Widget _foundRow(HardDriveSet setup) {
+    final AmigaCollection? known = AmigaCollection.detect(setup);
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      dense: true,
+      visualDensity: VisualDensity.compact,
+      leading: Icon(
+        setup.directoryMount
+            ? Icons.folder_open
+            : known == null
+            ? Icons.storage
+            : Icons.check_circle,
+        size: 20,
+        color: known == null ? null : const Color(0xFF00E28A),
+      ),
+      title: Text(
+        known?.displayName ?? setup.name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Text(
+        known != null
+            ? '${setup.name} · ${known.machineBlurb}'
+            : setup.directoryMount
+            ? 'Folder mounted as a drive'
+            : '${setup.driveCount} drive(s)',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 11),
+      ),
+    );
   }
 
   /// The walkthrough, on its own page rather than under the answer.
@@ -887,11 +1045,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   /// because it has nowhere to search for the boot archive, and Android has
   /// no "where media lives" step because the answer is not the user's to
   /// change.
-  List<({String title, List<Widget> body})> _detailPages() {
-    return <({String title, List<Widget> body})>[
+  List<GuideStep> _detailPages() {
+    return <GuideStep>[
+      // The three that explain the machine, the platform's file rules and
+      // how to actually start a game. They come first because they are what
+      // someone who has never run an emulator needs, and they used to be
+      // missing entirely -- the guide opened on a folder path.
+      GettingStartedSteps.whatYouNeed(hasRealKickstart: _hasRealKickstart),
+      GettingStartedSteps.whereFilesGo(),
       if (!Platform.isAndroid)
-        (
+        GuideStep(
           title: 'Where media lives',
+          icon: Icons.folder_outlined,
           body: <Widget>[
             // Android has no media-folder question to answer. The library lives
             // inside the app's own storage because that is the only place it can
@@ -962,8 +1127,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           ],
         ),
       if (Platform.isAndroid)
-        (
+        GuideStep(
           title: 'WHDLoad support',
+          icon: Icons.inventory_2_outlined,
           body: <Widget>[
             // WHDLoad setup is Android only. The boot archive has to be found
             // on the device, and iOS gives the app nothing to search: no
@@ -1020,8 +1186,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             ],
           ],
         ),
-      (
+      GuideStep(
         title: 'It works already',
+        icon: Icons.check_circle_outline,
         body: <Widget>[
 
             // The point of this section is that the app demonstrates itself.
@@ -1084,8 +1251,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
         ],
       ),
-      (
+      GuideStep(
         title: 'Pick your usual Amiga',
+        icon: Icons.computer,
         body: <Widget>[
             const SizedBox(height: 8),
             const Text('New setups start from this machine.'),
@@ -1145,80 +1313,17 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             const SizedBox(height: 24),
         ],
       ),
+      GettingStartedSteps.firstGame(),
     ];
   }
 
   Widget _detailsView() {
-    final List<({String title, List<Widget> body})> pages = _detailPages();
+    final List<GuideStep> pages = _detailPages();
     if (pages.isEmpty) return _resultsView();
-    final int at = _detailsPage.clamp(0, pages.length - 1);
-    final ({String title, List<Widget> body}) page = pages[at];
-    final bool last = at == pages.length - 1;
-
-    return Column(
-      children: <Widget>[
-        Padding(
-          padding: const EdgeInsets.fromLTRB(8, 12, 16, 0),
-          child: Row(
-            children: <Widget>[
-              IconButton(
-                icon: const Icon(Icons.close),
-                tooltip: 'Back to what was found',
-                onPressed: () => setState(() => _phase = _Phase.results),
-              ),
-              Expanded(
-                child: Text(
-                  page.title,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ),
-              Text(
-                'Step ${at + 1} of ${pages.length}',
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: AmigaColors.textDim,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const Divider(height: 20),
-        Expanded(
-          child: ListView(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            children: page.body,
-          ),
-        ),
-        const Divider(height: 20),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-          child: Row(
-            children: <Widget>[
-              OutlinedButton(
-                onPressed: at == 0
-                    ? () => setState(() => _phase = _Phase.results)
-                    : () => setState(() => _detailsPage = at - 1),
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 12),
-                  child: Text('Back'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton(
-                  onPressed: last
-                      ? () => setState(() => _phase = _Phase.results)
-                      : () => setState(() => _detailsPage = at + 1),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Text(last ? 'Done' : 'Next'),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
+    return GettingStartedGuide(
+      steps: pages,
+      closeLabel: 'Back to what was found',
+      onClose: () => setState(() => _phase = _Phase.results),
     );
   }
 }

@@ -186,7 +186,12 @@ class _LibraryPanelState extends State<LibraryPanel> {
       if (!rescan && index.files.isEmpty) {
         index = await MediaLibrary.scan();
       }
-      final List<SavedConfig> configs = await ConfigStore.list();
+      // The user's setups only. A generated collection config names every
+      // drive in the pack, so leaving them in marks half the library as
+      // "already in a setup" and hides the fact that nothing was made from it.
+      final List<SavedConfig> configs = (await ConfigStore.list())
+          .where((SavedConfig c) => !c.isCollection)
+          .toList();
       if (!mounted) return;
       setState(() {
         _files = index.files;

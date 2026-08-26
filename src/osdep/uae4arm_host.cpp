@@ -34,6 +34,12 @@
 #include <SDL3/SDL.h>
 #endif
 
+#if defined(__linux__)
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
+
 extern void uae_restart(struct uae_prefs* p, int opengui, const TCHAR* cfgfile);
 extern int amiberry_main(int argc, char* argv[]);
 extern void apply_android_controller_remap(const int* sdl_to_target, int count);
@@ -42,9 +48,22 @@ static uae4arm_host_callbacks host_callbacks;
 
 /* When a host temporarily enables its touch pad, remember the user's real
    port assignment so hiding the pad gives the port back exactly as it was. */
-static bool onscreen_port1_override = false;
-static int saved_port1_id = 0;
-static int saved_port1_mode = JSEM_MODE_DEFAULT;
+/* Which Amiga port the host's pad drives, and what that port held before it
+ * took it over.
+ *
+ * This used to be hardwired to port 1, which is where most games want a
+ * joystick -- but a good many of the older ones read port 0, the mouse port,
+ * and on real hardware you simply moved the plug. Without that, those games
+ * are unplayable however good the controls are, which is what "I can't play
+ * games because only the on-screen keyboard works" comes down to for some of
+ * them. See uae4arm_host_swap_pad_port. */
+static int onscreen_pad_port = 1;
+static bool onscreen_pad_port_override = false;
+static int saved_pad_port_id = 0;
+static int saved_pad_port_mode = JSEM_MODE_DEFAULT;
+/* The on-screen controller mode last asked for, so a port swap can put the
+ * same pad down in the other port rather than guess at one. */
+static int onscreen_controller_mode = 0;
 static int pending_external_controller_mode = -1;
 static bool pending_desktop_fullscreen = false;
 static std::string session_state_path;
@@ -54,6 +73,7 @@ static std::mutex session_lock;
 
 static int pad_device(int pad);
 static void queue_onscreen_controller_request(int mode);
+static void apply_swap_pad_port(void);
 static void queue_external_controller_mode_request(int jsem_mode);
 static void reset_host_queues(void);
 
@@ -74,8 +94,62 @@ const char* uae4arm_host_logfile_path(void)
 	return path.c_str();
 }
 
+namespace {
+
+/*
+ * The emulation thread has to outrank the launcher's.
+ *
+ * This is the one thing the old design got for free and the in-process one
+ * does not. The emulator used to have a process to itself; now it is a thread
+ * inside the Flutter app, next to the UI thread, the raster thread, the Dart
+ * GC and whatever the platform channels are doing -- all of which Android
+ * schedules at or above an ordinary thread's priority, because they are what
+ * draws the screen.
+ *
+ * Nothing in the tree ever raised it. Amiberry's own setpriority() is driven
+ * from window activation events that headless never receives, and its default
+ * is NORMAL in any case. So the thread generating audio ran at the same
+ * priority as everything competing with it, and every scheduling gap longer
+ * than a buffer became an underrun. That is the "tears up music", "audio has
+ * deteriorated", "hopeless optimization" report: not the mixer, the scheduler.
+ *
+ * -2, and the exact number matters in both directions.
+ *
+ * The first attempt used -10, the shape of THREAD_PRIORITY_URGENT_DISPLAY.
+ * That is AHEAD of Flutter's UI thread (-4) and its raster thread (-8), and
+ * the result was worse than the problem: a collection driving a large RTG
+ * screen kept the emulation thread runnable more or less permanently, the
+ * launcher's own threads stopped getting scheduled, and the app became
+ * unresponsive -- including the controls for leaving the game. A slow setup
+ * is a nuisance; a slow setup you cannot get out of is a trap.
+ *
+ * -2 lifts this above ordinary background work -- which is what was causing
+ * the underruns -- while leaving the threads that draw the launcher ahead of
+ * it. The audio callback SDL runs is higher still and unaffected either way.
+ *
+ * An app may do this to its own threads: Android raises RLIMIT_NICE for app
+ * processes precisely so it can. Where it may not (an unprivileged desktop)
+ * the call fails, is logged once, and the emulator runs exactly as it did.
+ */
+void raise_emulation_thread_priority()
+{
+#if defined(__linux__)
+	errno = 0;
+	if (setpriority(PRIO_PROCESS, static_cast<id_t>(syscall(SYS_gettid)), -2) != 0 &&
+	    errno != 0) {
+		write_log("emulation thread: could not raise priority (%s); audio may "
+			"break up under load\n", strerror(errno));
+		return;
+	}
+	write_log("emulation thread: priority raised to nice -2\n");
+#endif
+}
+
+}  // namespace
+
 int uae4arm_host_run(int argc, char** argv)
 {
+	raise_emulation_thread_priority();
 	/* Every run brings its own game. The parser refuses to run twice, so
 	   without this the second game inherits nothing from its command line -
 	   no config, no WHDLoad archive - and boots default hardware with no
@@ -133,6 +207,7 @@ struct CoreCommand {
 		InsertFloppy,
 		EjectFloppy,
 		Port0Joystick,
+		SwapPadPort,
 		CorrectAspect,
 		MouseMove,
 		MouseButton,
@@ -271,9 +346,9 @@ void uae4arm_host_set_external_controller_mode(int jsem_mode)
 
 void uae4arm_host_apply_pending_controller_mode(void)
 {
-	if (pending_external_controller_mode >= 0 && !onscreen_port1_override) {
-		changed_prefs.jports[1].id = JSEM_JOYS;
-		changed_prefs.jports[1].mode = pending_external_controller_mode;
+	if (pending_external_controller_mode >= 0 && !onscreen_pad_port_override) {
+		changed_prefs.jports[onscreen_pad_port].id = JSEM_JOYS;
+		changed_prefs.jports[onscreen_pad_port].mode = pending_external_controller_mode;
 	}
 	if (pending_desktop_fullscreen) {
 		currprefs.gfx_apmode[APMODE_NATIVE].gfx_fullscreen = GFX_FULLWINDOW;
@@ -297,6 +372,20 @@ void uae4arm_host_set_port0_joystick(bool joystick)
 	CoreCommand command{CoreCommand::Kind::Port0Joystick};
 	command.flag = joystick;
 	core_command_enqueue(std::move(command));
+}
+
+void uae4arm_host_swap_pad_port(void)
+{
+	/* Queued, not applied. Moving a pad between ports rewrites jports and
+	 * re-registers the device, and doing that from the UI thread is the same
+	 * race that corrupts the input table -- see the note on
+	 * apply_onscreen_controller_request. */
+	core_command_enqueue(CoreCommand{CoreCommand::Kind::SwapPadPort});
+}
+
+int uae4arm_host_pad_port(void)
+{
+	return onscreen_pad_port;
 }
 
 void uae4arm_host_set_correct_aspect(bool enabled)
@@ -563,6 +652,10 @@ static void drain_core_commands()
 				command.flag ? "second joystick" : "mouse");
 			break;
 
+		case CoreCommand::Kind::SwapPadPort:
+			apply_swap_pad_port();
+			break;
+
 		case CoreCommand::Kind::CorrectAspect:
 			changed_prefs.gfx_correct_aspect = command.flag ? 1 : 0;
 			set_config_changed();
@@ -709,7 +802,9 @@ static void reset_host_queues(void)
 		std::lock_guard<std::mutex> guard(pad_queue_lock);
 		pad_queue.clear();
 	}
-	onscreen_port1_override = false;
+	onscreen_pad_port_override = false;
+	onscreen_pad_port = 1;
+	onscreen_controller_mode = 0;
 	pending_external_controller_mode = -1;
 	{
 		std::lock_guard<std::mutex> guard(session_lock);
@@ -739,13 +834,14 @@ static void queue_external_controller_mode_request(int jsem_mode)
 static void apply_onscreen_controller_request(int mode)
 {
 	write_log("host: on-screen controller mode %d requested\n", mode);
+	onscreen_controller_mode = mode;
 	if (mode == 0) {
 		changed_prefs.onscreen_joystick = false;
 		changed_prefs.onscreen_cd32pad = false;
-		if (onscreen_port1_override) {
-			changed_prefs.jports[1].id = saved_port1_id;
-			changed_prefs.jports[1].mode = saved_port1_mode;
-			onscreen_port1_override = false;
+		if (onscreen_pad_port_override) {
+			changed_prefs.jports[onscreen_pad_port].id = saved_pad_port_id;
+			changed_prefs.jports[onscreen_pad_port].mode = saved_pad_port_mode;
+			onscreen_pad_port_override = false;
 		}
 		set_config_changed();
 		return;
@@ -755,27 +851,73 @@ static void apply_onscreen_controller_request(int mode)
 	const int device = pad_device(pad);
 	if (device < 0)
 		return;
-	if (!onscreen_port1_override) {
-		saved_port1_id = changed_prefs.jports[1].id;
-		saved_port1_mode = changed_prefs.jports[1].mode;
-		onscreen_port1_override = true;
+	if (!onscreen_pad_port_override) {
+		saved_pad_port_id = changed_prefs.jports[onscreen_pad_port].id;
+		saved_pad_port_mode = changed_prefs.jports[onscreen_pad_port].mode;
+		onscreen_pad_port_override = true;
 	}
-	changed_prefs.jports[1].id = JSEM_JOYS + device;
-	changed_prefs.jports[1].mode = mode == 2
+	changed_prefs.jports[onscreen_pad_port].id = JSEM_JOYS + device;
+	changed_prefs.jports[onscreen_pad_port].mode = mode == 2
 		? JSEM_MODE_JOYSTICK_CD32 : JSEM_MODE_JOYSTICK;
 	changed_prefs.onscreen_joystick = mode == 1;
 	changed_prefs.onscreen_cd32pad = mode == 2;
 	set_config_changed();
 }
 
+/*
+ * Moves the pad to the other Amiga port, live.
+ *
+ * Both ports are handled as a pair of "what was here before" notes rather than
+ * by swapping the two entries wholesale: the pad is a device this file
+ * registered, and the port it vacates has to get back precisely what it had --
+ * the mouse, a physical stick, or nothing -- or swapping twice does not return
+ * the machine to where it started.
+ *
+ * The mouse genuinely leaves when the pad takes port 0. That is what happens
+ * on the real machine when you move the plug, and it is what the games that
+ * want a joystick in port 0 are expecting.
+ */
+static void apply_swap_pad_port(void)
+{
+	const int from = onscreen_pad_port;
+	const int to = from == 1 ? 0 : 1;
+
+	/* Give the port the pad is leaving back exactly what it had. */
+	if (onscreen_pad_port_override) {
+		changed_prefs.jports[from].id = saved_pad_port_id;
+		changed_prefs.jports[from].mode = saved_pad_port_mode;
+		onscreen_pad_port_override = false;
+	}
+
+	onscreen_pad_port = to;
+
+	if (onscreen_controller_mode != 0) {
+		/* Re-runs the ordinary path, which takes its own note of what the new
+		 * port held. */
+		apply_onscreen_controller_request(onscreen_controller_mode);
+	} else {
+		/* No on-screen pad is drawn, but a device is still bound to the port:
+		 * a physical controller, or the touch pad with its picture hidden.
+		 * That is the thing to move. */
+		saved_pad_port_id = changed_prefs.jports[to].id;
+		saved_pad_port_mode = changed_prefs.jports[to].mode;
+		onscreen_pad_port_override = true;
+		changed_prefs.jports[to].id = JSEM_JOYS;
+		changed_prefs.jports[to].mode = pending_external_controller_mode >= 0
+			? pending_external_controller_mode : JSEM_MODE_JOYSTICK;
+	}
+	set_config_changed();
+	write_log("host: pad moved from port %d to port %d\n", from, to);
+}
+
 static void apply_external_controller_mode_request(int jsem_mode)
 {
 	pending_external_controller_mode = jsem_mode;
-	changed_prefs.jports[1].mode = jsem_mode;
+	changed_prefs.jports[onscreen_pad_port].mode = jsem_mode;
 	/* The host-fed virtual pad is the first joystick on the in-process path.
 	 * A config may say joyport1=none; selecting a controller must override it. */
-	if (!onscreen_port1_override)
-		changed_prefs.jports[1].id = JSEM_JOYS;
+	if (!onscreen_pad_port_override)
+		changed_prefs.jports[onscreen_pad_port].id = JSEM_JOYS;
 	set_config_changed();
 }
 

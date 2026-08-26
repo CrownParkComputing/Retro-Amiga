@@ -59,6 +59,20 @@ bool uae4arm_host_texture_attached(void);
  */
 bool uae4arm_host_texture_present(void);
 
+/**
+ * The serial of the last frame the platform actually accepted, or 0 if none
+ * ever has.
+ *
+ * The launcher watches this. An attached sink that never posts is not a
+ * theoretical case: Flutter's SurfaceProducer hands out an ImageReader surface
+ * in ImageFormat.PRIVATE with GPU-sampled usage only, which ANativeWindow_lock
+ * cannot write to, so every present fails and the panel stays black while the
+ * audio plays on. Rather than trust any one platform to be honest about what
+ * it supports, the app gives the texture path a second to prove itself and
+ * drops back to copy-and-decode if nothing lands.
+ */
+uint64_t uae4arm_host_texture_posted(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -54,3 +54,8 @@ bool uae4arm_host_texture_present(void)
 	g_posted.store(available, std::memory_order_release);
 	return true;
 }
+
+uint64_t uae4arm_host_texture_posted(void)
+{
+	return g_posted.load(std::memory_order_acquire);
+}

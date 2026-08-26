@@ -18,10 +18,19 @@ class SavedConfig {
     required this.model,
     required this.summary,
     this.mediaPaths = const <String>[],
+    this.isCollection = false,
   });
 
   final String name;
   final String path;
+
+  /// Written by the app for a collection it found, rather than built by the
+  /// user in the wizard.
+  ///
+  /// These belong on the Collections page and nowhere else. Games is the list
+  /// of setups somebody made; filling it with a generated row per pack on the
+  /// card buries the ones they actually built.
+  final bool isCollection;
 
   /// Best guess at the machine, read back from the config. Null when the file
   /// predates us or names a machine we do not know.
@@ -360,6 +369,53 @@ class ConfigStore {
     return file;
   }
 
+  /// Marks a config the app generated for a collection it found.
+  ///
+  /// A comment line, so every parser on both sides ignores it and the file
+  /// stays an ordinary .uae that can be opened, edited and launched like any
+  /// other. The alternative -- recognising them by a name prefix -- breaks
+  /// the moment someone renames one.
+  static const String collectionMarker = '; retro-amiga: collection';
+
+  /// Bumped whenever the recipes change in a way an existing config should
+  /// pick up.
+  ///
+  /// Generated configs are otherwise left alone once written, which is right
+  /// -- a machine somebody has tuned should not be reset behind their back.
+  /// But a recipe fix is exactly the case where leaving them alone is wrong:
+  /// the config that boots the saves drive instead of the system drive stays
+  /// broken for good, and the user has no way to know a fix exists.
+  ///
+  /// So the version is stamped in, and a config written by an older recipe is
+  /// rebuilt. Anything worth keeping should be saved under its own name,
+  /// where it becomes an ordinary setup on the Games shelf and is never
+  /// touched again.
+  static const int collectionRecipeVersion = 4;
+
+  static String collectionStamp(int version) =>
+      '$collectionMarker v$version';
+
+  /// What the app names a config it generates for a collection.
+  ///
+  /// A second way of recognising one, and it exists for a timing reason
+  /// rather than a stylistic one: the marker is written when the collection
+  /// is configured, which happens asynchronously at startup, while Games is
+  /// the panel already on screen and loading. On the first launch after an
+  /// upgrade the marker can simply not be there yet. The name is, from the
+  /// moment the file is created.
+  ///
+  /// The marker still wins for anything renamed, so the two together cover
+  /// both directions.
+  static const String collectionNamePrefix = 'System - ';
+
+  /// The prefix an earlier build used, with an em dash.
+  ///
+  /// Kept only so those files are still recognised. The dash was a typographic
+  /// nicety that had to cross Dart, a platform channel, a UTF-8 filesystem and
+  /// the core's own C path handling, and a name is not the place to spend that
+  /// risk -- ASCII costs nothing and cannot be mangled on the way.
+  static const String legacyCollectionNamePrefix = 'System — ';
+
   static Future<List<SavedConfig>> list() async {
     final Directory dir = await configDirectory();
     final List<SavedConfig> configs = <SavedConfig>[];
@@ -400,6 +456,9 @@ class ConfigStore {
           model: _modelFrom(text),
           summary: _summaryFrom(text),
           mediaPaths: mediaPathsIn(text),
+          isCollection: text.contains(collectionMarker) ||
+              name.startsWith(collectionNamePrefix) ||
+              name.startsWith(legacyCollectionNamePrefix),
         ),
       );
     }

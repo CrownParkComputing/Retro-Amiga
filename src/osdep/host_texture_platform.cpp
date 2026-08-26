@@ -37,6 +37,16 @@ namespace {
 std::mutex g_window_mutex;
 ANativeWindow* g_window = nullptr;
 
+/* The geometry this file last asked the window for. ANativeWindow_getWidth
+ * reports the CURRENT buffer's size, which lags a geometry change by a frame,
+ * so asking it whether a resize is needed re-requests the same size every
+ * frame until the queue turns over. */
+int g_geometry_width = 0;
+int g_geometry_height = 0;
+
+/* Why the picture went missing, once, rather than every frame. */
+bool g_lock_failed_logged = false;
+
 bool fill_window(void* /*context*/)
 {
 	std::lock_guard<std::mutex> lock(g_window_mutex);
@@ -50,26 +60,39 @@ bool fill_window(void* /*context*/)
 		return false;
 
 	/*
-	 * The surface's size is not ours to change.
+	 * The size IS ours to change here, and that is the point of the surface
+	 * this now runs on.
 	 *
-	 * Flutter's SurfaceProducer is backed by an ImageReader, whose Surface has
-	 * the size the reader was created with; ANativeWindow_setBuffersGeometry
-	 * on it is either ignored or refused, depending on the device. So the Java
-	 * side resizes the producer when the Amiga changes mode, and this waits
-	 * for the surface to catch up rather than writing a 752-wide picture into
-	 * a 720-wide buffer -- or, worse, writing a smaller one into a larger
-	 * buffer and leaving the margin full of whatever was there before.
+	 * The first version drove a Flutter SurfaceProducer, whose surface is an
+	 * ImageReader's: fixed size, ImageFormat.PRIVATE, GPU-sampled usage. A
+	 * geometry request on one is refused, and -- fatally -- so is
+	 * ANativeWindow_lock, because there is no CPU-writable buffer behind it to
+	 * hand back. Every present failed, silently, and the panel stayed black
+	 * while the audio played on. A SurfaceTexture's surface is an ordinary
+	 * BufferQueue: it hands out CPU-writable buffers and it takes its geometry
+	 * from whoever is producing, which is us.
 	 *
-	 * A mode change therefore drops a frame or two. The Amiga changes mode at
-	 * a screen boundary, where there is nothing to see anyway.
+	 * So a mode change is a geometry request rather than a wait, and it costs
+	 * at most the frames already queued at the old size.
 	 */
-	if (want_width != ANativeWindow_getWidth(g_window) ||
-	    want_height != ANativeWindow_getHeight(g_window))
-		return false;
+	if (want_width != g_geometry_width || want_height != g_geometry_height) {
+		if (ANativeWindow_setBuffersGeometry(g_window, want_width, want_height,
+				WINDOW_FORMAT_RGBA_8888) != 0)
+			return false;
+		g_geometry_width = want_width;
+		g_geometry_height = want_height;
+	}
 
 	ANativeWindow_Buffer buffer;
-	if (ANativeWindow_lock(g_window, &buffer, nullptr) != 0)
+	if (ANativeWindow_lock(g_window, &buffer, nullptr) != 0) {
+		if (!g_lock_failed_logged) {
+			g_lock_failed_logged = true;
+			write_log("host texture: ANativeWindow_lock refused (%dx%d); the "
+				"launcher will fall back to copy-and-decode\n",
+				want_width, want_height);
+		}
 		return false;
+	}
 
 	/*
 	 * The one copy the whole texture path costs: emulator front buffer to
@@ -94,6 +117,10 @@ void detach_locked()
 		ANativeWindow_release(g_window);
 		g_window = nullptr;
 	}
+	/* A new window is a new buffer queue at whatever size it was created
+	 * with, so the geometry we asked the old one for says nothing about it. */
+	g_geometry_width = 0;
+	g_geometry_height = 0;
 }
 
 }  // namespace

@@ -18,7 +18,7 @@ void main() {
   });
 
   test('bootstrap populates Devs Kickstarts before Zeb starts', () {
-    final String script = ZebWhdloadSupport.startupSequence;
+    const String script = ZebWhdloadSupport.startupSequence;
     expect(script, contains('Workbench:Devs/Kickstarts'));
     expect(script, contains('save-data:Kickstarts/#?'));
     expect(

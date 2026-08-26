@@ -1,4 +1,7 @@
+import 'amiga_model.dart';
+import 'emulator_settings.dart';
 import 'file_category.dart';
+import 'hard_drive_set.dart';
 import 'media_library.dart';
 
 /// The big pre-built Amiga collections, and whether this device has one.
@@ -10,11 +13,31 @@ import 'media_library.dart';
 /// 1" and a PiMiga image as nothing recognisable. Someone who had just copied
 /// one across had no way to tell whether the app had understood it.
 ///
-/// So each known collection is reported by name, found or not. "Not found" is
-/// as much of an answer as "found": it is the difference between "the app
-/// cannot see my card" and "the app can see my card and that pack is not on
-/// it".
+/// So each known collection is reported by name, and each one also carries
+/// the machine it needs -- because knowing that a folder is PiMiga is only
+/// useful if something then configures an 040 with a graphics card to run it.
+/// Point any of these at the A500 a new setup starts as and none of them
+/// fails in a way anyone can act on: it hangs on grey, or boots to a
+/// Workbench with nothing runnable on it.
+///
+/// Declaration order is DETECTION order, most specific first. PiMiga ships an
+/// AGS-style launcher of its own, so a folder that looks like both is PiMiga.
 enum AmigaCollection {
+  /// PiMiga, built for the Raspberry Pi and commonly moved onto a handheld.
+  /// An 040 AGA machine with a big Zorro III card; the heaviest of the four.
+  pimiga(
+    'PiMiga',
+    'Raspberry Pi Amiga build, one large drive image.',
+    <String>['pimiga', 'pi-miga', 'pi miga'],
+  ),
+
+  /// AmigaVision, which the Amiga Vision spelling still turns up as.
+  amigaVision(
+    'AmigaVision',
+    'Curated WHDLoad collection on one large drive image.',
+    <String>['amigavision', 'amiga vision', 'amiga-vision'],
+  ),
+
   /// AGS / AGS_UAE -- the menu-driven front end, usually a set of HDFs with a
   /// shared games directory beside them.
   ags(
@@ -38,19 +61,7 @@ enum AmigaCollection {
     patterns: <String>[r'whdload\s*\('],
   ),
 
-  /// AmigaVision, which the Amiga Vision spelling still turns up as.
-  amigaVision(
-    'AmigaVision',
-    'Curated WHDLoad collection on one large drive image.',
-    <String>['amigavision', 'amiga vision', 'amiga-vision', 'amigavision'],
-  ),
-
-  /// PiMiga, built for the Raspberry Pi and commonly moved onto a handheld.
-  pimiga(
-    'PiMiga',
-    'Raspberry Pi Amiga build, one large drive image.',
-    <String>['pimiga', 'pi-miga', 'pi miga'],
-  );
+  ;
 
   const AmigaCollection(
     this.displayName,
@@ -80,6 +91,117 @@ enum AmigaCollection {
     }
     if (!fragments.any(lowerPath.contains)) return false;
     return alsoNeeds.every(lowerPath.contains);
+  }
+
+  /// Which collection this drive set is, or null for an ordinary hard drive.
+  ///
+  /// Matched against the whole set -- folder, boot drive and every image --
+  /// because the giveaway is as often the image name as the folder's.
+  static AmigaCollection? detect(HardDriveSet set) {
+    final String identity = <String>[
+      set.folder,
+      set.bootDrive,
+      ...set.drives,
+    ].join('/').toLowerCase().replaceAll(r'\', '/');
+    for (final AmigaCollection collection in AmigaCollection.values) {
+      if (collection._matches(identity)) return collection;
+    }
+    return null;
+  }
+
+  /// The machine this collection needs, keeping the ROM already chosen and
+  /// taking the drives it is about to mount.
+  ///
+  /// Built from defaults rather than from [current] so a collection is the
+  /// same machine every time: a setup half-carried over from whatever the
+  /// user picked before is the kind of thing that runs on one device and not
+  /// on the next.
+  ///
+  /// The numbers come from the configurations these distributions ship or
+  /// document -- PiMiga's from a working Amiberry Pimiga5.uae -- rather than
+  /// from a guess at what "fast" means.
+  EmulatorSettings machine(EmulatorSettings current, List<String> drives) {
+    switch (this) {
+      case AmigaCollection.pimiga:
+        return EmulatorSettings.fromModel(AmigaModel.a1200).copyWith(
+          chipset: 'aga',
+          cpuModel: 68040,
+          fpuModel: 68040,
+          cpuSpeed: 'max',
+          // 040 JIT wants the compatible/24-bit pair off and the FPU compiled
+          // too; anything less runs, slowly, and hides the fact.
+          cpuCompatible: false,
+          address24Bit: false,
+          jitCacheSize: 16384,
+          jitFpu: true,
+          chipRam: 16, // 8MB, as PiMiga's own config asks for
+          z3Ram: 512,
+          useRtg: true,
+          rtgMemory: 128,
+          rtgTrueColour: true,
+          romFile: current.romFile,
+          hardDrives: drives,
+        );
+      case AmigaCollection.amigaVision:
+        return EmulatorSettings.fromModel(AmigaModel.a1200).copyWith(
+          chipset: 'aga',
+          cpuModel: 68040,
+          fpuModel: 68040,
+          cpuSpeed: 'max',
+          cpuCompatible: false,
+          address24Bit: false,
+          jitCacheSize: 16384,
+          jitFpu: true,
+          chipRam: 4, // 2MB, a real A1200's maximum
+          z3Ram: 512,
+          useRtg: true,
+          rtgMemory: 128,
+          rtgTrueColour: true,
+          romFile: current.romFile,
+          hardDrives: drives,
+        );
+      case AmigaCollection.ags:
+        // AGS runs its selector on RTG and expects a quick A1200.
+        return EmulatorSettings.fromModel(AmigaModel.a1200).copyWith(
+          cpuSpeed: 'max',
+          fpuModel: 68882,
+          jitCacheSize: 16384,
+          chipRam: 4,
+          z3Ram: 512,
+          useRtg: true,
+          rtgMemory: 128,
+          rtgTrueColour: true,
+          romFile: current.romFile,
+          hardDrives: drives,
+        );
+      case AmigaCollection.zebWhdload:
+        // A 68020 Workbench on its native screen. No RTG: the pack draws to
+        // an AGA screen mode, and switching it to a graphics card is how it
+        // ends up booting to nothing.
+        return EmulatorSettings.fromModel(AmigaModel.a1200).copyWith(
+          cpuSpeed: 'max',
+          jitCacheSize: 8192,
+          chipRam: 4,
+          z3Ram: 64,
+          romFile: current.romFile,
+          hardDrives: drives,
+        );
+    }
+  }
+
+  /// The machine in one line, so the wizard can say what it is about to do
+  /// instead of silently rewriting the user's choices.
+  String get machineBlurb {
+    switch (this) {
+      case AmigaCollection.pimiga:
+        return 'A1200/040, 8MB chip, 512MB Zorro III, RTG';
+      case AmigaCollection.amigaVision:
+        return 'A1200/040, 2MB chip, 512MB Zorro III, RTG';
+      case AmigaCollection.ags:
+        return 'A1200, 2MB chip, 512MB Zorro III, RTG';
+      case AmigaCollection.zebWhdload:
+        return 'A1200/020, native screen';
+    }
   }
 
   /// Where this collection was found, or null.

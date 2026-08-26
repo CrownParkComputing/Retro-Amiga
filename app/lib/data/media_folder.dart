@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 
@@ -104,16 +105,53 @@ class MediaFolder {
   static Future<String?> pick({String? initialSubfolder}) async {
     if (!isSupported) return null;
     try {
-      if (!await HostPaths.hasSharedStorageAccess() &&
-          !await HostPaths.requestSharedStorageAccess()) {
-        return null;
+      // Every step of this says what it did.
+      //
+      // It is three decisions deep -- all-files access, then the picker, then
+      // the grant -- and until now none of them left a trace. "I chose a
+      // folder and nothing was granted" could have been any of the three, and
+      // there was no way to tell them apart afterwards.
+      if (!await HostPaths.hasSharedStorageAccess()) {
+        AppLog.info('folder', 'no all-files access yet; asking');
+        // Bounded, and the answer is re-checked rather than believed.
+        //
+        // requestSharedStorageAccess sends the user to a Settings screen and
+        // is completed from onResume when they come back. If the activity is
+        // recreated while they are away -- a rotation, a memory-hungry
+        // Settings app -- the pending result dies with it and this await
+        // never returns. The picker is never opened, the button appears to do
+        // nothing, and there is no error anywhere: exactly the "I chose a
+        // folder and nothing happened" report.
+        //
+        // So: wait, but not forever, and then ask the system directly what
+        // the answer actually is. Returning from Settings having granted it
+        // works whether or not the callback survived.
+        await HostPaths.requestSharedStorageAccess().timeout(
+          const Duration(seconds: 90),
+          onTimeout: () => false,
+        );
+        if (!await HostPaths.hasSharedStorageAccess()) {
+          AppLog.warn(
+            'folder',
+            'all-files access refused; the picker was never opened',
+          );
+          return null;
+        }
+        AppLog.info('folder', 'all-files access granted');
       }
-      return await _channel.invokeMethod<String>(
+      AppLog.info('folder', 'opening the folder picker');
+      final String? uri = await _channel.invokeMethod<String>(
         'pickMediaFolder',
         <String, Object?>{'initialSubfolder': initialSubfolder},
       );
+      if (uri == null) {
+        AppLog.warn('folder', 'picker closed without a folder');
+        return null;
+      }
+      AppLog.info('folder', 'granted ${pathFromTreeUri(uri)}');
+      return uri;
     } on PlatformException catch (e) {
-      AppLog.info('folder', 'picker refused: ${e.code}');
+      AppLog.warn('folder', 'picker refused: ${e.code} ${e.message ?? ''}');
       return null;
     }
   }
@@ -131,9 +169,33 @@ class MediaFolder {
   ///
   /// [fileLimit] is a guard, not a preference: a user who points this at the
   /// top of their storage should get a long list, not an out-of-memory crash.
-  static Future<List<FolderEntry>> list({int fileLimit = 20000}) async {
+  /// [onCount] is called while the walk runs, with how many files it has
+  /// seen. The enumeration is a single call that returns everything at once,
+  /// so without polling the caller has nothing to show for the longest part
+  /// of a scan -- a counter stuck on zero for a minute, which is what a hang
+  /// looks like.
+  static Future<List<FolderEntry>> list({
+    int fileLimit = 20000,
+    void Function(int found)? onCount,
+  }) async {
     if (!isSupported) return const <FolderEntry>[];
+    Timer? poll;
     try {
+      if (onCount != null) {
+        poll = Timer.periodic(const Duration(milliseconds: 250), (_) async {
+          try {
+            final int? n = await _channel.invokeMethod<int>(
+              'mediaFolderScanCount',
+            );
+            if (n != null) onCount(n);
+          } on PlatformException {
+            // An older host without the counter: the walk still finishes,
+            // it just cannot say how far along it is.
+          } on MissingPluginException {
+            // Ditto.
+          }
+        });
+      }
       final List<Object?>? raw = await _channel.invokeMethod<List<Object?>>(
         'listMediaFolder',
         <String, Object>{'fileLimit': fileLimit},
@@ -160,6 +222,8 @@ class MediaFolder {
     } on PlatformException catch (e) {
       AppLog.info('folder', 'listing failed: ${e.code}');
       return const <FolderEntry>[];
+    } finally {
+      poll?.cancel();
     }
   }
 }

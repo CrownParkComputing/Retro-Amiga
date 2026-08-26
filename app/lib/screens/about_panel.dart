@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../emulator.dart';
 import '../theme/amiga_theme.dart';
 import '../widgets/amiga_logo.dart';
+import 'getting_started.dart';
 import 'logs_panel.dart';
 
 /// What this is, and what is running underneath it -- with the logs behind
@@ -12,12 +13,17 @@ class AboutPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Help first. The questions this app gets are "where do I put my files"
+    // and "why can't it see my SD card", and the answers were only ever
+    // reachable from inside first-run setup -- which is behind the person
+    // asking, not in front of them.
     return const DefaultTabController(
-      length: 2,
+      length: 3,
       child: Column(
         children: <Widget>[
           TabBar(
             tabs: <Widget>[
+              Tab(text: 'Help'),
               Tab(text: 'About'),
               Tab(text: 'Logs'),
             ],
@@ -29,6 +35,7 @@ class AboutPanel extends StatelessWidget {
           Expanded(
             child: TabBarView(
               children: <Widget>[
+                _HelpBody(),
                 _AboutBody(),
                 LogsPanel(),
               ],
@@ -36,6 +43,27 @@ class AboutPanel extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// The getting-started guide, on its own tab so it can be re-read.
+///
+/// The same steps the wizard shows, minus the ones that only make sense while
+/// setup is running: what an Amiga needs, where this platform lets you put
+/// files -- SD cards and USB drives included -- and how to start a game.
+class _HelpBody extends StatelessWidget {
+  const _HelpBody();
+
+  @override
+  Widget build(BuildContext context) {
+    return GettingStartedGuide(
+      steps: <GuideStep>[
+        GettingStartedSteps.whatYouNeed(),
+        GettingStartedSteps.whereFilesGo(),
+        GettingStartedSteps.firstGame(),
+      ],
+      closeLabel: 'Start again',
     );
   }
 }

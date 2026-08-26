@@ -18,11 +18,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:uae4arm2026/screens/about_panel.dart';
-import 'package:uae4arm2026/screens/audio_panel.dart';
+import 'package:uae4arm2026/screens/av_panel.dart';
+import 'package:uae4arm2026/screens/getting_started.dart';
 import 'package:uae4arm2026/screens/input_panel.dart';
 import 'package:uae4arm2026/screens/library_panel.dart';
 import 'package:uae4arm2026/screens/settings_panel.dart';
-import 'package:uae4arm2026/screens/video_panel.dart';
 
 /// Portrait geometries, smallest first. The rail is not in the picture here:
 /// each panel is pumped at the full width, which is the *kindest* case, so an
@@ -36,9 +36,17 @@ const _sizes = <String, Size>{
 Widget _named(String name) => switch (name) {
       'Library' => const LibraryPanel(),
       'Settings' => const SettingsPanel(),
-      'Video' => const VideoPanel(),
+      'A/V' => const AvPanel(),
+      // The guide is read on a phone more than anywhere else, and its cards
+      // carry the longest strings in the app.
+      'Help' => GettingStartedGuide(
+          steps: <GuideStep>[
+            GettingStartedSteps.whatYouNeed(),
+            GettingStartedSteps.whereFilesGo(),
+            GettingStartedSteps.firstGame(),
+          ],
+        ),
       'Input' => const InputPanel(),
-      'Audio' => const AudioPanel(),
       'About' => const AboutPanel(),
       _ => throw ArgumentError('no such panel: $name'),
     };
@@ -54,7 +62,7 @@ Widget _named(String name) => switch (name) {
 //    panel, which is worse than no check at all.
 //
 // All three are covered on a real simulator instead.
-const _panels = ['Library', 'Settings', 'Video', 'Input', 'Audio', 'About'];
+const _panels = ['Library', 'Settings', 'A/V', 'Input', 'Help', 'About'];
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

@@ -133,6 +133,19 @@ class Emulator {
     playing.value = false;
   }
 
+  /// Ends the session without writing a snapshot.
+  ///
+  /// The difference from [stopInProcess] is the whole point of having both:
+  /// pause is "I am coming back to this exact moment", close is "I am done".
+  /// Writing a snapshot for someone who pressed close fills the Resume shelf
+  /// with sessions nobody asked to keep, and each one is a full memory dump.
+  static void closeInProcess() {
+    final AmigaCore? core = inProcessCore;
+    if (core == null || !core.isRunning) return;
+    core.quit();
+    playing.value = false;
+  }
+
   /// Which host implementation answered, for showing platform-specific UI.
   static Future<String> platformName() async {
     return await _channel.invokeMethod<String>('platformName') ?? 'unknown';

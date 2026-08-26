@@ -146,10 +146,29 @@ class HardDriveSet {
     return fromPaths(folder, paths, sharedFolders: shared);
   }
 
+  /// Names that mean "this drive is not the system": saves, data, spare room.
+  ///
+  /// Checked before falling back to size, because a games drive can easily be
+  /// the biggest thing in the folder.
+  static const List<String> _notBootNames = <String>[
+    'save',
+    'saves',
+    'data',
+    'work',
+    'games',
+    'music',
+    'media',
+    'shared',
+    'spare',
+  ];
+
+  /// [sizes] maps an image path to its size in bytes, where the caller knows
+  /// it. Used only to break a tie; absent, the old alphabetical order stands.
   static HardDriveSet fromPaths(
     String folder,
     List<String> paths, {
     List<String> sharedFolders = const <String>[],
+    Map<String, int> sizes = const <String, int>{},
   }) {
     final List<String> images = paths.toSet().toList()
       ..sort(
@@ -171,7 +190,35 @@ class HardDriveSet {
       );
       if (boot.isNotEmpty) break;
     }
-    boot = boot.isEmpty ? images.first : boot;
+
+    if (boot.isEmpty) {
+      // Nothing named itself the system drive, so choose rather than settle
+      // for whatever sorts first.
+      //
+      // Alphabetical order is actively wrong here and quietly so. An
+      // AmigaVision folder holds AmigaVision.hdf beside
+      // AmigaVision-Saves.hdf, and '-' sorts before '.', so the FIRST image
+      // is the 84MB saves drive -- which mounts perfectly, boots nothing, and
+      // leaves the machine on the insert-disk screen with no clue that the
+      // 10GB drive next to it was the one wanted.
+      //
+      // Skip the ones that name themselves as not-the-system, then take the
+      // largest of what remains: a system drive is not the small one.
+      final List<String> candidates = images
+          .where(
+            (String image) => !_notBootNames.any(
+              _basename(image).toLowerCase().contains,
+            ),
+          )
+          .toList();
+      final List<String> pool = candidates.isEmpty ? images : candidates;
+      pool.sort((String a, String b) {
+        final int bySize = (sizes[b] ?? 0).compareTo(sizes[a] ?? 0);
+        if (bySize != 0) return bySize;
+        return _basename(a).toLowerCase().compareTo(_basename(b).toLowerCase());
+      });
+      boot = pool.first;
+    }
 
     final List<String> shared = sharedFolders.toSet().toList()..sort();
     return HardDriveSet(
@@ -192,6 +239,7 @@ class HardDriveSet {
         .replaceAll(r'\', '/')
         .replaceAll(RegExp(r'/+$'), '');
     final Map<String, List<String>> grouped = <String, List<String>>{};
+    final Map<String, int> sizes = <String, int>{};
     for (final MediaFile file in index.of(FileCategory.hardDrives)) {
       final String path = file.path.replaceAll(r'\', '/');
       if (!path.toLowerCase().startsWith('${root.toLowerCase()}/')) continue;
@@ -200,13 +248,76 @@ class HardDriveSet {
       if (slash <= 0) continue; // a loose image, not a packaged setup
       final String folder = '$root/${relative.substring(0, slash)}';
       grouped.putIfAbsent(folder, () => <String>[]).add(file.path);
+      sizes[file.path] = file.size;
+    }
+
+    // Folders under HardDrives that hold no image at all are DIRECTORY
+    // mounts: an Amiga volume as plain files, which is what a real hard disk
+    // copied off the machine looks like, and what an installed Workbench with
+    // its tools on it looks like. The core has always been able to mount one
+    // -- config_generator writes filesystem2= for exactly this -- but nothing
+    // ever offered one, because this function is built from the index's list
+    // of hard-drive IMAGES and a folder of ordinary files contributes none.
+    // So the setup existed, could be described, and was unreachable.
+    //
+    // That is the "add the option to select an HD directory, like in WinUAE"
+    // request, and half of "I can't get WB 3.1 to boot and find a way to load
+    // DOpus": both are a directory of files, not an HDF.
+    //
+    // No walk is needed to find them. The index has already been scanned, so
+    // a child folder that contributed nothing to `grouped` contains no image
+    // by definition -- which is the whole test.
+    final List<HardDriveSet> directorySets = <HardDriveSet>[];
+    try {
+      for (final FileSystemEntity entry
+          in Directory(root).listSync(followLinks: false)) {
+        final String folder = entry.path.replaceAll(r'\', '/');
+        final String name = _basename(folder);
+        if (name.startsWith('.')) continue;
+        if (grouped.containsKey(folder)) continue;
+        // A SYMLINKED folder counts too, and has to be asked about rather
+        // than type-tested.
+        //
+        // listSync(followLinks: false) reports a link to a directory as a
+        // Link, not a Directory, so an `is! Directory` test silently drops
+        // it -- and a symlink is exactly how someone points the library at a
+        // 25GB distribution they already keep elsewhere instead of storing it
+        // twice. Asking the path whether a directory exists there covers both
+        // without following links anywhere else.
+        final Directory directory = Directory(folder);
+        if (!directory.existsSync()) continue;
+        // An empty folder is somewhere the user has not put anything yet, not
+        // a drive. Mounting it would give them an empty DH0 and no clue why.
+        bool hasContents;
+        try {
+          hasContents = directory.listSync(followLinks: false).any(
+            (FileSystemEntity child) => !_basename(child.path).startsWith('.'),
+          );
+        } on FileSystemException {
+          continue;
+        }
+        if (!hasContents) continue;
+        directorySets.add(
+          HardDriveSet(
+            folder: folder,
+            bootDrive: folder,
+            drives: const <String>[],
+            directoryMount: true,
+          ),
+        );
+      }
+    } on FileSystemException {
+      // No HardDrives folder yet, or no permission to list it. The image-based
+      // sets below are unaffected.
     }
 
     final List<HardDriveSet> sets = <HardDriveSet>[
+      ...directorySets,
       for (final MapEntry<String, List<String>> group in grouped.entries)
         fromPaths(
           group.key,
           group.value,
+          sizes: sizes,
           sharedFolders: <String>[
             for (final String name in const <String>[
               'Shared',

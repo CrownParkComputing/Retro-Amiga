@@ -74,4 +74,5 @@ flutter:
     - assets/roms/aros-rom.bin
     - assets/roms/aros-ext.bin
     - assets/images/retro_recomp_logo.png
+    - assets/images/app_icon.png
     - assets/machines/

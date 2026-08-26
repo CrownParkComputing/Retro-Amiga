@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../data/config_generator.dart';
 import '../data/config_parser.dart';
 import '../data/config_store.dart';
 import '../data/emulator_settings.dart';
@@ -187,7 +188,10 @@ class _ConfigEditorScreenState extends State<ConfigEditorScreen> {
                   onChanged: (bool v) =>
                       _update(settings.copyWith(cpuCompatible: v)),
                 ),
-                if (settings.cpuModel >= 68020)
+                // Not on iOS: see jitAvailable. A switch that is ignored is
+                // worse than no switch, because the config then says JIT and
+                // the machine plainly is not any faster.
+                if (jitAvailable && settings.cpuModel >= 68020)
                   _Switch(
                     label: 'JIT',
                     help:

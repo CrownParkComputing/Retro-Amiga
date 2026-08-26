@@ -32,7 +32,20 @@ class _WobbleJoystickState extends State<WobbleJoystick>
   late final AnimationController _springController;
   Animation<Offset>? _springAnim;
 
-  Offset _knobOffset = Offset.zero;
+  /// Where the knob is and whether it is pushed, as something the painter can
+  /// watch directly.
+  ///
+  /// This was widget state, set through setState -- once per touch move while
+  /// the stick is being used, and once per display frame for the whole of the
+  /// spring-back. Every one of those rebuilt this widget and its subtree to
+  /// change two numbers that only the painter reads. On the tablets the store
+  /// reviews came from that is a rebuild storm running for exactly as long as
+  /// the player is holding a direction, which is to say all the time.
+  ///
+  /// A notifier handed to CustomPainter.repaint goes straight to the render
+  /// object: no rebuild, no layout, just the repaint that was always needed.
+  final _KnobState _knob = _KnobState();
+
   bool _up = false, _down = false, _left = false, _right = false;
 
   @override
@@ -47,6 +60,7 @@ class _WobbleJoystickState extends State<WobbleJoystick>
   @override
   void dispose() {
     _springController.dispose();
+    _knob.dispose();
     super.dispose();
   }
 
@@ -54,12 +68,11 @@ class _WobbleJoystickState extends State<WobbleJoystick>
 
   void _emit(bool up, bool down, bool left, bool right) {
     if (up == _up && down == _down && left == _left && right == _right) return;
-    setState(() {
-      _up = up;
-      _down = down;
-      _left = left;
-      _right = right;
-    });
+    _up = up;
+    _down = down;
+    _left = left;
+    _right = right;
+    _knob.setActive(_active);
     widget.onDirections?.call(_up, _down, _left, _right);
   }
 
@@ -74,7 +87,7 @@ class _WobbleJoystickState extends State<WobbleJoystick>
     if (dist > maxTravel) {
       delta = Offset.fromDirection(delta.direction, maxTravel);
     }
-    setState(() => _knobOffset = delta);
+    _knob.setOffset(delta);
 
     final deadZone = radius * 0.18;
     if (dist < deadZone) {
@@ -102,10 +115,10 @@ class _WobbleJoystickState extends State<WobbleJoystick>
   }
 
   void _release() {
-    final begin = _knobOffset;
+    final begin = _knob.offset;
     _springAnim = Tween<Offset>(begin: begin, end: Offset.zero).animate(
       CurvedAnimation(parent: _springController, curve: Curves.elasticOut),
-    )..addListener(() => setState(() => _knobOffset = _springAnim!.value));
+    )..addListener(() => _knob.setOffset(_springAnim!.value));
     _springController
       ..value = 0
       ..forward();
@@ -133,10 +146,7 @@ class _WobbleJoystickState extends State<WobbleJoystick>
             // too.
             child: RepaintBoundary(
               child: CustomPaint(
-                painter: _WobblePainter(
-                  knobOffset: _knobOffset,
-                  active: _active,
-                ),
+                painter: _WobblePainter(_knob),
                 size: Size(widget.size, widget.size),
               ),
             ),
@@ -147,11 +157,34 @@ class _WobbleJoystickState extends State<WobbleJoystick>
   }
 }
 
-class _WobblePainter extends CustomPainter {
-  final Offset knobOffset;
-  final bool active;
+/// The knob's position and whether it is pushed, as a repaint source.
+///
+/// Notifies only on a real change, so a touch move that lands on the same
+/// pixel -- and the tail of a spring-back, which converges -- costs nothing.
+class _KnobState extends ChangeNotifier {
+  Offset offset = Offset.zero;
+  bool active = false;
 
-  _WobblePainter({required this.knobOffset, required this.active});
+  void setOffset(Offset next) {
+    if (next == offset) return;
+    offset = next;
+    notifyListeners();
+  }
+
+  void setActive(bool next) {
+    if (next == active) return;
+    active = next;
+    notifyListeners();
+  }
+}
+
+class _WobblePainter extends CustomPainter {
+  final _KnobState state;
+
+  const _WobblePainter(this.state) : super(repaint: state);
+
+  Offset get knobOffset => state.offset;
+  bool get active => state.active;
 
   static const _baseFill = Color(0x445F6670);
   static const _baseStroke = Color(0x99D6DADF);
@@ -235,6 +268,5 @@ class _WobblePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _WobblePainter old) =>
-      old.knobOffset != knobOffset || old.active != active;
+  bool shouldRepaint(covariant _WobblePainter old) => old.state != state;
 }

@@ -16,6 +16,7 @@ String gen(EmulatorSettings settings) => ConfigGenerator.generate(
 
 void main() {
   _hardfileTests();
+  _bigImageTests();
   group('header and always-present keys', () {
     test('starts with the header the core expects', () {
       expect(
@@ -453,6 +454,66 @@ void _hardfileTests() {
       ).split('\n').where((String l) => l.startsWith('hardfile2=')).toList();
       expect(lines, hasLength(2));
       expect(lines.every((String l) => l.contains(',ide')), isTrue);
+    });
+  });
+}
+
+void _bigImageTests() {
+  group('images past the IDE limit', () {
+    String genWith(EmulatorSettings s, Map<String, int> sizes) =>
+        ConfigGenerator.generate(
+          s,
+          isDirectoryPath: (String p) => false,
+          hasRdb: (String p) => true,
+          sizeOf: (String p) => sizes[p] ?? 0,
+        );
+
+    test('a 10GB RDB image goes on uaehf, not the emulated IDE', () {
+      // AmigaVision: one 10GB image plus a small saves drive. Two drives, so
+      // the old rule chose IDE -- which addresses 32 bits of byte offset and
+      // therefore cannot boot past 4GB. It mounted and booted nothing.
+      const String big = '/hd/AmigaVision.hdf';
+      const String saves = '/hd/AmigaVision-Saves.hdf';
+      final String out = genWith(
+        const EmulatorSettings(
+          baseModel: AmigaModel.a1200,
+          hardDrives: <String>[big, saves],
+        ),
+        <String, int>{big: 10 * 1024 * 1024 * 1024, saves: 84 * 1024 * 1024},
+      );
+      expect(out, contains('uae0'));
+      expect(out, isNot(contains('ide0')));
+    });
+
+    test('small RDB images still use the IDE the machine really has', () {
+      const String a = '/hd/Work.hdf';
+      final String out = genWith(
+        const EmulatorSettings(
+          baseModel: AmigaModel.a1200,
+          hardDrives: <String>[a],
+        ),
+        <String, int>{a: 512 * 1024 * 1024},
+      );
+      expect(out, contains('ide0'));
+    });
+
+    test('one oversized drive moves the whole set off the IDE', () {
+      // The boot drive is what matters, and splitting a two-drive set across
+      // two controllers buys nothing.
+      const String big = '/hd/Huge.hdf';
+      const String small = '/hd/Small.hdf';
+      final String out = genWith(
+        const EmulatorSettings(
+          baseModel: AmigaModel.a1200,
+          hardDrives: <String>[big, small],
+        ),
+        <String, int>{big: 25 * 1024 * 1024 * 1024, small: 100 * 1024 * 1024},
+      );
+      // The machine still HAS an IDE controller (ide=a600/a1200); what must
+      // not happen is a drive being attached to it.
+      expect(out, isNot(contains('ide0')));
+      expect(out, isNot(contains('ide1')));
+      expect(out, contains('uae0'));
     });
   });
 }

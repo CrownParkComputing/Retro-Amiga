@@ -145,6 +145,11 @@ class AmigaCore {
         'uae4arm_host_framebuffer_serial',
       );
 
+  late final int Function() _texturePosted = _lib
+      .lookupFunction<Uint64 Function(), int Function()>(
+        'uae4arm_host_texture_posted',
+      );
+
   late final void Function(Pointer<Int32>, Pointer<Int32>) _framebufferSize =
       _lib
           .lookupFunction<
@@ -352,6 +357,41 @@ class AmigaCore {
   /// JSEM_MODE for port 1: 3 = joystick, 7 = CD32 pad.
   void setPortMode(int jsemMode) => _setExternalControllerMode(jsemMode);
 
+  late final void Function() _swapPadPort = _lib
+      .lookupFunction<Void Function(), void Function()>(
+        'uae4arm_host_swap_pad_port',
+      );
+  late final int Function() _padPort = _lib
+      .lookupFunction<Int32 Function(), int Function()>(
+        'uae4arm_host_pad_port',
+      );
+
+  /// Moves the pad to the Amiga's other port, live.
+  ///
+  /// Most games read a joystick in port 1, which is where the pad starts. A
+  /// large minority of the older ones read port 0 -- the mouse port -- and on
+  /// real hardware you moved the plug. Without this they cannot be played at
+  /// all: the controls work perfectly and the game is not listening to them.
+  ///
+  /// Silently does nothing on a core too old to have the export, which is the
+  /// same as the machine it was built for having no way to swap.
+  void swapPadPort() {
+    try {
+      _swapPadPort();
+    } on ArgumentError {
+      // Older core: the button will simply not move anything.
+    }
+  }
+
+  /// Which port the pad is in: 1 by default, 0 after an odd number of swaps.
+  int get padPort {
+    try {
+      return _padPort();
+    } on ArgumentError {
+      return 1;
+    }
+  }
+
   void mouseMove(int dx, int dy) => _mouseMove(dx, dy);
   void mouseButton(int button, bool pressed) => _mouseButton(button, pressed);
 
@@ -397,6 +437,37 @@ class AmigaCore {
       _frameWidth.value.toDouble(),
       _frameHeight.value.toDouble(),
     );
+  }
+
+  /// The serial of the last frame the platform's texture sink accepted, or 0
+  /// if none ever has.
+  ///
+  /// The panel uses this to decide whether the texture path is really working.
+  /// It is not enough that a texture was created: a platform can hand back a
+  /// surface that cannot be written to -- Flutter's SurfaceProducer is an
+  /// ImageReader in ImageFormat.PRIVATE, which refuses a CPU lock -- and the
+  /// symptom is a black picture with perfectly good sound, because nothing in
+  /// the path treats a refused present as an error. If frames are being
+  /// published and none is being posted, the panel drops the texture and takes
+  /// the copy-and-decode route instead.
+  ///
+  /// 0 on a core too old to have the symbol, which reads the same as "not
+  /// working" and falls back for the same reason.
+  int texturePostedSerial() {
+    try {
+      return _texturePosted();
+    } on ArgumentError {
+      return 0;
+    }
+  }
+
+  /// The serial of the newest frame the core has published. 0 before the first.
+  int publishedSerial() {
+    try {
+      return _framebufferSerial();
+    } on ArgumentError {
+      return 0;
+    }
   }
 
   /// The current frame, or null before the core has drawn one.

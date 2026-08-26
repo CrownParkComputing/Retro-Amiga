@@ -8,6 +8,8 @@ import '../widgets/amiga_logo.dart';
 import '../widgets/boing_backdrop.dart';
 import '../widgets/sidebar_style.dart';
 import '../widgets/workbench_sidebar.dart';
+import '../data/amiga_system.dart';
+import '../data/app_log.dart';
 import '../data/app_prefs.dart';
 import '../data/file_category.dart';
 import '../data/config_store.dart';
@@ -28,7 +30,7 @@ import '../emulator.dart';
 import '../widgets/sidebar.dart';
 import 'about_panel.dart';
 import 'compliance_panel.dart';
-import 'audio_panel.dart';
+import 'av_panel.dart';
 import 'configurations_screen.dart';
 import 'history_screen.dart';
 import 'input_panel.dart';
@@ -37,7 +39,6 @@ import 'music_panel.dart';
 import 'pad_designer_screen.dart';
 import 'resume_panel.dart';
 import 'settings_panel.dart';
-import 'video_panel.dart';
 
 /// The home screen: a nav rail and one content panel, floating over the boing
 /// ball.
@@ -71,6 +72,17 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   /// What the scan found and how many configs there are, for the scroller.
   MediaIndex _index = const MediaIndex.empty();
   int _configCount = 0;
+
+  /// The systems on this device — AGS, AmigaVision, PiMiga, a WHDLoad pack, a
+  /// folder of Amiga files — each with a config already written for it.
+  ///
+  /// They sit on the rail as entries of their own. Before this, getting into
+  /// one meant the full wizard: choose a mode, pick the folder, answer
+  /// questions about a machine you have no basis for answering, save, then
+  /// find it in a list — when every one of those answers was knowable from
+  /// the folder the moment it was scanned.
+  List<AmigaSystem> _systems = const <AmigaSystem>[];
+
   Timer? _idleTimer;
   StreamSubscription<MediaIndex>? _mediaChanges;
 
@@ -93,6 +105,11 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   /// True once _attachPad has registered the pad with the core. Until then no
   /// pad event may be pushed in: see _padTarget.
   bool _padAttached = false;
+
+  /// Which Amiga port the pad is in, mirrored from the core for the button's
+  /// label. 1 is the default and the one most games read.
+  int _padPort = 1;
+  Timer? _portPollTimer;
 
   /// While a game runs, the rail and the strip step aside after a few
   /// seconds so the picture gets the whole screen. Any touch that is not on
@@ -119,15 +136,21 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   /// SECOND finger is what asks for the chrome. Nothing in Workbench or in a
   /// mouse-driven game uses two fingers, and it is a gesture that cannot
   /// happen by accident while pointing at something.
+  /// A touch on the bare picture. The outer Listener has already counted it.
+  ///
+  /// In mouse mode a single finger belongs to the Amiga -- popping the chrome
+  /// over the top of a game on every click is the report this exists to
+  /// avoid -- and two fingers are handled above for the whole session.
   void _onPictureTouched(PointerDownEvent event) {
-    _pointers.add(event.pointer);
-    if (_mouseMode && _pointers.length < 2) return;
+    if (_mouseMode) return;
     _wakeChrome();
   }
 
   void _wakeChrome() {
     _chromeTimer?.cancel();
-    _chromeTimer = Timer(const Duration(seconds: 3), () {
+    // Long enough to reach. Three seconds is about how long it takes to
+    // notice the strip has appeared, by which point it was going again.
+    _chromeTimer = Timer(const Duration(seconds: 8), () {
       if (mounted && Emulator.playing.value) {
         setState(() => _chromeVisible = false);
       }
@@ -179,6 +202,7 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
       _chromeTimer?.cancel();
       _padAttached = false;
       _sessionStarted = false;
+      _padPort = 1;
       _pointers.clear();
       // Give the buttons back to the launcher: a handheld navigates its own
       // menus with the same stick it just played with.
@@ -314,7 +338,12 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     _startMusic();
     _mediaChanges = MediaLibrary.changes.listen((MediaIndex index) {
       if (mounted) setState(() => _index = index);
+      // A rescan can turn up a system that was not there before -- a card
+      // swapped in, a pack finished copying -- so the rail is rebuilt with
+      // the library rather than only at startup.
+      unawaited(_configureSystems());
     });
+    unawaited(_configureSystems());
     WidgetsBinding.instance.addObserver(_watch);
     GameController.connected.addListener(_onControllerChanged);
     // Bound once, not per session. These no-op unless a core is running, and
@@ -359,6 +388,7 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     _mediaChanges?.cancel();
     _idleTimer?.cancel();
     _chromeTimer?.cancel();
+    _portPollTimer?.cancel();
     super.dispose();
   }
 
@@ -376,11 +406,14 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
         )
         .map((MediaFile f) => f.path)
         .toList();
-    final List<SavedConfig> configs = await ConfigStore.list();
+    // Counted as the user's own setups, matching what Games shows.
+    final int made = (await ConfigStore.list())
+        .where((SavedConfig c) => !c.isCollection)
+        .length;
     if (mounted) {
       setState(() {
         _index = index;
-        _configCount = configs.length;
+        _configCount = made;
       });
     }
     await MusicPlayer.playRandom(tunes);
@@ -418,6 +451,33 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     text.write('KICKSTART YOUR MEMORY  ***  ');
     return text.toString();
   }
+
+  /// Writes a config for every system on the device, once, and puts them on
+  /// the rail.
+  ///
+  /// Cheap on the common path: [AmigaSystems.configure] only writes where a
+  /// config is missing, so the usual startup is a directory listing and a
+  /// compare.
+  Future<void> _configureSystems() async {
+    try {
+      AppLog.info('systems', 'looking for collections');
+      final MediaIndex index = await MediaLibrary.cached();
+      final List<AmigaSystem> systems = await AmigaSystems.configure(
+        index: index,
+        // The real pixels, not logical ones: an RTG screen is measured in
+        // the display's own pixels, and on a handheld the two differ by a
+        // factor of two or more.
+        screen: mounted ? View.of(context).physicalSize : null,
+      );
+      if (!mounted) return;
+      setState(() => _systems = systems);
+    } on Object catch (e) {
+      // A library that cannot be read is the scan's problem to report, not
+      // this one's; the rail simply has no systems on it.
+      AppLog.warn('systems', 'could not configure: $e');
+    }
+  }
+
 
   Future<void> _refreshSession() async {
     // Something to resume is either a game still running or a save state from
@@ -518,6 +578,10 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
                                   ),
                                   child: Sidebar(
                                     destinations: <SidebarDestination>[
+                                      // Systems are named for what they are
+                                      // -- AGS, PiMiga -- because that is
+                                      // what the user came for; the folder
+                                      // they live in is detail.
                                       for (final WorkbenchSection s
                                           in _sections)
                                         SidebarDestination(
@@ -544,7 +608,12 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
                                 const SizedBox(width: AmigaMetrics.gutter),
                               ],
                               Expanded(
-                                child: Container(
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: <Widget>[
+                                    Expanded(
+                                      child: Container(
                                   padding: EdgeInsets.all(_hideChrome ? 0 : 10),
                                   decoration: _hideChrome
                                       ? const BoxDecoration(
@@ -562,11 +631,20 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
                                   clipBehavior: Clip.antiAlias,
                                   child: _panel(),
                                 ),
+                                    ),
+                                    // Under the picture, not across the whole
+                                    // window. The strip used to span the rail
+                                    // as well, which put the in-game buttons
+                                    // half a screen away from the thing they
+                                    // act on and left them sitting under a
+                                    // rail they have nothing to do with.
+                                    if (!_hideChrome) _statusBar(),
+                                  ],
+                                ),
                               ),
                             ],
                           ),
                         ),
-                        if (!_hideChrome) _statusBar(),
                       ],
                     ),
                   ),
@@ -614,8 +692,22 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
           // in the same words, a few pixels away -- and when the rail is
           // hidden the panel's own heading says it. A third copy was just
           // noise next to the toggle.
-          const Spacer(),
-          if (inGame) ..._sessionTools(Emulator.inProcessCore!),
+          if (!inGame) const Spacer(),
+          // In a session the tools take the whole strip, evenly spaced.
+          //
+          // They used to be pushed hard against the right-hand edge with a
+          // fixed 8px between them, which on a tablet left two thirds of the
+          // strip empty and put seven 32px targets in a clump under the
+          // right thumb. Spread out they are the same size but further apart,
+          // which is what makes them hard to hit by accident -- and the
+          // spacing is the strip's own, so it works at any width.
+          if (inGame)
+            Expanded(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: _sessionTools(Emulator.inProcessCore!),
+              ),
+            ),
         ],
       ),
     );
@@ -638,7 +730,9 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
       bool active = false,
     }) {
       return Padding(
-        padding: const EdgeInsets.only(left: 8),
+        // Only enough to keep two targets from touching at the narrowest
+        // width; spaceEvenly supplies the rest.
+        padding: const EdgeInsets.symmetric(horizontal: 2),
         child: Material(
           color: active ? lit : idle,
           shape: const CircleBorder(),
@@ -663,12 +757,32 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     }
 
     return <Widget>[
-      // Right-to-left in the C64's order: keyboard nearest the hand, then
-      // the pad, then the rest. No stop -- the rail is the way out.
+      // Close, and it is first because it is the one people look for.
+      //
+      // There was no way out but the rail, which is a row of destinations --
+      // so leaving a game meant going somewhere else, and there was nothing
+      // on screen that said "stop". Pause is next to it and does something
+      // different: it writes the snapshot and puts the session on the Resume
+      // shelf. This one just ends it.
+      tool(
+        tag: 'closeFab',
+        icon: Icons.close,
+        tip: 'Close the game',
+        onPressed: () async {
+          Emulator.forgetBackgroundPause();
+          Emulator.closeInProcess();
+          await _refreshSession();
+          if (!mounted) return;
+          setState(() {
+            _sidebarHidden = false;
+            _section = WorkbenchSection.collections;
+          });
+        },
+      ),
       tool(
         tag: 'pauseFab',
         icon: Icons.pause,
-        tip: 'Pause and keep your place',
+        tip: 'Pause — saves your place on the Resume shelf',
         onPressed: () async {
           // Pause leaves the machine, the way the C64 front end's does. It
           // used to stop the picture in place, which meant the paused state
@@ -723,6 +837,33 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
         icon: Icons.swap_horiz,
         tip: 'Swap disk',
         onPressed: () => _swapDisk(core),
+      ),
+      // Which socket the stick is in. Most games read port 1 and that is
+      // where it starts; plenty of the older ones read port 0, and on the
+      // real machine you moved the plug. Without this those games are
+      // unplayable with controls that are working perfectly.
+      tool(
+        tag: 'portFab',
+        icon: Icons.electrical_services,
+        tip: _padPort == 1
+            ? 'Joystick in port 1 — tap for port 0'
+            : 'Joystick in port 0 (mouse port) — tap for port 1',
+        active: _padPort == 0,
+        onPressed: () {
+          // Let go of everything first: a direction still held when the
+          // device moves ports leaves the Amiga holding it in the port the
+          // pad just left, with nothing left to release it.
+          core.padReleaseAll(_pad);
+          core.swapPadPort();
+          // The core applies it on its own thread, so read it back rather
+          // than assume; a core too old to have the export never moves and
+          // the button correctly stays where it is.
+          _portPollTimer?.cancel();
+          _portPollTimer = Timer(const Duration(milliseconds: 120), () {
+            if (!mounted) return;
+            setState(() => _padPort = core.padPort);
+          });
+        },
       ),
       tool(
         tag: 'mouseFab',
@@ -812,7 +953,26 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     // into this process.
     final AmigaCore? core = Emulator.inProcessCore;
     if (core != null && Emulator.playing.value) {
-      return Stack(
+      // Watching the WHOLE session, not just the picture.
+      //
+      // The inner Listener below only covers AmigaScreenView, and the pad is
+      // a LATER sibling in this Stack -- so a touch on the pad never reached
+      // it. On a handheld the pad covers most of the panel, which meant that
+      // once the strip had hidden itself after a few seconds there was
+      // almost nowhere left to tap to bring it back, and the toolbar looked
+      // dead. Two fingers anywhere now wakes it, pad included.
+      //
+      // Listener observes without consuming, so nothing below loses a touch.
+      return Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (PointerDownEvent event) {
+          _pointers.add(event.pointer);
+          if (_pointers.length >= 2) _wakeChrome();
+        },
+        onPointerUp: (PointerUpEvent event) => _pointers.remove(event.pointer),
+        onPointerCancel: (PointerCancelEvent event) =>
+            _pointers.remove(event.pointer),
+        child: Stack(
         children: <Widget>[
           Positioned.fill(
             // Observe the picture touch as an ANCESTOR of the mouse surface.
@@ -824,9 +984,6 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
             child: Listener(
               behavior: HitTestBehavior.translucent,
               onPointerDown: _onPictureTouched,
-              onPointerUp: (PointerUpEvent event) => _pointers.remove(event.pointer),
-              onPointerCancel: (PointerCancelEvent event) =>
-                  _pointers.remove(event.pointer),
               child: AmigaScreenView(
                 core: core,
                 // No pollInterval: only the fallback path has a frame-rate
@@ -862,9 +1019,12 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
               ),
             ),
         ],
+        ),
       );
     }
     switch (_section) {
+      case WorkbenchSection.collections:
+        return _collectionsPage();
       case WorkbenchSection.files:
         return const LibraryPanel();
       case WorkbenchSection.setups:
@@ -887,15 +1047,104 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
         return const MusicPanel();
       case WorkbenchSection.settings:
         return const SettingsPanel();
-      case WorkbenchSection.video:
-        return const VideoPanel();
+      case WorkbenchSection.av:
+        return const AvPanel();
       case WorkbenchSection.input:
         return const InputPanel();
-      case WorkbenchSection.audio:
-        return const AudioPanel();
       case WorkbenchSection.resume:
         return const ResumePanel();
     }
+  }
+}
+
+/// Everything on this device that is ready to run, and a Play button each.
+///
+/// One page rather than a rail entry per system. The rail is a fixed set of
+/// places; a row that appears when a card is plugged in and vanishes when it
+/// is pulled out is not a place, it is content — and a rail that grows a row
+/// per collection stops being navigable on a handheld.
+///
+/// Each row is backed by a real config, written when the system was found, so
+/// anything here can also be opened and edited from Games like any other
+/// setup. Nothing about these is a special case except that nobody had to
+/// build them.
+extension _CollectionsPage on _WorkbenchScreenState {
+  Widget _collectionsPage() {
+    if (_systems.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              const Text('🗂️', style: TextStyle(fontSize: 40)),
+              const SizedBox(height: 14),
+              Text(
+                'No collections yet',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Put AGS, AmigaVision, PiMiga, a WHDLoad pack — or just a '
+                'folder of Amiga files — in its own folder under HardDrives, '
+                'then rescan on the Files page. Each one found is set up with '
+                'the machine it needs and appears here.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AmigaColors.textDim, height: 1.45),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return ListView.separated(
+      padding: const EdgeInsets.all(14),
+      itemCount: _systems.length,
+      separatorBuilder: (BuildContext context, int i) =>
+          const SizedBox(height: 10),
+      itemBuilder: (BuildContext context, int i) {
+        final AmigaSystem system = _systems[i];
+        return Card(
+          color: AmigaColors.card,
+          child: ListTile(
+            leading: Text(system.icon, style: const TextStyle(fontSize: 28)),
+            title: Text(system.name),
+            subtitle: Text(
+              '${system.machineSummary}\n'
+              '${system.isFolder ? 'Folder as DH0' : '${system.set.driveCount} drive(s)'}'
+              ' · ${system.set.name}',
+              style: const TextStyle(fontSize: 11),
+            ),
+            isThreeLine: true,
+            trailing: FilledButton.icon(
+              onPressed: () => _playSystem(system),
+              icon: const Icon(Icons.play_arrow, size: 18),
+              label: const Text('Play'),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _playSystem(AmigaSystem system) async {
+    // Repaired first, exactly as Resume does it.
+    //
+    // repairConfigFile fills in a Kickstart the config was written without,
+    // and that is not a theoretical case here: a config generated before the
+    // ROM was chosen names none, and a machine with no ROM does not report an
+    // error -- it starts, maps nothing and shows a black screen, which reads
+    // as the emulator being broken rather than the setup being incomplete.
+    // It also re-points paths at this install, which matters on a card that
+    // may have been moved between devices.
+    await ConfigStore.repairConfigFile(system.configPath);
+    await Emulator.launch(<String>[
+      '--rescan-roms',
+      '--config',
+      system.configPath,
+      '-G',
+    ]);
   }
 }
 

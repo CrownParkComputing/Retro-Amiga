@@ -22,6 +22,8 @@ class EmulatorSettings {
     this.cycleExact = false,
     this.ntsc = false,
     this.useRtg = false,
+    this.rtgMemory = 16, // megabytes of Zorro III graphics memory
+    this.rtgTrueColour = false,
     // Memory
     this.chipRam = 1, // half-megabytes: 1 = 512KB, 2 = 1MB, 4 = 2MB
     this.slowRam = 2, // 256KB units
@@ -84,6 +86,16 @@ class EmulatorSettings {
   final bool cycleExact;
   final bool ntsc;
   final bool useRtg;
+
+  /// Zorro III graphics memory, in megabytes.
+  ///
+  /// 16 is plenty for a Workbench screen; a full-resolution 32-bit screen on
+  /// a modern handheld is not a Workbench screen. 1920x1080 at 4 bytes a
+  /// pixel is 8MB for ONE buffer, and the card holds more than one.
+  final int rtgMemory;
+
+  /// Offer the deep colour modes, not just the 8- and 16-bit ones.
+  final bool rtgTrueColour;
 
   /// Whether [path] names a build made for a graphics card.
   ///
@@ -287,6 +299,8 @@ class EmulatorSettings {
     bool? cd32Fmv,
     String? whdloadFilename,
     List<String>? hardDrives,
+    int? rtgMemory,
+    bool? rtgTrueColour,
     String? soundOutput,
     int? soundFreq,
     String? soundChannels,
@@ -338,6 +352,8 @@ class EmulatorSettings {
       cd32Fmv: cd32Fmv ?? this.cd32Fmv,
       whdloadFilename: whdloadFilename ?? this.whdloadFilename,
       hardDrives: hardDrives ?? this.hardDrives,
+      rtgMemory: rtgMemory ?? this.rtgMemory,
+      rtgTrueColour: rtgTrueColour ?? this.rtgTrueColour,
       soundOutput: soundOutput ?? this.soundOutput,
       soundFreq: soundFreq ?? this.soundFreq,
       soundChannels: soundChannels ?? this.soundChannels,

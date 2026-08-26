@@ -88,7 +88,13 @@ class _ConfigurationsScreenState extends State<ConfigurationsScreen> {
   Future<void> _reload() async {
     setState(() => _loading = true);
     try {
-      final List<SavedConfig> configs = await ConfigStore.list();
+      // Setups the user built, not the ones the app generated for the
+      // collections it found. Those live on the Collections page: listing a
+      // generated row per pack on the card buries the handful somebody
+      // actually made, which is what this screen is for.
+      final List<SavedConfig> configs = (await ConfigStore.list())
+          .where((SavedConfig c) => !c.isCollection)
+          .toList();
       if (mounted) {
         setState(() {
           _configs = configs;

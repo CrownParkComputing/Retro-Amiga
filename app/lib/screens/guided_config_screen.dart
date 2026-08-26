@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../data/amiga_model.dart';
+import '../data/config_generator.dart';
 import '../data/config_store.dart';
 import '../data/emulator_settings.dart';
 import '../data/file_category.dart';
+import '../data/amiga_collections.dart';
 import '../data/hard_drive_set.dart';
 import '../data/media_library.dart';
 import '../data/zeb_whdload_support.dart';
@@ -442,23 +444,14 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
               }),
               onSetSelected: (HardDriveSet set) => setState(() {
                 _selectedDriveSetName = set.name;
-                if (set.looksLikeAgs) {
-                  // AGS runs its selector on RTG and expects a quick A1200.
-                  // Preserve the ROM already chosen by this wizard.
-                  _settings = EmulatorSettings.fromModel(AmigaModel.a1200)
-                      .copyWith(
-                        cpuSpeed: 'max',
-                        fpuModel: 68882,
-                        jitCacheSize: 16384,
-                        chipRam: 4,
-                        z3Ram: 512,
-                        useRtg: true,
-                        romFile: _settings.romFile,
-                        hardDrives: set.allMounts,
-                      );
-                } else {
-                  _settings = _settings.copyWith(hardDrives: set.allMounts);
-                }
+                // Every big distribution needs a machine of its own, and
+                // picking the folder is the only moment at which the app can
+                // know which one. See AmigaCollection.machine: this used to
+                // be AGS's recipe written out here and nothing for the rest.
+                final AmigaCollection? known = AmigaCollection.detect(set);
+                _settings = known == null
+                    ? _settings.copyWith(hardDrives: set.allMounts)
+                    : known.machine(_settings, set.allMounts);
               }),
             );
           case WizardMode.whdload:
@@ -755,6 +748,21 @@ class _HardDriveStepState extends State<_HardDriveStep> {
     );
   }
 
+  /// What this setup is and what it will be configured as.
+  ///
+  /// The profile is named because it is about to rewrite the machine -- CPU,
+  /// memory, graphics card -- and a wizard that silently replaces what the
+  /// user picked two steps ago is how a setup ends up mysterious.
+  static String _describe(HardDriveSet set) {
+    final AmigaCollection? known = AmigaCollection.detect(set);
+    final String what = set.directoryMount
+        ? 'Folder mounted as a drive'
+        : '${set.driveCount} drive(s) · boots '
+              '${set.bootDrive.split(RegExp(r'[/\\]')).last}';
+    if (known == null) return what;
+    return '$what\n${known.displayName} · ${known.machineBlurb}';
+  }
+
   bool _selected(HardDriveSet set) {
     if (set.allMounts.length != widget.selected.length) return false;
     for (int i = 0; i < set.allMounts.length; i++) {
@@ -775,8 +783,11 @@ class _HardDriveStepState extends State<_HardDriveStep> {
             children: <Widget>[
               Expanded(
                 child: Text(
-                  'HardDrives is scanned automatically. Keep AGS_UAE and each '
-                  'dated WHDLoad setup in its own folder.',
+                  'HardDrives is scanned automatically. Put each setup in its '
+                  'own folder: HDF images, or an Amiga volume as plain files '
+                  '— an installed Workbench, or a drive copied off a real '
+                  'machine — which is mounted as a drive the way WinUAE '
+                  'mounts a directory.',
                 ),
               ),
             ],
@@ -784,22 +795,21 @@ class _HardDriveStepState extends State<_HardDriveStep> {
           const SizedBox(height: 8),
           if (sets.isNotEmpty) ...<Widget>[
             SizedBox(
-              height: (sets.length * 78.0).clamp(78.0, 220.0),
+              height: (sets.length * 92.0).clamp(92.0, 260.0),
               child: ListView(
                 children: <Widget>[
                   for (final HardDriveSet set in sets)
                     Card(
                       child: ListTile(
                         leading: Icon(
-                          set.looksLikeAgs ? Icons.grid_view : Icons.storage,
+                          set.directoryMount
+                              ? Icons.folder_open
+                              : set.looksLikeAgs
+                              ? Icons.grid_view
+                              : Icons.storage,
                         ),
                         title: Text(set.name),
-                        subtitle: Text(
-                          '${set.driveCount} drive(s) · boots '
-                          '${set.bootDrive.split(RegExp(r'[/\\]')).last}'
-                          '${set.looksLikeAgs ? ' · AGS/RTG' : ''}'
-                          '${set.looksLikeZebWhdload ? ' · Zeb WHDLoad' : ''}',
-                        ),
+                        subtitle: Text(_describe(set)),
                         trailing: _selected(set)
                             ? const Icon(Icons.check_circle)
                             : const Icon(Icons.chevron_right),
@@ -842,7 +852,10 @@ class _TailorStep extends StatelessWidget {
     // What the machine can actually use. A console has no Zorro bus, so RTG is
     // not an option however fast its CPU; and the JIT has nothing to translate
     // below a 68020. Showing either would be a switch that does nothing.
-    final bool canJit = settings.cpuModel >= 68020 && settings.baseModel.canJit;
+    // jitAvailable is the platform's answer: iOS cannot make memory writable
+    // and executable, so a JIT switch there is a control that does nothing.
+    final bool canJit =
+        jitAvailable && settings.cpuModel >= 68020 && settings.baseModel.canJit;
     final bool canRtg = settings.baseModel.canRtg;
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -864,6 +877,25 @@ class _TailorStep extends StatelessWidget {
             onChanged: (bool on) => onChanged(
               settings.copyWith(jitCacheSize: on ? 16384 : 0, jitFpu: on),
             ),
+          )
+        // Said, not hidden.
+        //
+        // A missing switch reads as a missing feature, and the obvious
+        // conclusion is that this app is the poorer version. It is not: no
+        // emulator on the App Store has a JIT, because Apple does not permit
+        // memory to be both writable and executable, and that is the whole
+        // mechanism. Naming the reason is the difference between a limitation
+        // and a defect.
+        else if (!jitAvailable && settings.cpuModel >= 68020)
+          const ListTile(
+            leading: Icon(Icons.info_outline),
+            title: Text('JIT acceleration is not available on iOS'),
+            subtitle: Text(
+              'Apple does not allow an app to generate code as it runs, so no '
+              'App Store emulator can offer it. The machine below is set up '
+              'to run as well as it can without one.',
+            ),
+            isThreeLine: true,
           ),
         if (canRtg)
           SwitchListTile(

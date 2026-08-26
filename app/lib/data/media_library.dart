@@ -674,7 +674,12 @@ class MediaLibrary {
     final String? root = await MediaFolder.displayPath();
     if (root == null || root.isEmpty) return const <MediaFile>[];
 
-    final List<FolderEntry> entries = await MediaFolder.list();
+    // Reported as it goes: this call is the slow half of a scan on a card
+    // with a real collection on it, and it used to look like nothing was
+    // happening at all.
+    final List<FolderEntry> entries = await MediaFolder.list(
+      onCount: (int found) => onProgress?.call(found, root),
+    );
     final List<MediaFile> files = <MediaFile>[];
     for (final FolderEntry entry in entries) {
       final FileCategory? category = FileCategory.fromPath(entry.name);

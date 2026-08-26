@@ -139,6 +139,23 @@ class MainActivity : FlutterActivity() {
 		// The shared folder, for installs that can still read it.
 		candidates.add(sharedAmigaDirectory())
 
+		// ...and the same shared folder on EVERY mounted volume, card included.
+		//
+		// This is where a real collection actually lives. getExternalFilesDirs
+		// covers this app's own folder on each volume and
+		// getExternalStorageDirectory covers the shared folder on the internal
+		// one -- but nothing covered the shared folder on a removable card,
+		// which is exactly where someone with a 900GB card puts 25GB of Amiga
+		// files. The library sat at /storage/XXXX-XXXX/Retro-Applications/Amiga
+		// and was not on the list, so the launcher adopted an empty internal
+		// skeleton and truthfully reported nothing found.
+		//
+		// Readable only where the app holds all-files access, which is why the
+		// filter below is `canRead` rather than an assumption.
+		for (volume in storageVolumeDirectories()) {
+			candidates.add(File(volume, SHARED_AMIGA_FOLDER))
+		}
+
 		val readable = candidates.filter { it.isDirectory && it.canRead() }
 
 		// Non-empty first, then by how much is in them. listFiles() is null on a
@@ -150,6 +167,63 @@ class MainActivity : FlutterActivity() {
 				} ?: 0
 			}
 			.map { it.absolutePath }
+	}
+
+	/**
+	 * The root directory of every mounted storage volume, internal and
+	 * removable.
+	 *
+	 * StorageManager is the only API that names removable volumes:
+	 * Environment.getExternalStorageDirectory() returns the internal emulated
+	 * volume and nothing else, whatever it is asked.
+	 */
+	private fun storageVolumeDirectories(): List<File> {
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return emptyList()
+		val manager = getSystemService(android.os.storage.StorageManager::class.java)
+			?: return emptyList()
+		return manager.storageVolumes.mapNotNull { it.directory }
+	}
+
+	/**
+	 * The Storage Access Framework's name for [path], or null if it cannot be
+	 * expressed as one.
+	 *
+	 * A tree URI is built from a volume id and a path relative to that volume
+	 * -- "primary:Retro-Applications/Amiga", or "FEDD-B1FF:..." for a card.
+	 * The picker's starting location used to hardcode "primary", so it always
+	 * opened on internal storage: a user whose collection is on a card, which
+	 * is most of them, saw an Amiga folder that looked right, tapped "Use this
+	 * folder", and granted the empty internal skeleton. The scan then reported
+	 * nothing found, correctly, about a folder they had never meant to choose.
+	 */
+	private fun documentIdFor(path: File): String? {
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+		val manager = getSystemService(android.os.storage.StorageManager::class.java)
+			?: return null
+		val volume = try {
+			manager.getStorageVolume(path)
+		} catch (error: IllegalArgumentException) {
+			null
+		} ?: return null
+		val id = if (volume.isPrimary) "primary" else volume.uuid ?: return null
+		val root = volume.directory?.absolutePath ?: return null
+		val relative = path.absolutePath
+			.removePrefix(root)
+			.trim('/')
+		return "$id:$relative"
+	}
+
+	/**
+	 * Where the picker should open: the volume that actually holds a library.
+	 *
+	 * Falls back to the internal shared folder, which is what it always used,
+	 * when nothing else is readable.
+	 */
+	private fun pickerStartDocumentId(subfolder: String?): String? {
+		val best = amigaLibraryRoots().firstOrNull()?.let(::File)
+			?: sharedAmigaDirectory()
+		val target = if (subfolder.isNullOrBlank()) best else File(best, subfolder)
+		return documentIdFor(if (target.isDirectory) target else best)
 	}
 
 	/**
@@ -434,14 +508,26 @@ class MainActivity : FlutterActivity() {
 		val uri: Uri? = if (resultCode == RESULT_OK) data?.data else null
 		if (uri == null) {
 			// Backed out of the picker: not an error, just no folder.
+			android.util.Log.i(
+				"RetroAmiga",
+				"folder picker returned no folder (resultCode=$resultCode)",
+			)
 			pending.success(null)
 			return
 		}
 		try {
 			MediaFolderAccess.persist(this, uri)
+			android.util.Log.i("RetroAmiga", "folder grant persisted: $uri")
 			pending.success(uri.toString())
 		} catch (e: SecurityException) {
-			pending.error("not_persistable", "the folder grant could not be kept", null)
+			// Named, because "the folder grant could not be kept" on its own
+			// has never once been enough to work out which folder or why.
+			android.util.Log.w("RetroAmiga", "grant NOT persisted for $uri", e)
+			pending.error(
+				"not_persistable",
+				"the folder grant could not be kept: ${e.message}",
+				null,
+			)
 		}
 	}
 
@@ -572,12 +658,21 @@ class MainActivity : FlutterActivity() {
 							)
 						} else {
 							pendingFolderPick = result
+							val subfolder = call.argument<String>("initialSubfolder")
 							MediaFolderAccess.pickFolder(
 								this,
-								call.argument<String>("initialSubfolder"),
+								subfolder,
+								// Open on the volume that actually has a
+								// library, not always on internal storage.
+								pickerStartDocumentId(subfolder),
 							)
 						}
 					}
+
+					// Polled while listMediaFolder runs, so the wizard can
+					// show the walk moving instead of a frozen zero.
+					"mediaFolderScanCount" ->
+						result.success(MediaFolderAccess.scanned.get())
 
 					"forgetMediaFolder" -> {
 						MediaFolderAccess.release(this)

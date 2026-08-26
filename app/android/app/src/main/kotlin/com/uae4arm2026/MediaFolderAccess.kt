@@ -36,19 +36,57 @@ object MediaFolderAccess {
 	 */
 	private const val preferredAmigaPath = "Retro-Applications/Amiga"
 
-	/**
-	 * The persisted tree, or null if the user has not granted one.
-	 *
-	 * Read back from the system rather than from our own preferences: a grant
-	 * can be revoked in Settings, and the app must notice that rather than
-	 * carry on with a URI it can no longer read.
-	 */
-	fun grantedTree(activity: Activity): Uri? =
-		activity.contentResolver.persistedUriPermissions
-			.firstOrNull { it.isReadPermission }
-			?.uri
+	private const val PREFS = "media_folder_access"
+	private const val KEY_CHOSEN = "chosen_tree_uri"
 
-	fun pickFolder(activity: Activity, initialSubfolder: String? = null) {
+	/**
+	 * The tree the user actually chose, or null if they have not chosen one.
+	 *
+	 * The grant is still verified against the system on every call, because it
+	 * can be revoked in Settings and the app has to notice rather than carry
+	 * on with a URI it can no longer read. What is NOT taken from the system
+	 * is WHICH grant to use.
+	 *
+	 * That used to be `persistedUriPermissions.firstOrNull { isReadPermission }`,
+	 * and persistedUriPermissions has no defined order. With more than one
+	 * grant held -- which happens whenever a release fails quietly, and the
+	 * failure is a swallowed SecurityException -- successive calls could
+	 * answer with different folders. The symptom was the wizard finding a
+	 * card full of games, then "Scan again" reporting the same library as
+	 * empty, because the second scan had silently switched back to the
+	 * internal folder picked earlier.
+	 *
+	 * So the choice is remembered explicitly and only falls back to whatever
+	 * the system lists if the remembered one is gone.
+	 */
+	fun grantedTree(activity: Activity): Uri? {
+		val held = activity.contentResolver.persistedUriPermissions
+			.filter { it.isReadPermission }
+			.map { it.uri }
+		if (held.isEmpty()) return null
+
+		val prefs = activity.getSharedPreferences(PREFS, Activity.MODE_PRIVATE)
+		val chosen = prefs.getString(KEY_CHOSEN, null)?.let(Uri::parse)
+		if (chosen != null && held.contains(chosen)) return chosen
+
+		// Remembered grant revoked, or a grant taken by an older build that
+		// never recorded one. Adopt what is there and record it, so the next
+		// call cannot answer differently.
+		val fallback = held.first()
+		prefs.edit().putString(KEY_CHOSEN, fallback.toString()).apply()
+		return fallback
+	}
+
+	/**
+	 * @param startDocumentId where to open, as "volume:path" -- see
+	 *   MainActivity.documentIdFor. Null falls back to the internal volume,
+	 *   which is only the right answer when there is nothing on a card.
+	 */
+	fun pickFolder(
+		activity: Activity,
+		initialSubfolder: String? = null,
+		startDocumentId: String? = null,
+	) {
 		val safeSubfolder = initialSubfolder
 			?.replace('\\', '/')
 			?.split('/')
@@ -60,9 +98,10 @@ object MediaFolderAccess {
 		} else {
 			"$preferredAmigaPath/$safeSubfolder"
 		}
+		val documentId = startDocumentId ?: "primary:$initialPath"
 		val initialTree = Uri.parse(
 			"content://com.android.externalstorage.documents/document/" +
-				Uri.encode("primary:$initialPath")
+				Uri.encode(documentId)
 		)
 		val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
 			addFlags(
@@ -75,6 +114,7 @@ object MediaFolderAccess {
 			// storage, as required by Play policy.
 			putExtra(DocumentsContract.EXTRA_INITIAL_URI, initialTree)
 		}
+		android.util.Log.i("RetroAmiga", "opening picker at $initialTree")
 		activity.startActivityForResult(intent, REQUEST_PICK_FOLDER)
 	}
 
@@ -105,9 +145,18 @@ object MediaFolderAccess {
 			uri,
 			Intent.FLAG_GRANT_READ_URI_PERMISSION
 		)
+		// Recorded rather than inferred. See grantedTree.
+		activity.getSharedPreferences(PREFS, Activity.MODE_PRIVATE)
+			.edit()
+			.putString(KEY_CHOSEN, uri.toString())
+			.apply()
 	}
 
 	fun release(activity: Activity) {
+		activity.getSharedPreferences(PREFS, Activity.MODE_PRIVATE)
+			.edit()
+			.remove(KEY_CHOSEN)
+			.apply()
 		for (permission in activity.contentResolver.persistedUriPermissions) {
 			try {
 				activity.contentResolver.releasePersistableUriPermission(
@@ -138,9 +187,22 @@ object MediaFolderAccess {
 	 * minutes. One projection per directory is the difference between a scan
 	 * that finishes and one the user kills.
 	 */
+	/**
+	 * How many files the walk in progress has seen, for a caller that wants to
+	 * show it moving.
+	 *
+	 * The enumeration is one call that returns everything at once, so until
+	 * now the only honest thing the UI could say while it ran was nothing --
+	 * and on a card holding a big collection that is a counter sitting at zero
+	 * for a minute or more, which reads as a hang. Dart polls this while it
+	 * waits.
+	 */
+	val scanned = java.util.concurrent.atomic.AtomicInteger(0)
+
 	fun enumerate(resolver: ContentResolver, tree: Uri, fileLimit: Int): List<Entry> {
 		val rootId = DocumentsContract.getTreeDocumentId(tree)
 		val found = ArrayList<Entry>()
+		scanned.set(0)
 		// Directories still to visit, as (documentId, relative path).
 		val pending = ArrayDeque<Pair<String, String>>()
 		pending.add(rootId to "")
@@ -178,6 +240,7 @@ object MediaFolderAccess {
 						pending.add(id to childPath)
 					} else {
 						found.add(Entry(id, name, parentPath, size))
+						scanned.lazySet(found.size)
 					}
 				}
 			}
