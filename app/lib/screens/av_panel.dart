@@ -59,6 +59,42 @@ class _AvPanelState extends State<AvPanel> {
             ),
           ),
         ),
+        const SettingsHeader('On-screen controls'),
+        Card(
+          color: AmigaColors.card,
+          child: Column(
+            children: <Widget>[
+              ValueListenableBuilder<bool>(
+                valueListenable: AppPrefs.showPad,
+                builder: (BuildContext context, bool on, _) => SwitchListTile(
+                  secondary: const Icon(Icons.videogame_asset),
+                  title: const Text('On-screen pad'),
+                  subtitle: const Text(
+                    'A stick and buttons drawn over the game. Hidden '
+                    'automatically whenever a real controller is connected, '
+                    'whatever this says.',
+                  ),
+                  value: on,
+                  onChanged: (bool v) => AppPrefs.setShowPad(value: v),
+                ),
+              ),
+              ValueListenableBuilder<bool>(
+                valueListenable: AppPrefs.showKeyboard,
+                builder: (BuildContext context, bool on, _) => SwitchListTile(
+                  secondary: const Icon(Icons.keyboard),
+                  title: const Text('On-screen keyboard'),
+                  subtitle: const Text(
+                    'The Amiga keyboard over the game. For Workbench and '
+                    'anything that asks you to type; most games want the '
+                    'stick instead.',
+                  ),
+                  value: on,
+                  onChanged: (bool v) => AppPrefs.setShowKeyboard(value: v),
+                ),
+              ),
+            ],
+          ),
+        ),
         const SettingsHeader('Workbench music'),
         Card(
           color: AmigaColors.card,
@@ -72,19 +108,6 @@ class _AvPanelState extends State<AvPanel> {
                 MusicPlayer.setVolume(v);
               },
               onChangeEnd: (double v) => AppPrefs.setMusicVolume(v),
-            ),
-          ),
-        ),
-        const SettingsHeader('Per machine'),
-        const Card(
-          color: AmigaColors.card,
-          child: ListTile(
-            leading: Icon(Icons.tune),
-            title: Text('Resolution, aspect, crop, LEDs, sound output'),
-            subtitle: Text(
-              'These belong to the machine, not the app, so they are set per '
-              'config: Configs, long-press, Edit — the Picture and Sound '
-              'sections.',
             ),
           ),
         ),

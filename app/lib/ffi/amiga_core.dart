@@ -7,6 +7,8 @@ import 'dart:ui' as ui show Size;
 
 import 'package:ffi/ffi.dart';
 
+import '../data/app_log.dart';
+
 /// The emulator core, running INSIDE the launcher process.
 ///
 /// Why this exists: the Android app used to start a second, full-screen
@@ -209,10 +211,17 @@ class AmigaCore {
   /// quit and WAITED for first. This is the launcher's serialisation of the
   /// run-quit-run lifecycle the Linux harness exercises natively.
   Future<void> start(List<String> args) async {
+    AppLog.info('session', 'start requested (running=$_running)');
     if (_running) {
       await stopAndWait();
     } else if (_exited != null && !_exited!.isCompleted) {
-      await _exited!.future.timeout(const Duration(seconds: 20));
+      try {
+        await _exited!.future.timeout(const Duration(seconds: 20));
+      } on TimeoutException {
+        // See stopAndWait: a run that will not end must not stop the next one
+        // from being attempted.
+        _running = false;
+      }
     }
     _running = true;
     // On before the core starts, so the log covers the startup that fails.
@@ -283,7 +292,20 @@ class AmigaCore {
     quit();
     final exited = _exited;
     if (exited != null && !exited.isCompleted) {
-      await exited.future.timeout(const Duration(seconds: 20));
+      try {
+        await exited.future.timeout(const Duration(seconds: 20));
+      } on TimeoutException {
+        AppLog.warn('session', 'the core did not exit within 20s; letting go');
+        // A run that refuses to end used to throw out of here, through
+        // start(), and out of whatever tried to launch a game -- leaving
+        // _running true for the life of the app, so every later launch waited
+        // twenty seconds and failed the same way. The app could not start
+        // another game until it was killed.
+        //
+        // One wedged run is bad; a launcher that can never launch again is
+        // worse. Let go of it and let the next attempt happen.
+        _running = false;
+      }
     }
   }
 
@@ -378,8 +400,11 @@ class AmigaCore {
   void swapPadPort() {
     try {
       _swapPadPort();
-    } on ArgumentError {
-      // Older core: the button will simply not move anything.
+    } on ArgumentError catch (e) {
+      // A core without the export. Said out loud rather than swallowed: a
+      // button that silently does nothing is the hardest kind of fault to
+      // report, and this one was reported as "pressing port does not toggle".
+      AppLog.warn('ports', 'core has no swap_pad_port: $e');
     }
   }
 
@@ -387,7 +412,8 @@ class AmigaCore {
   int get padPort {
     try {
       return _padPort();
-    } on ArgumentError {
+    } on ArgumentError catch (e) {
+      AppLog.warn('ports', 'core has no pad_port: $e');
       return 1;
     }
   }

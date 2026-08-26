@@ -76,8 +76,11 @@ bool fill_window(void* /*context*/)
 	 * at most the frames already queued at the old size.
 	 */
 	if (want_width != g_geometry_width || want_height != g_geometry_height) {
+		/* RGBX, not RGBA: the alpha byte is ignored by definition, so the
+		 * publisher does not have to walk two million pixels a frame forcing
+		 * it opaque. See the note in host_framebuffer.cpp. */
 		if (ANativeWindow_setBuffersGeometry(g_window, want_width, want_height,
-				WINDOW_FORMAT_RGBA_8888) != 0)
+				WINDOW_FORMAT_RGBX_8888) != 0)
 			return false;
 		g_geometry_width = want_width;
 		g_geometry_height = want_height;

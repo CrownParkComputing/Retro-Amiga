@@ -35,8 +35,12 @@ class Emulator {
     return core;
   }
 
+  /// What is running, for the emulator screen to name. Empty for a bare boot
+  /// with no config behind it.
+  static String playingTitle = '';
+
   /// True while the in-process core is running, so the workbench knows to
-  /// show the machine in its panel.
+  /// open the emulator screen.
   static final ValueNotifier<bool> playing = ValueNotifier<bool>(false);
 
   /// True when the app backgrounded a running game, so it is known whether
@@ -107,6 +111,7 @@ class Emulator {
         if (dot > 0) name = name.substring(0, dot);
         final String support = await HostPaths.appSupport();
         core.setSession('$support/states/$name.uss', configPath, name);
+        playingTitle = name;
       }
       playing.value = true;
       return;
@@ -126,6 +131,16 @@ class Emulator {
   static void stopInProcess() {
     final AmigaCore? core = inProcessCore;
     if (core == null || !core.isRunning) return;
+    // Running again before it is told to stop.
+    //
+    // A paused core's main loop is not turning, so the quit it is handed sits
+    // in the queue unread: the run never returns, start() waits twenty
+    // seconds for an isolate that will never exit, and the app is left
+    // believing a session is still going. Nothing can be launched after that.
+    //
+    // The commands are a queue in order, so the resume is applied before the
+    // save and the quit that follow it.
+    core.setPaused(false);
     // Leaving keeps your place, the way the C64 front end's pause does: the
     // snapshot is written before the machine goes down, and Resume offers it.
     core.saveSession();
@@ -142,6 +157,8 @@ class Emulator {
   static void closeInProcess() {
     final AmigaCore? core = inProcessCore;
     if (core == null || !core.isRunning) return;
+    // See stopInProcess: a paused core cannot act on a quit.
+    core.setPaused(false);
     core.quit();
     playing.value = false;
   }

@@ -198,6 +198,23 @@ final class AmigaTexturePlugin: NSObject {
     let toBGRA: [UInt8] = [2, 1, 0, 3]
     _ = vImagePermuteChannels_ARGB8888(&image, &image, toBGRA, vImage_Flags(kvImageNoFlags))
 
+    // ...and the alpha byte forced opaque, HERE.
+    //
+    // The emulator leaves the top byte zero, and this buffer is 32BGRA, which
+    // Core Video and Flutter both take at its word: every pixel of a
+    // perfectly correct picture is fully transparent and the screen shows
+    // whatever is behind it.
+    //
+    // It used to be done by the publisher, for every frame on every platform.
+    // That is two million read-modify-writes a frame at the resolutions an
+    // RTG collection asks for, on the thread whose scheduling latency causes
+    // audio underruns -- so it moved to the consumers that actually care.
+    // Android does not: its window is RGBX, where the byte is ignored by
+    // definition. iOS does, and pays for it in one more SIMD pass over a
+    // buffer already in cache from the permute above.
+    _ = vImageOverwriteChannelsWithScalar_ARGB8888(
+      255, &image, &image, 0x1, vImage_Flags(kvImageNoFlags))
+
     lock.lock()
     spare = ready
     ready = buffer

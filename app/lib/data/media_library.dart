@@ -191,13 +191,39 @@ class RomPicker {
   /// is that the machine demonstrably runs on a ROM nobody had to supply, so
   /// quietly picking up a Kickstart the user happens to have imported would
   /// defeat it -- and would do so invisibly, since both boot.
+  /// The smallest and largest a Kickstart can be.
+  ///
+  /// Amiga ROMs are 256KB, 512KB or 1MB, give or take the 11-byte header an
+  /// encrypted Amiga Forever image carries. The range is deliberately wider
+  /// than that -- the point is not to identify a ROM, it is to throw out the
+  /// things that plainly are not one.
+  static const int _minRomBytes = 128 * 1024;
+  static const int _maxRomBytes = 2 * 1024 * 1024;
+
+  /// Whether this file could be a Kickstart at all.
+  ///
+  /// The ROM category matches on extension -- rom, kick, key, bin -- and two
+  /// of those are far too broad to stand alone. A PiMiga install carries
+  /// `HippoPlayer.key` and `cin.key`, which are registration keyfiles of 64
+  /// and 232 bytes, and `RiftData.bin`, which is 26MB of game data. All three
+  /// were being counted as Kickstarts and offered as ones.
+  ///
+  /// Size is enough to settle it and needs no file opened: nothing that is
+  /// not roughly ROM-sized is a ROM. `rom.key` is the exception worth naming
+  /// -- Cloanto's decryption key, which the core needs beside an encrypted
+  /// ROM but which is not itself a machine to boot.
+  static bool looksLikeRom(MediaFile file) {
+    if (file.name.toLowerCase() == 'rom.key') return false;
+    return file.size >= _minRomBytes && file.size <= _maxRomBytes;
+  }
+
   static MediaFile? kickstartFor(
     AmigaModel model,
     List<MediaFile> roms, {
     bool preferAros = false,
   }) {
     final List<MediaFile> candidates = roms
-        .where((MediaFile r) => !_isExtended(r.name))
+        .where((MediaFile r) => !_isExtended(r.name) && looksLikeRom(r))
         .toList();
     if (candidates.isEmpty) return null;
 
@@ -242,13 +268,14 @@ class RomPicker {
     }
     if (!model.needsExtendedRom) return null;
     final String machine = model == AmigaModel.cd32 ? 'cd32' : 'cdtv';
-    for (final MediaFile rom in roms) {
+    final List<MediaFile> candidates = roms.where(looksLikeRom).toList();
+    for (final MediaFile rom in candidates) {
       if (_isExtended(rom.name) && _mentions(rom.name, <String>[machine])) {
         return rom;
       }
     }
     // An extended ROM with no machine in its name is still better than none.
-    for (final MediaFile rom in roms) {
+    for (final MediaFile rom in candidates) {
       if (_isExtended(rom.name)) return rom;
     }
     return null;

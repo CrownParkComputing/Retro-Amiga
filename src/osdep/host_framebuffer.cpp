@@ -141,26 +141,32 @@ void uae4arm_host_publish_frame_pixels(const void* pixels_in, int width,
 	fb.height = h;
 
 	/*
-	 * Row by row, forcing alpha opaque.
+	 * Row by row, and nothing else.
 	 *
 	 * Row by row because the surface is padded to its pitch, and a straight
 	 * memcpy of w*h*4 would walk into the padding and shear the picture.
 	 *
-	 * Alpha because the format is ABGR8888 but the emulator treats the top
-	 * byte as unused padding and leaves it zero. Handed to a compositor that
-	 * respects alpha -- which Flutter does -- every pixel of a perfectly
-	 * correct picture is fully transparent, and what the user sees is the
-	 * panel's own background. That looks exactly like "the core is drawing
-	 * nothing", which is what it cost to work out the first time.
+	 * This used to force the alpha byte opaque as it went, pixel by pixel.
+	 * The format is ABGR8888 and the emulator leaves the top byte zero, so a
+	 * compositor that respects alpha draws a perfectly correct picture
+	 * entirely transparent -- which looks exactly like the core drawing
+	 * nothing, and cost a long evening the first time.
+	 *
+	 * But it is the wrong place to fix it. This runs for every published
+	 * frame, and at the 1920x1080 an RTG collection asks for that is two
+	 * million read-modify-writes fifty times a second, on the thread whose
+	 * scheduling latency is what audio underruns are made of. The two
+	 * consumers can each deal with alpha far more cheaply: the compositor is
+	 * handed an RGBX window, where the byte is ignored by definition, and the
+	 * Dart fallback -- which is rare, and already copying -- ORs it in as it
+	 * copies. See uae4arm_host_copy_framebuffer.
 	 */
 	const uint8_t* src = static_cast<const uint8_t*>(pixels_in);
 	uint32_t* dst = fb.pixels.data();
+	const size_t row_bytes = static_cast<size_t>(w) * sizeof(uint32_t);
 	for (int y = 0; y < h; y++) {
-		const uint32_t* row =
-			reinterpret_cast<const uint32_t*>(src + static_cast<size_t>(y) * pitch);
-		uint32_t* out = dst + static_cast<size_t>(y) * w;
-		for (int x = 0; x < w; x++)
-			out[x] = row[x] | 0xFF000000u;
+		std::memcpy(dst + static_cast<size_t>(y) * w,
+			src + static_cast<size_t>(y) * pitch, row_bytes);
 	}
 
 	{
@@ -217,7 +223,19 @@ int uae4arm_host_copy_framebuffer(uint32_t* dst, int dst_capacity,
 	const int count = fb.width * fb.height;
 	if (count <= 0 || count > dst_capacity)
 		return 0;
-	std::memcpy(dst, fb.pixels.data(), static_cast<size_t>(count) * sizeof(uint32_t));
+	/*
+	 * Alpha forced opaque HERE, not in the publisher.
+	 *
+	 * This is the fallback path -- decodeImageFromPixels, which reads the
+	 * frame as rgba8888 and would draw a fully transparent picture over the
+	 * panel's own background. It already costs a copy and a decode per frame
+	 * and is only reached where the external texture could not be used, so a
+	 * pass over the pixels here is affordable in a way the same pass on every
+	 * published frame is not.
+	 */
+	const uint32_t* src = fb.pixels.data();
+	for (int i = 0; i < count; i++)
+		dst[i] = src[i] | 0xFF000000u;
 	return count;
 }
 

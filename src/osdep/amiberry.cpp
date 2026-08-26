@@ -4226,6 +4226,24 @@ bool handle_events()
 		//inputdevicefunc_mouse.read();
 		//inputdevicefunc_joystick.read();
 		inputdevice_handle_inputcode();
+
+		/*
+		 * The host's commands, WHILE PAUSED. Without this, pause is a door
+		 * that only opens inwards.
+		 *
+		 * Everything the launcher asks of the core -- resume, quit, save the
+		 * session, swap a disk -- arrives on a queue drained from the event
+		 * pump above this function, and that pump does not run while
+		 * pause_emulation is set. So a paused core could not be told to
+		 * resume, because the resume itself is a queued command; and it could
+		 * not be told to quit, because so is the quit.
+		 *
+		 * What the user saw: pausing a game wedged it permanently. Leaving
+		 * then took twenty seconds to time out, and every launch after that
+		 * paid the same twenty seconds, so the launcher looked like it had
+		 * stopped being able to start anything.
+		 */
+		drain_host_pad_events();
 	}
 	if (was_paused && (!pause_emulation || quit_program))
 	{

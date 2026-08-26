@@ -149,22 +149,23 @@ void uae4arm_host_set_desktop_fullscreen(bool enabled);
  * in. Port 1 keeps the first joystick either way. */
 void uae4arm_host_set_port0_joystick(bool joystick);
 
-/* Moves the pad the host is driving -- the on-screen one, or a physical
- * controller forwarded through uae4arm_host_pad_* -- to the other Amiga port,
- * live, in the middle of a game.
+/* Exchanges what is in the Amiga's two ports, live, in the middle of a game.
  *
  * Port 1 is where most games look for a joystick and is the default. A large
- * minority of the older ones read port 0 instead, the port the mouse is in,
- * and on the real machine you moved the plug. Without this they cannot be
- * played at all, however well the controls work: the pad is in the wrong
- * socket. The mouse leaves port 0 while the pad is there, exactly as it would
- * have done, and comes back on the second swap.
+ * minority of the older ones read port 0 instead, and on the real machine you
+ * moved the plug. Without this they cannot be played at all, however well the
+ * controls work: the stick is in the wrong socket.
+ *
+ * Both devices stay connected -- the mouse moves to the port the joystick has
+ * left, rather than being unplugged by it. Swapping ports to make a game
+ * respond is not a request to lose the pointer, and on Workbench, where a
+ * great many of these collections live, losing it strands you.
  *
  * Applied on the emulator thread, so it is safe to call while running. */
 void uae4arm_host_swap_pad_port(void);
 
-/* Which port the pad is in now: 1 by default, 0 after an odd number of
- * swaps. For a host that wants to say so on a button. */
+/* Which port the JOYSTICK is in now: 1 by default, 0 after an odd number of
+ * swaps. The mouse is always in the other one. */
 int uae4arm_host_pad_port(void);
 
 void uae4arm_host_set_correct_aspect(bool enabled);

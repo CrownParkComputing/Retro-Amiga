@@ -154,7 +154,15 @@ class _MediaChooserState extends State<MediaChooser> {
 
   @override
   Widget build(BuildContext context) {
-    final List<MediaFile> all = _index.of(widget.category);
+    // Kickstarts are filtered by more than their extension.
+    //
+    // The ROM category matches rom/kick/key/bin, and a real library has
+    // registration keyfiles and game data blobs that end that way too -- a
+    // 64-byte HippoPlayer.key has no business in a list of machines to boot.
+    // See RomPicker.looksLikeRom.
+    final List<MediaFile> all = widget.category == FileCategory.roms
+        ? _index.of(widget.category).where(RomPicker.looksLikeRom).toList()
+        : _index.of(widget.category);
     final List<String> initials = AlphabetFilter.from(
       all.map((MediaFile f) => f.name),
     );

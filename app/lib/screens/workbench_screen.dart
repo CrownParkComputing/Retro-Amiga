@@ -9,23 +9,18 @@ import '../widgets/boing_backdrop.dart';
 import '../widgets/sidebar_style.dart';
 import '../widgets/workbench_sidebar.dart';
 import '../data/amiga_system.dart';
+import 'emulator_screen.dart';
 import '../data/app_log.dart';
 import '../data/app_prefs.dart';
 import '../data/file_category.dart';
 import '../data/config_store.dart';
 import '../data/game_controller.dart';
 import '../data/media_library.dart';
-import '../data/pad_layout.dart';
-import '../data/pad_layout_store.dart';
 import '../data/music_picks.dart';
 import '../data/music_player.dart';
 import '../data/save_states.dart';
 import '../data/session.dart';
 import '../ffi/amiga_core.dart';
-import '../widgets/amiga_keyboard_overlay.dart';
-import '../widgets/amiga_screen_view.dart';
-import '../widgets/pad_overlay.dart';
-import '../widgets/media_chooser.dart';
 import '../emulator.dart';
 import '../widgets/sidebar.dart';
 import 'about_panel.dart';
@@ -36,7 +31,6 @@ import 'history_screen.dart';
 import 'input_panel.dart';
 import 'library_panel.dart';
 import 'music_panel.dart';
-import 'pad_designer_screen.dart';
 import 'resume_panel.dart';
 import 'settings_panel.dart';
 
@@ -64,10 +58,6 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   WorkbenchSection _section = WorkbenchSection.setups;
   bool _idle = false;
 
-  /// Whether the rail is collapsed. The status strip along the bottom owns
-  /// the toggle -- it is outside the rail because it is the only way back
-  /// once the rail is gone. Same arrangement as Retro-Dosbox and Retro-C64.
-  bool _sidebarHidden = false;
 
   /// What the scan found and how many configs there are, for the scroller.
   MediaIndex _index = const MediaIndex.empty();
@@ -91,79 +81,6 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   /// happens after quitting a game.
   bool _hasSession = false;
 
-  // In-process session controls, shown in the status strip while the machine
-  // is in the panel. Fill is AppPrefs.screenFill (remembered, and shared with
-  // the Video panel); the rest resets with the session.
-  bool _mouseMode = false;
-
-  /// Starts hidden when real hardware is attached: a handheld with its own
-  /// sticks should not have touch controls drawn over them. Set for real in
-  /// _startSession, which asks the host before the first frame of a game.
-  bool _padVisible = true;
-  bool _keyboardUp = false;
-
-  /// True once _attachPad has registered the pad with the core. Until then no
-  /// pad event may be pushed in: see _padTarget.
-  bool _padAttached = false;
-
-  /// Which Amiga port the pad is in, mirrored from the core for the button's
-  /// label. 1 is the default and the one most games read.
-  int _padPort = 1;
-  Timer? _portPollTimer;
-
-  /// While a game runs, the rail and the strip step aside after a few
-  /// seconds so the picture gets the whole screen. Any touch that is not on
-  /// an on-screen control brings them back -- the controls themselves do not,
-  /// because reaching for fire should never shuffle the layout mid-jump.
-  bool _chromeVisible = true;
-  Timer? _chromeTimer;
-
-  /// Pointers currently down on the picture, so a second finger can be told
-  /// from a first.
-  final Set<int> _pointers = <int>{};
-
-  /// A touch on the picture, which is not always a request for the chrome.
-  ///
-  /// It used to be: any pointer down brought the rail and the status strip
-  /// back. That is right when the touch IS the interface -- tapping the
-  /// picture to get at the controls -- and wrong the moment the touch is the
-  /// game's. In mouse mode every click is the game's, and a player driving a
-  /// mouse-led game got the chrome over the top of it on every single click.
-  /// The report read "whenever I try to use the mouse, it always takes me to
-  /// the menu, and I can't do anything in the game", which is precisely this.
-  ///
-  /// So in mouse mode a single pointer is left entirely to the Amiga, and a
-  /// SECOND finger is what asks for the chrome. Nothing in Workbench or in a
-  /// mouse-driven game uses two fingers, and it is a gesture that cannot
-  /// happen by accident while pointing at something.
-  /// A touch on the bare picture. The outer Listener has already counted it.
-  ///
-  /// In mouse mode a single finger belongs to the Amiga -- popping the chrome
-  /// over the top of a game on every click is the report this exists to
-  /// avoid -- and two fingers are handled above for the whole session.
-  void _onPictureTouched(PointerDownEvent event) {
-    if (_mouseMode) return;
-    _wakeChrome();
-  }
-
-  void _wakeChrome() {
-    _chromeTimer?.cancel();
-    // Long enough to reach. Three seconds is about how long it takes to
-    // notice the strip has appeared, by which point it was going again.
-    _chromeTimer = Timer(const Duration(seconds: 8), () {
-      if (mounted && Emulator.playing.value) {
-        setState(() => _chromeVisible = false);
-      }
-    });
-    if (!_chromeVisible && mounted) setState(() => _chromeVisible = true);
-  }
-
-  PadLayout _layout = PadLayout.defaults;
-
-  /// See the compliance case in [_panel].
-  CompliancePanel? _compliancePanel;
-
-  int get _pad => _layout.style == PadStyle.cd32 ? 2 : 1;
 
   /// Redraws for the Fill toggle, and does nothing else.
   ///
@@ -191,113 +108,60 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   /// would hijack the next launch too.
   void _onPlayingChanged() {
     if (!mounted) return;
-    setState(() {
-      _mouseMode = false;
-      _keyboardUp = false;
-      _chromeVisible = true;
-    });
     if (Emulator.playing.value) {
-      _wakeChrome();
-    } else {
-      _chromeTimer?.cancel();
-      _padAttached = false;
-      _sessionStarted = false;
-      _padPort = 1;
-      _pointers.clear();
-      // Give the buttons back to the launcher: a handheld navigates its own
-      // menus with the same stick it just played with.
-      unawaited(GameController.setGameRunning(false));
+      unawaited(_openEmulator());
+      return;
     }
-    if (Emulator.playing.value) _startSession();
+    // Give the buttons back to the launcher: a handheld navigates its own
+    // menus with the same stick it just played with. EmulatorScreen does this
+    // too when it is disposed; doing it here as well covers a session that
+    // ended without the screen being popped.
+    unawaited(GameController.setGameRunning(false));
   }
 
-  /// True while _startSession is in flight or has completed for the current
-  /// session, so the start-of-session work cannot be run twice over one game.
-  bool _sessionStarted = false;
+  /// True while the emulator's screen is on top, so a second launch does not
+  /// stack a second one over it.
+  bool _emulatorOpen = false;
 
-  /// A session has begun in the panel: load the pad layout the designer
-  /// saved and register the pad it asks for with the core.
+  /// Hands the session its own screen.
   ///
-  /// Guarded, because running this over a core that is already going re-enters
-  /// the input device table while the emulation thread is using it, and that
-  /// aborts the process out of Scudo rather than failing politely. One route
-  /// in is fixed (see _onScreenFillChanged); the guard is here so the next one
-  /// is a no-op rather than a crash report.
-  Future<void> _startSession() async {
-    if (_sessionStarted) return;
-    _sessionStarted = true;
-    final PadLayout layout = await PadLayoutStore.load();
-    // Ask before drawing: a controller already attached means the on-screen
-    // pad should never appear, rather than appear and then vanish.
-    final bool hasPad = await GameController.start();
-    if (!mounted) return;
-    setState(() {
-      _layout = layout;
-      _padVisible = !hasPad;
-    });
-    _bindPhysicalController();
-    unawaited(GameController.setGameRunning(true));
-    _attachPad();
-  }
-
-  /// A controller arriving or leaving mid-session.
-  ///
-  /// Plugging one in hides the touch pad; unplugging brings it back, because
-  /// otherwise a game becomes unplayable the moment a battery dies.
-  void _onControllerChanged() {
-    if (!mounted || !Emulator.playing.value) return;
-    setState(() => _padVisible = !GameController.connected.value);
-    _attachPad();
-  }
-
-  void _attachPad() {
+  /// Every launch path -- Collections, Games, Resume, the wizard, the library
+  /// -- ends up setting Emulator.playing, so this is the one place that has
+  /// to know, rather than six.
+  Future<void> _openEmulator() async {
+    if (_emulatorOpen) return;
     final AmigaCore? core = Emulator.inProcessCore;
-    if (core == null || !core.isRunning) return;
-    // Attached even when nothing is drawn. The pad is the DEVICE bound to
-    // port 1, not the picture: detaching it because a real controller is
-    // present would leave the port with nothing driving it, which is exactly
-    // what made a physical pad do nothing at all.
-    core.padAttach(_pad);
-    core.setPortMode(_layout.style == PadStyle.cd32 ? 7 : 3);
-    core.setOnscreenController(_padVisible ? _pad : 0);
-    _padAttached = true;
+    if (core == null) return;
+    _emulatorOpen = true;
+    AppLog.info('session', 'opening the emulator screen');
+    try {
+      final EmulatorExit? how = await Navigator.of(context).push<EmulatorExit>(
+        MaterialPageRoute<EmulatorExit>(
+          fullscreenDialog: true,
+          builder: (BuildContext context) =>
+              EmulatorScreen(core: core, title: Emulator.playingTitle),
+        ),
+      );
+      if (!mounted) return;
+      await _refreshSession();
+      if (!mounted) return;
+      setState(() {
+        // Pausing means coming back to it, so land on the shelf that offers
+        // it. Closing means done, so land where the games are.
+        _section = how == EmulatorExit.paused
+            ? WorkbenchSection.resume
+            : WorkbenchSection.collections;
+      });
+    } finally {
+      _emulatorOpen = false;
+      AppLog.info('session', 'emulator screen closed');
+    }
   }
 
-  /// Routes a physical controller into the same pad the touch controls drive.
-  ///
-  /// The core cannot see the hardware itself on this path: SDL learns about
-  /// Android controllers through SDLActivity's callbacks, and the in-process
-  /// core is a thread in the Flutter activity rather than an SDLActivity. So
-  /// the host forwards the events and they are pushed in here.
-  void _bindPhysicalController() {
-    GameController.onDirection = (bool l, bool r, bool u, bool d) {
-      final AmigaCore? core = _padTarget();
-      if (core == null) return;
-      core.padDirection(_pad, u, d, l, r);
-    };
-    GameController.onButton = (int button, bool pressed) {
-      final AmigaCore? core = _padTarget();
-      if (core == null) return;
-      core.padButton(_pad, button, pressed);
-    };
-  }
 
-  /// The core to push pad input into, or null if now is not the time.
-  ///
-  /// [_padAttached] is the load-bearing part. These calls reach the core's
-  /// input-device table, which registers a virtual pad on first use, and they
-  /// arrive on the platform thread while the emulator runs on its own. During
-  /// startup the core is building that table and parsing config through the
-  /// same string maps, and a pad event landing in the middle corrupted the
-  /// heap: an unordered_map::find on a half-built table, then SIGABRT out of
-  /// Scudo. Waiting until _attachPad has registered the device means the table
-  /// is built before anything else touches it.
-  AmigaCore? _padTarget() {
-    if (!_padAttached || !Emulator.playing.value) return null;
-    final AmigaCore? core = Emulator.inProcessCore;
-    if (core == null || !core.isRunning) return null;
-    return core;
-  }
+
+  /// Held rather than rebuilt: see the note where it is used.
+  CompliancePanel? _compliancePanel;
 
   Future<void> _adoptRequestedSection() async {
     try {
@@ -329,6 +193,10 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     super.initState();
     _adoptRequestedSection();
     AppPrefs.loadScreenFill();
+    // Read once at startup so the emulator screen and the A/V page agree
+    // from the first frame rather than after the first change.
+    AppPrefs.loadShowPad();
+    AppPrefs.loadShowKeyboard();
     AppPrefs.screenFill.addListener(_onScreenFillChanged);
     // The panel swaps to the machine when a session starts, and back when it
     // ends, without anything else having to know.
@@ -345,12 +213,6 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     });
     unawaited(_configureSystems());
     WidgetsBinding.instance.addObserver(_watch);
-    GameController.connected.addListener(_onControllerChanged);
-    // Bound once, not per session. These no-op unless a core is running, and
-    // binding them only when a game starts meant any path that reached the
-    // panel without going through _startSession left a controller doing
-    // nothing at all.
-    _bindPhysicalController();
     GameController.onAudioFocusChanged = (AudioFocus focus) {
       switch (focus) {
         case AudioFocus.gain:
@@ -380,15 +242,12 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     Emulator.playing.removeListener(_onPlayingChanged);
     AppPrefs.screenFill.removeListener(_onScreenFillChanged);
     WidgetsBinding.instance.removeObserver(_watch);
-    GameController.connected.removeListener(_onControllerChanged);
     GameController.onDirection = null;
     GameController.onButton = null;
     GameController.onAudioFocusChanged = null;
     unawaited(GameController.setGameRunning(false));
     _mediaChanges?.cancel();
     _idleTimer?.cancel();
-    _chromeTimer?.cancel();
-    _portPollTimer?.cancel();
     super.dispose();
   }
 
@@ -554,9 +413,7 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
                 ignoring: _idle && !Emulator.playing.value,
                 child: SafeArea(
                   child: Padding(
-                    padding: EdgeInsets.all(
-                      _hideChrome ? 0 : AmigaMetrics.gutter,
-                    ),
+                    padding: const EdgeInsets.all(AmigaMetrics.gutter),
                     // The shell every Retro-* front end composes the same
                     // way: root padding, the rail in a width-capped box, one
                     // content panel at radius 8 with 10px of padding, and a
@@ -571,7 +428,7 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: <Widget>[
-                              if (!_sidebarHidden && !_hideChrome) ...<Widget>[
+                              ...<Widget>[
                                 ConstrainedBox(
                                   constraints: BoxConstraints(
                                     maxWidth: amigaSidebarStyle.maxWidth(width),
@@ -608,18 +465,9 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
                                 const SizedBox(width: AmigaMetrics.gutter),
                               ],
                               Expanded(
-                                child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  children: <Widget>[
-                                    Expanded(
-                                      child: Container(
-                                  padding: EdgeInsets.all(_hideChrome ? 0 : 10),
-                                  decoration: _hideChrome
-                                      ? const BoxDecoration(
-                                          color: AmigaColors.panel,
-                                        )
-                                      : BoxDecoration(
+                                child: Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
                                           color: AmigaColors.panel,
                                           borderRadius: BorderRadius.circular(
                                             8,
@@ -630,16 +478,6 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
                                         ),
                                   clipBehavior: Clip.antiAlias,
                                   child: _panel(),
-                                ),
-                                    ),
-                                    // Under the picture, not across the whole
-                                    // window. The strip used to span the rail
-                                    // as well, which put the in-game buttons
-                                    // half a screen away from the thing they
-                                    // act on and left them sitting under a
-                                    // rail they have nothing to do with.
-                                    if (!_hideChrome) _statusBar(),
-                                  ],
                                 ),
                               ),
                             ],
@@ -658,370 +496,15 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   }
 
   /// Whether the machine has the whole screen right now.
-  bool get _hideChrome =>
-      Emulator.inProcessCore != null &&
-      Emulator.playing.value &&
-      !_chromeVisible;
-
-  /// The bottom strip, outside both the rail and the content panel: the
-  /// show/hide toggle and what is loaded. It always renders, even with the
-  /// rail hidden -- the toggle is the only way back once the rail is gone, so
-  /// it cannot live inside the rail it controls.
-  Widget _statusBar() {
-    final bool inGame =
-        Emulator.inProcessCore != null && Emulator.playing.value;
-    return SizedBox(
-      // A little taller while the machine is running - the buttons are still
-      // finger sized - but only a little: every pixel this strip takes is a
-      // pixel the picture does not get.
-      height: inGame ? 36 : 28,
-      child: Row(
-        children: <Widget>[
-          IconButton(
-            onPressed: () {
-              _wake();
-              setState(() => _sidebarHidden = !_sidebarHidden);
-            },
-            icon: Icon(_sidebarHidden ? Icons.menu : Icons.menu_open, size: 18),
-            color: AmigaColors.textDim,
-            tooltip: _sidebarHidden ? 'Show sidebar' : 'Hide sidebar',
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-          ),
-          // No label here. The rail already shows which section is selected,
-          // in the same words, a few pixels away -- and when the rail is
-          // hidden the panel's own heading says it. A third copy was just
-          // noise next to the toggle.
-          if (!inGame) const Spacer(),
-          // In a session the tools take the whole strip, evenly spaced.
-          //
-          // They used to be pushed hard against the right-hand edge with a
-          // fixed 8px between them, which on a tablet left two thirds of the
-          // strip empty and put seven 32px targets in a clump under the
-          // right thumb. Spread out they are the same size but further apart,
-          // which is what makes them hard to hit by accident -- and the
-          // spacing is the strip's own, so it works at any width.
-          if (inGame)
-            Expanded(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: _sessionTools(Emulator.inProcessCore!),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  /// The in-game toolbar: the C64 strip's shape -- small round buttons the
-  /// size of a fingertip, laid out from the right-hand edge -- under the panel
-  /// where the rail's toggle already lives.
-  List<Widget> _sessionTools(AmigaCore core) {
-    const Color idle = Color(0xFF24292E);
-    const Color lit = Color(0xFF4040E0);
-    // Compact, not FAB-sized: the strip sits under the picture, and a row of
-    // 40px buttons was costing the Amiga a border's worth of height. 32px is
-    // still a comfortable target with the strip's own padding around it.
-    Widget tool({
-      required String tag,
-      required IconData icon,
-      required String tip,
-      required VoidCallback onPressed,
-      bool active = false,
-    }) {
-      return Padding(
-        // Only enough to keep two targets from touching at the narrowest
-        // width; spaceEvenly supplies the rest.
-        padding: const EdgeInsets.symmetric(horizontal: 2),
-        child: Material(
-          color: active ? lit : idle,
-          shape: const CircleBorder(),
-          clipBehavior: Clip.antiAlias,
-          child: Tooltip(
-            message: tip,
-            child: InkWell(
-              onTap: () {
-                _wake();
-                _wakeChrome();
-                onPressed();
-              },
-              child: SizedBox(
-                width: 32,
-                height: 32,
-                child: Icon(icon, color: Colors.white, size: 18),
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    return <Widget>[
-      // Close, and it is first because it is the one people look for.
-      //
-      // There was no way out but the rail, which is a row of destinations --
-      // so leaving a game meant going somewhere else, and there was nothing
-      // on screen that said "stop". Pause is next to it and does something
-      // different: it writes the snapshot and puts the session on the Resume
-      // shelf. This one just ends it.
-      tool(
-        tag: 'closeFab',
-        icon: Icons.close,
-        tip: 'Close the game',
-        onPressed: () async {
-          Emulator.forgetBackgroundPause();
-          Emulator.closeInProcess();
-          await _refreshSession();
-          if (!mounted) return;
-          setState(() {
-            _sidebarHidden = false;
-            _section = WorkbenchSection.collections;
-          });
-        },
-      ),
-      tool(
-        tag: 'pauseFab',
-        icon: Icons.pause,
-        tip: 'Pause — saves your place on the Resume shelf',
-        onPressed: () async {
-          // Pause leaves the machine, the way the C64 front end's does. It
-          // used to stop the picture in place, which meant the paused state
-          // lived only in this session: nothing on the Resume shelf, and a
-          // machine still loaded behind whatever the user did next.
-          //
-          // stopInProcess writes the snapshot BEFORE the core goes down -
-          // that ordering matters, because the save is serviced by the core's
-          // own thread - so what comes back on Resume is the exact moment
-          // they stepped away.
-          Emulator.forgetBackgroundPause();
-          Emulator.stopInProcess();
-          await _refreshSession();
-          if (!mounted) return;
-          setState(() {
-            // Land on Resume, not the shelf: what the user wants in front of
-            // them after pausing is the way back in.
-            _sidebarHidden = false;
-            _section = WorkbenchSection.resume;
-          });
-        },
-      ),
-      tool(
-        tag: 'layoutFab',
-        icon: Icons.open_with,
-        tip: 'Move or add on-screen controls',
-        onPressed: () async {
-          await Navigator.of(context).push<void>(
-            MaterialPageRoute<void>(
-              builder: (BuildContext context) => const PadDesignerScreen(),
-            ),
-          );
-          // Whatever was arranged is the pad now.
-          final PadLayout layout = await PadLayoutStore.load();
-          if (!mounted) return;
-          setState(() => _layout = layout);
-          _attachPad();
-        },
-      ),
-      tool(
-        tag: 'fillFab',
-        icon: AppPrefs.screenFill.value ? Icons.fit_screen : Icons.aspect_ratio,
-        tip: AppPrefs.screenFill.value
-            ? 'Keep the Amiga\'s shape'
-            : 'Fill the screen (16:9)',
-        active: AppPrefs.screenFill.value,
-        onPressed: () =>
-            AppPrefs.setScreenFill(value: !AppPrefs.screenFill.value),
-      ),
-      tool(
-        tag: 'swapFab',
-        icon: Icons.swap_horiz,
-        tip: 'Swap disk',
-        onPressed: () => _swapDisk(core),
-      ),
-      // Which socket the stick is in. Most games read port 1 and that is
-      // where it starts; plenty of the older ones read port 0, and on the
-      // real machine you moved the plug. Without this those games are
-      // unplayable with controls that are working perfectly.
-      tool(
-        tag: 'portFab',
-        icon: Icons.electrical_services,
-        tip: _padPort == 1
-            ? 'Joystick in port 1 — tap for port 0'
-            : 'Joystick in port 0 (mouse port) — tap for port 1',
-        active: _padPort == 0,
-        onPressed: () {
-          // Let go of everything first: a direction still held when the
-          // device moves ports leaves the Amiga holding it in the port the
-          // pad just left, with nothing left to release it.
-          core.padReleaseAll(_pad);
-          core.swapPadPort();
-          // The core applies it on its own thread, so read it back rather
-          // than assume; a core too old to have the export never moves and
-          // the button correctly stays where it is.
-          _portPollTimer?.cancel();
-          _portPollTimer = Timer(const Duration(milliseconds: 120), () {
-            if (!mounted) return;
-            setState(() => _padPort = core.padPort);
-          });
-        },
-      ),
-      tool(
-        tag: 'mouseFab',
-        icon: Icons.mouse,
-        tip: _mouseMode ? 'Touch is the mouse' : 'Use touch as the mouse',
-        active: _mouseMode,
-        onPressed: () {
-          setState(() => _mouseMode = !_mouseMode);
-          // Leaving the mode with a button held would leave the Amiga
-          // holding it.
-          if (!_mouseMode) {
-            core.mouseButton(0, false);
-            core.mouseButton(1, false);
-          }
-        },
-      ),
-      tool(
-        tag: 'padFab',
-        icon: Icons.videogame_asset,
-        tip: _padVisible ? 'Hide the on-screen pad' : 'Show the on-screen pad',
-        active: _padVisible,
-        onPressed: () {
-          setState(() => _padVisible = !_padVisible);
-          if (!_padVisible) core.padReleaseAll(_pad);
-          core.setOnscreenController(_padVisible ? _pad : 0);
-        },
-      ),
-      tool(
-        tag: 'keyboardFab',
-        icon: Icons.keyboard,
-        tip: _keyboardUp ? 'Keyboard shown' : 'Keyboard hidden',
-        active: _keyboardUp,
-        onPressed: () {
-          setState(() => _keyboardUp = !_keyboardUp);
-          if (_keyboardUp) core.padReleaseAll(_pad);
-        },
-      ),
-    ];
-  }
-
-  /// Asks which drive when there is more than one, then which disk.
-  Future<void> _swapDisk(AmigaCore core) async {
-    final int drives = core.floppyCount;
-    int drive = 0;
-    if (drives > 1) {
-      final int? picked = await showDialog<int>(
-        context: context,
-        builder: (BuildContext context) => SimpleDialog(
-          backgroundColor: AmigaColors.panel,
-          title: const Text('Swap disk in', style: TextStyle(fontSize: 16)),
-          children: <Widget>[
-            for (int i = 0; i < drives; i++)
-              SimpleDialogOption(
-                onPressed: () => Navigator.of(context).pop(i),
-                child: Text('DF$i'),
-              ),
-          ],
-        ),
-      );
-      if (picked == null) return;
-      drive = picked;
-    }
-    if (!mounted) return;
-    final String? path = await showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AmigaColors.panel,
-      builder: (BuildContext sheet) => SafeArea(
-        child: SizedBox(
-          height: MediaQuery.of(sheet).size.height * 0.7,
-          child: MediaChooser(
-            category: FileCategory.floppies,
-            selected: '',
-            onSelected: (String p) => Navigator.of(sheet).pop(p),
-            emptyHint: 'No floppy images found.',
-          ),
-        ),
-      ),
-    );
-    if (path != null) core.insertFloppy(drive, path);
-  }
-
   Widget _panel() {
-    // A live in-process session IS the panel's content: the machine renders
-    // here, in the same box every other section uses, with the rail and the
-    // status strip still on screen. That is the whole reason the core moved
-    // into this process.
-    final AmigaCore? core = Emulator.inProcessCore;
-    if (core != null && Emulator.playing.value) {
-      // Watching the WHOLE session, not just the picture.
-      //
-      // The inner Listener below only covers AmigaScreenView, and the pad is
-      // a LATER sibling in this Stack -- so a touch on the pad never reached
-      // it. On a handheld the pad covers most of the panel, which meant that
-      // once the strip had hidden itself after a few seconds there was
-      // almost nowhere left to tap to bring it back, and the toolbar looked
-      // dead. Two fingers anywhere now wakes it, pad included.
-      //
-      // Listener observes without consuming, so nothing below loses a touch.
-      return Listener(
-        behavior: HitTestBehavior.translucent,
-        onPointerDown: (PointerDownEvent event) {
-          _pointers.add(event.pointer);
-          if (_pointers.length >= 2) _wakeChrome();
-        },
-        onPointerUp: (PointerUpEvent event) => _pointers.remove(event.pointer),
-        onPointerCancel: (PointerCancelEvent event) =>
-            _pointers.remove(event.pointer),
-        child: Stack(
-        children: <Widget>[
-          Positioned.fill(
-            // Observe the picture touch as an ANCESTOR of the mouse surface.
-            // A full-size Listener used to be a later Stack sibling. Stack
-            // hit-testing stops at that sibling, so it woke the chrome and
-            // prevented the AmigaScreenView underneath from ever receiving
-            // the same drag or tap. This is the exact "mouse opens the menu"
-            // failure reported by Workbench users.
-            child: Listener(
-              behavior: HitTestBehavior.translucent,
-              onPointerDown: _onPictureTouched,
-              child: AmigaScreenView(
-                core: core,
-                // No pollInterval: only the fallback path has a frame-rate
-                // ceiling, and only the widget knows whether it ended up on
-                // it. See AmigaScreenView.pollInterval.
-                fill: AppPrefs.screenFill.value,
-                mouseMode: _mouseMode,
-              ),
-            ),
-          ),
-          // The pad steps aside while the keyboard is up: both live along
-          // the bottom, and a stick drawn over the letters makes both
-          // unusable.
-          if (_padVisible && !_keyboardUp)
-            Positioned.fill(
-              child: PadOverlay(
-                layout: _layout,
-                onDirections: (bool up, bool down, bool left, bool right) =>
-                    core.padDirection(_pad, up, down, left, right),
-                onButton: (int button, bool pressed) =>
-                    core.padButton(_pad, button, pressed),
-                onKey: core.sendKey,
-              ),
-            ),
-          if (_keyboardUp)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: AmigaKeyboardOverlay(
-                onKey: core.sendKey,
-                onClose: () => setState(() => _keyboardUp = false),
-              ),
-            ),
-        ],
-        ),
-      );
-    }
+    // The machine is no longer here.
+    //
+    // It has a screen of its own -- see EmulatorScreen, pushed from
+    // _onPlayingChanged. Hosting it in this panel put the in-game controls in
+    // a strip outside the picture, which auto-hid and which the pad overlay
+    // could cover, so the way out of a game was unreachable exactly when it
+    // was wanted. Building it here as well would also mean two
+    // AmigaScreenViews and two external textures for one Amiga.
     switch (_section) {
       case WorkbenchSection.collections:
         return _collectionsPage();

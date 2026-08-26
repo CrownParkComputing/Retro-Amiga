@@ -89,9 +89,16 @@ class EmulatorSettings {
 
   /// Zorro III graphics memory, in megabytes.
   ///
-  /// 16 is plenty for a Workbench screen; a full-resolution 32-bit screen on
-  /// a modern handheld is not a Workbench screen. 1920x1080 at 4 bytes a
-  /// pixel is 8MB for ONE buffer, and the card holds more than one.
+  /// Enough for the screen and its buffers, and no more. 1280x720 at 4 bytes
+  /// a pixel is 3.5MB, so 32MB holds the screen several times over -- more
+  /// than a Picasso IV ever had.
+  ///
+  /// It is worth being frugal here. The card is committed up front and sits
+  /// alongside the Zorro III fast RAM, and on a handheld the two together
+  /// decide whether the app survives a screen-mode change: 512MB of fast RAM
+  /// beside a 128MB card was 640MB, and reallocating the RTG buffers on top
+  /// of that got the process killed outright by the low-memory killer. Not a
+  /// crash -- SIGKILL, with nothing in any log to say why.
   final int rtgMemory;
 
   /// Offer the deep colour modes, not just the 8- and 16-bit ones.

@@ -413,8 +413,21 @@ class MainActivity : FlutterActivity() {
 				KeyEvent.KEYCODE_DPAD_RIGHT -> forwardDirection(false, pressed, false, false)
 				KeyEvent.KEYCODE_DPAD_UP -> forwardDirection(false, false, pressed, false)
 				KeyEvent.KEYCODE_DPAD_DOWN -> forwardDirection(false, false, false, pressed)
-				// Anything else - Start, Select, shoulders - is left alone so
-				// the system and the launcher keep working.
+				// Select is the way back to the controls.
+				//
+				// Everything else on the rail needs a finger on the screen,
+				// and on a handheld played with the sticks that means putting
+				// the device down to find a control that has already faded
+				// out. Every console since the Mega Drive has had a button
+				// that means "menu"; this is it. The Amiga has no use for it
+				// -- two buttons and a stick is the whole machine -- so it
+				// costs nothing to take.
+				KeyEvent.KEYCODE_BUTTON_SELECT, KeyEvent.KEYCODE_BUTTON_MODE ->
+					if (pressed) {
+						channel?.invokeMethod("physicalPadMenu", null)
+					}
+				// Anything else - Start, shoulders - is left alone so the
+				// system and the launcher keep working.
 				else -> return super.dispatchKeyEvent(event)
 			}
 			// Consume only during a game. Outside one the launcher still needs

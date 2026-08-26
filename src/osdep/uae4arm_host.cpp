@@ -444,14 +444,37 @@ static bool perform_save_session(const CoreCommand& command)
 {
 	if (command.path.empty() || command.extra.empty())
 		return false;
-	savestate_initsave(command.path.c_str(), 1, true, true);
-	save_state(command.path.c_str(), _T("Amiga-Retro"));
+
+	/* The directory FIRST.
+	 *
+	 * This used to be created after save_state had already tried to write
+	 * into it, so the first save on a fresh install -- the one case where
+	 * states/ does not exist yet -- wrote nothing, was correctly detected as
+	 * missing, and returned false to a caller that discards the result. The
+	 * session simply did not appear on the Resume shelf, with nothing
+	 * anywhere to say why.
+	 */
 	std::error_code ec;
 	const std::filesystem::path state(command.path);
 	const std::filesystem::path directory = state.parent_path();
 	std::filesystem::create_directories(directory, ec);
-	if (ec || !std::filesystem::exists(state, ec))
+	if (ec) {
+		write_log("host: cannot create %s for the snapshot: %s\n",
+			directory.string().c_str(), ec.message().c_str());
 		return false;
+	}
+
+	savestate_initsave(command.path.c_str(), 1, true, true);
+	save_state(command.path.c_str(), _T("Amiga-Retro"));
+	if (!std::filesystem::exists(state, ec)) {
+		/* Said out loud. A snapshot that was not written is the difference
+		 * between "resume put me back" and "resume booted a fresh machine",
+		 * and the second is indistinguishable from the save never having been
+		 * asked for. */
+		write_log("host: the snapshot was not written to %s\n",
+			command.path.c_str());
+		return false;
+	}
 
 	const std::filesystem::path index = directory / "recent.txt";
 	std::vector<std::string> lines;
@@ -676,7 +699,14 @@ static void drain_core_commands()
 			break;
 
 		case CoreCommand::Kind::SaveSession:
-			perform_save_session(command);
+			/* The result was discarded, which is how a save that did not
+			 * happen reached the user as a Resume shelf with nothing new on
+			 * it. perform_save_session says why in the log; this makes sure
+			 * the fact that it failed at all is not thrown away here. */
+			if (!perform_save_session(command)) {
+				write_log("host: session snapshot FAILED for %s\n",
+					command.path.c_str());
+			}
 			break;
 
 		case CoreCommand::Kind::SaveState:
@@ -882,32 +912,50 @@ static void apply_swap_pad_port(void)
 	const int from = onscreen_pad_port;
 	const int to = from == 1 ? 0 : 1;
 
-	/* Give the port the pad is leaving back exactly what it had. */
-	if (onscreen_pad_port_override) {
-		changed_prefs.jports[from].id = saved_pad_port_id;
-		changed_prefs.jports[from].mode = saved_pad_port_mode;
-		onscreen_pad_port_override = false;
-	}
-
+	/*
+	 * The two ports EXCHANGE what is in them. Both stay connected.
+	 *
+	 * The first version moved the pad and let the mouse fall out of the port
+	 * it took, on the reasoning that a real Amiga has two sockets and moving a
+	 * plug means unplugging something. True of the hardware, useless here: a
+	 * player who swaps ports to make a joystick game respond has not asked to
+	 * lose the pointer, and on Workbench -- where a great many of these
+	 * collections live -- losing it strands them.
+	 *
+	 * So the mouse moves to the port the pad has left. Whichever way round
+	 * they are, there is a joystick in one and a mouse in the other, and the
+	 * button is a straight swap rather than a trade.
+	 */
 	onscreen_pad_port = to;
 
-	if (onscreen_controller_mode != 0) {
-		/* Re-runs the ordinary path, which takes its own note of what the new
-		 * port held. */
-		apply_onscreen_controller_request(onscreen_controller_mode);
+	const int pad = onscreen_controller_mode == 2
+		? UAE4ARM_HOST_PAD_CD32 : UAE4ARM_HOST_PAD_JOYSTICK;
+	const int device = pad_device(pad);
+
+	if (device >= 0 && onscreen_controller_mode != 0) {
+		changed_prefs.jports[to].id = JSEM_JOYS + device;
+		changed_prefs.jports[to].mode = onscreen_controller_mode == 2
+			? JSEM_MODE_JOYSTICK_CD32 : JSEM_MODE_JOYSTICK;
 	} else {
-		/* No on-screen pad is drawn, but a device is still bound to the port:
-		 * a physical controller, or the touch pad with its picture hidden.
-		 * That is the thing to move. */
-		saved_pad_port_id = changed_prefs.jports[to].id;
-		saved_pad_port_mode = changed_prefs.jports[to].mode;
-		onscreen_pad_port_override = true;
+		/* No on-screen pad drawn: a physical controller, or the touch pad
+		 * with its picture hidden. Same port, same move. */
 		changed_prefs.jports[to].id = JSEM_JOYS;
 		changed_prefs.jports[to].mode = pending_external_controller_mode >= 0
 			? pending_external_controller_mode : JSEM_MODE_JOYSTICK;
 	}
+
+	/* And the mouse takes the port the pad has just left. */
+	changed_prefs.jports[from].id = JSEM_MICE;
+	changed_prefs.jports[from].mode = JSEM_MODE_MOUSE;
+
+	/* Both ports are ours now, so there is nothing left to hand back when the
+	 * on-screen pad is switched off. */
+	onscreen_pad_port_override = true;
+	saved_pad_port_id = JSEM_MICE;
+	saved_pad_port_mode = JSEM_MODE_MOUSE;
+
 	set_config_changed();
-	write_log("host: pad moved from port %d to port %d\n", from, to);
+	write_log("host: joystick now in port %d, mouse in port %d\n", to, from);
 }
 
 static void apply_external_controller_mode_request(int jsem_mode)

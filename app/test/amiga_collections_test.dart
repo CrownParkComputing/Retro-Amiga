@@ -129,7 +129,11 @@ void main() {
       expect(s.cpuSpeed, 'max');
       expect(s.chipset, 'aga');
       expect(s.chipRam, 16); // 8MB
-      expect(s.z3Ram, 512);
+      // Handheld-sized, not desktop-sized: 512MB of Zorro III beside a
+      // 128MB graphics card was 640MB committed, and reallocating the RTG
+      // buffers on a screen-mode change got the process killed outright.
+      expect(s.z3Ram, 256);
+      expect(s.rtgMemory, 32);
       expect(s.useRtg, isTrue);
       expect(s.jitCacheSize, 16384);
       expect(s.jitFpu, isTrue);

@@ -57,18 +57,6 @@ class InputPanel extends StatelessWidget {
             ],
           ),
         ),
-        const SettingsHeader('Per machine'),
-        const Card(
-          color: AmigaColors.card,
-          child: ListTile(
-            leading: Icon(Icons.tune),
-            title: Text('Ports and pads'),
-            subtitle: Text(
-              'Which port the stick is in, joystick or CD32 pad, mouse - set '
-              'per config: Configs, long-press, Edit.',
-            ),
-          ),
-        ),
       ],
     );
   }

@@ -14,6 +14,8 @@ class AppPrefs {
   static const String _buildStamp = 'build_stamp';
   static const String _confirmFileDelete = 'confirm_file_delete';
   static const String _screenFill = 'screen_fill';
+  static const String _showPad = 'show_onscreen_pad';
+  static const String _showKeyboard = 'show_onscreen_keyboard';
   static const String _musicVolume = 'music_volume';
 
   /// Whether the machine boots the bundled AROS ROM instead of the user's
@@ -118,6 +120,46 @@ class AppPrefs {
     screenFill.value = value;
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_screenFill, value);
+  }
+
+  /// Draw the on-screen pad over a running game.
+  ///
+  /// A preference rather than an in-game button. It is a decision somebody
+  /// makes once about their device -- a handheld with real sticks wants it
+  /// off, a phone wants it on -- and it was costing a control on a rail that
+  /// has to stay short enough to reach mid-game. A real controller being
+  /// plugged in still hides the pad whatever this says; there is no sense in
+  /// drawing touch controls over hardware ones.
+  static final ValueNotifier<bool> showPad = ValueNotifier<bool>(true);
+
+  static Future<bool> loadShowPad() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    return showPad.value = prefs.getBool(_showPad) ?? true;
+  }
+
+  static Future<void> setShowPad({required bool value}) async {
+    showPad.value = value;
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_showPad, value);
+  }
+
+  /// Offer the Amiga keyboard over a running game.
+  ///
+  /// Off by default: most games need a stick and a fire button, and a
+  /// keyboard button on the rail is one more thing between the player and the
+  /// controls they do want. Workbench and anything that asks you to type is
+  /// what this is for.
+  static final ValueNotifier<bool> showKeyboard = ValueNotifier<bool>(false);
+
+  static Future<bool> loadShowKeyboard() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    return showKeyboard.value = prefs.getBool(_showKeyboard) ?? false;
+  }
+
+  static Future<void> setShowKeyboard({required bool value}) async {
+    showKeyboard.value = value;
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_showKeyboard, value);
   }
 
   /// Workbench music volume, 0..1.

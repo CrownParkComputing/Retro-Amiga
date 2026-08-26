@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../data/app_log.dart';
 import '../data/config_store.dart';
 import '../data/save_states.dart';
 import '../emulator.dart';
@@ -44,6 +46,34 @@ class _ResumePanelState extends State<ResumePanel> {
   /// which machine and which disks, and a state restored into the wrong
   /// hardware is not a game.
   Future<void> _resume(SaveState state) async {
+    // Both halves named, and checked, before the core is asked for anything.
+    //
+    // A resume that does not resume has three possible causes -- a missing
+    // snapshot, a missing config, or a restore the core refused -- and they
+    // look identical from the outside: the machine boots as if fresh, or
+    // sits on grey. Naming which of the two files was absent turns two of
+    // those three into a one-line answer.
+    final bool haveState = File(state.statePath).existsSync();
+    final bool haveConfig = File(state.configPath).existsSync();
+    AppLog.info(
+      'resume',
+      '${state.title}: state=${haveState ? 'ok' : 'MISSING'} '
+          '(${state.statePath}), config=${haveConfig ? 'ok' : 'MISSING'}',
+    );
+    if (!haveState || !haveConfig) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              haveState
+                  ? 'That setup is gone, so there is nothing to resume into.'
+                  : 'The saved moment is gone. Start the game again instead.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
     await ConfigStore.repairConfigFile(state.configPath);
     await Emulator.launch(<String>[
       '--rescan-roms',

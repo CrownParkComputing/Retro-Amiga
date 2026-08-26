@@ -87,10 +87,10 @@ void main() {
     // configure() writes only where a config of this name is missing. If the
     // name moved between runs, every launch would write another copy and the
     // rail would fill with duplicates.
-    final HardDriveSet set = HardDriveSet(
+    const HardDriveSet set = HardDriveSet(
       folder: '/media/HardDrives/Pimiga',
       bootDrive: '/media/HardDrives/Pimiga',
-      drives: const <String>[],
+      drives: <String>[],
       directoryMount: true,
     );
     expect(AmigaSystems.configName(set), AmigaSystems.configName(set));

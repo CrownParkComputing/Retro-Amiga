@@ -32,6 +32,9 @@ class GameController {
   static void Function(int button, bool pressed)? onButton;
   static ValueChanged<AudioFocus>? onAudioFocusChanged;
 
+  /// The controller's Select button, which means "show me the controls".
+  static VoidCallback? onMenu;
+
   /// Starts watching, and answers once with what is attached now.
   ///
   /// Safe to call more than once: the handler is installed only the first
@@ -59,6 +62,8 @@ class GameController {
               (a['button'] as num?)?.toInt() ?? 0,
               a['pressed'] as bool? ?? false,
             );
+          case 'physicalPadMenu':
+            onMenu?.call();
           case 'audioFocusChanged':
             onAudioFocusChanged?.call(
               AudioFocus.parse(call.arguments as String?),

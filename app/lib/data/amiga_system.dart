@@ -98,19 +98,24 @@ class AmigaSystems {
 
   /// The widest RTG screen a collection is set up with by default.
   ///
-  /// A phone panel is 1080p, and asking for 1920x1080 gives a Workbench that
-  /// is technically correct and practically unusable: the emulated 040 draws
-  /// four times the pixels of a 720p screen, and every one of those frames is
-  /// then walked pixel by pixel to force the alpha byte opaque before it
-  /// reaches the compositor. On a handheld that is enough to make the whole
-  /// app stop responding -- including the controls for getting back out of
-  /// the game, which is the part that turns a slow setup into a trap.
+  /// The device's own resolution, up to 1080p. An RTG Workbench exists to use
+  /// the screen it is on, and a collection that opens at half the panel's
+  /// resolution looks like a mistake even when it is a deliberate one.
   ///
-  /// 1280x720 is a generous Workbench, a little over half the pixels, and
-  /// scales cleanly onto a 1080p panel. Anyone who wants more can raise it in
-  /// the config; it is a starting point, not a ceiling.
-  static const int maxRtgWidth = 1280;
-  static const int maxRtgHeight = 720;
+  /// This was capped at 720p for a while after a full-resolution screen made
+  /// the app stop responding. Three separate things caused that and all three
+  /// are fixed: the emulation thread was raised above the launcher's own
+  /// threads and starved them; the machine committed 640MB of Zorro III and
+  /// graphics memory and was killed reallocating buffers; and every published
+  /// frame was walked pixel by pixel to force the alpha byte opaque, which at
+  /// 1920x1080 is two million read-modify-writes fifty times a second. The
+  /// last of those is why this cap can be lifted rather than merely raised --
+  /// see host_framebuffer.cpp.
+  ///
+  /// Past 1080p there is nothing to gain: no Amiga software expects it, and
+  /// the emulated chipset draws every one of those pixels.
+  static const int maxRtgWidth = 1920;
+  static const int maxRtgHeight = 1080;
 
   static int _rtgWidthFor(Size screen) => math
       .min(math.max(screen.width, screen.height).round(), maxRtgWidth);
