@@ -15,6 +15,7 @@ import '../widgets/amiga_keyboard_overlay.dart';
 import '../widgets/media_chooser.dart';
 import '../widgets/amiga_screen_view.dart';
 import '../widgets/pad_overlay.dart';
+import 'pad_designer_screen.dart';
 
 /// The machine, with the whole screen and its own controls.
 ///
@@ -133,8 +134,8 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
     setState(() {
       _layout = layout;
       _padVisible = AppPrefs.showPad.value && !hasPad;
-      // Up from the start when asked for, and closed with its own button --
-      // which is why it needs no control of its own on the rail.
+      // Up from the start when asked for; the rail's Keys tool (and the
+      // keyboard's own CLOSE key) toggle it from there.
       _keyboardUp = AppPrefs.showKeyboard.value;
       // Read, not assumed: the label claims to show how the machine is wired,
       // so it has to ask the machine rather than start from a guess that
@@ -425,6 +426,47 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
                           ),
                         ),
                       ),
+                      _tool(
+                        icon: Icons.keyboard,
+                        label: 'Keys',
+                        tip: _keyboardUp
+                            ? 'Hide the Amiga keyboard'
+                            : 'Show the Amiga keyboard',
+                        active: _keyboardUp,
+                        onPressed: () =>
+                            setState(() => _keyboardUp = !_keyboardUp),
+                      ),
+                      _tool(
+                        icon: Icons.videogame_asset,
+                        label: 'Pad',
+                        tip: _padVisible
+                            ? 'Hide the on-screen pad'
+                            : 'Show the on-screen pad',
+                        active: _padVisible,
+                        onPressed: () {
+                          setState(() => _padVisible = !_padVisible);
+                          widget.core
+                              .setOnscreenController(_padVisible ? _pad : 0);
+                        },
+                      ),
+                      _tool(
+                        icon: Icons.open_with,
+                        label: 'Layout',
+                        tip: 'Move or add on-screen controls',
+                        onPressed: () async {
+                          // The designer is its own screen; coming back,
+                          // rebuild so the overlay reloads the layout it
+                          // just saved.
+                          await Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const PadDesignerScreen(),
+                            ),
+                          );
+                          final PadLayout layout =
+                              await PadLayoutStore.load();
+                          if (mounted) setState(() => _layout = layout);
+                        },
+                      ),
                       // The two sockets, each showing what is in it.
                       //
                       // This replaced three controls -- a swap button, a
@@ -475,7 +517,7 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
                         },
                       ),
                       _tool(
-                        icon: Icons.swap_horiz,
+                        icon: Icons.album,
                         label: 'Disk',
                         tip: 'Swap disk',
                         onPressed: _swapDisk,
