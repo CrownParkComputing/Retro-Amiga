@@ -276,6 +276,9 @@ void update_gfxparams(struct AmigaMonitor* mon)
 
 }
 
+// updatepicasso96 remains in amiberry_gfx.cpp; declared here for doInit to call
+extern void updatepicasso96(struct AmigaMonitor* mon);
+
 int open_windows(AmigaMonitor* mon, bool mousecapture, bool started)
 {
 	// Skip window creation entirely if headless mode
@@ -284,6 +287,24 @@ int open_windows(AmigaMonitor* mon, bool mousecapture, bool started)
 		mon->screen_is_initialized = 1;
 		mon->amiga_window = nullptr;
 		mon->amiga_renderer = nullptr;
+		/*
+		 * Picasso96 still has to be told its buffer exists.
+		 *
+		 * Returning here means doInit never runs, and doInit is where
+		 * updatepicasso96() sets picasso_vidinfo.extra_mem. Without it,
+		 * picasso_flushpixels() bails on its FIRST line -- so the moment
+		 * Workbench opened a graphics-card screen, no RTG pixel was ever
+		 * copied, converted or published again. The machine ran, Picasso96
+		 * drew into its VRAM, and the app showed the last chipset frame:
+		 * "AGS boots but the screen only appears if I pause".
+		 *
+		 * The rest of the RTG plumbing survives headless fine --
+		 * target_graphics_buffer_update() recreates amiga_surface at the RTG
+		 * mode's size (from VRAM itself when zero-copy is eligible), and the
+		 * publish tap in gfx_unlock_picasso hands the finished frame to the
+		 * app. This one flag was the gate in front of all of it.
+		 */
+		updatepicasso96(mon);
 		return 1;
 	}
 
@@ -582,6 +603,9 @@ static int create_windows(struct AmigaMonitor* mon)
 		mon->amiga_window = nullptr;
 		mon->amiga_renderer = nullptr;
 		mon->screen_is_initialized = 1;
+		/* See open_windows: Picasso96 needs extra_mem set even with no
+		 * window, or an RTG screen is never flushed nor published. */
+		updatepicasso96(mon);
 		return 1;
 	}
 
@@ -1028,8 +1052,6 @@ static void allocsoftbuffer(int monid, const TCHAR* name, struct vidbuffer* buf,
 
 int oldtex_w[MAX_AMIGAMONITORS], oldtex_h[MAX_AMIGAMONITORS], oldtex_rtg[MAX_AMIGAMONITORS], oldtex_zero_copy[MAX_AMIGAMONITORS];
 
-// updatepicasso96 remains in amiberry_gfx.cpp; declared here for doInit to call
-extern void updatepicasso96(struct AmigaMonitor* mon);
 
 bool doInit(AmigaMonitor* mon)
 {

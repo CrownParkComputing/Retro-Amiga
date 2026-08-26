@@ -390,7 +390,11 @@ class ConfigStore {
   /// rebuilt. Anything worth keeping should be saved under its own name,
   /// where it becomes an ordinary setup on the Games shelf and is never
   /// touched again.
-  static const int collectionRecipeVersion = 7;
+  // 12: a v11 config could have been written while the PiMiga images were
+  // still copying in -- one half-arrived drive, small enough for the IDE rule
+  // to choose the controller that cannot boot it. Regenerating against the
+  // finished library is the fix.
+  static const int collectionRecipeVersion = 12;
 
   static String collectionStamp(int version) =>
       '$collectionMarker v$version';

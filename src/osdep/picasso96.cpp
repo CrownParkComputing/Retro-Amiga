@@ -1179,6 +1179,26 @@ static void rtg_render()
 {
 	int monid = currprefs.rtgboards[0].monitor_id;
 	const bool uaegfx_active = is_uaegfx_active();
+	/* Where the headless RTG picture goes missing.
+	 *
+	 * The frame never reaches the app and none of the taps downstream fire,
+	 * so the break is at or above this point. Reported once per change of
+	 * state rather than per frame: what matters is whether this runs at all,
+	 * whether uaegfx is the active board, and whether the multithreaded path
+	 * is the one being taken -- each sends the frame somewhere different. */
+	{
+		static int said = -1;
+		const int state = (uaegfx_active ? 1 : 0) |
+			(currprefs.rtg_multithread ? 2 : 0) |
+			(doskip() ? 4 : 0);
+		if (state != said) {
+			said = state;
+			write_log("rtg_render: uaegfx=%d multithread=%d skip=%d "
+				"p96skipmode=%d\n", uaegfx_active ? 1 : 0,
+				currprefs.rtg_multithread ? 1 : 0, doskip() ? 1 : 0,
+				p96skipmode);
+		}
+	}
 	const int uaegfx_index = 0;
 	const struct AmigaMonitor *mon = &AMonitors[monid];
 	const struct picasso96_state_struct *state = &picasso96_state[monid];

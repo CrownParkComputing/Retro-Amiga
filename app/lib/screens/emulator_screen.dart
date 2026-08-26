@@ -90,8 +90,19 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
   int _padPort = 1;
   Timer? _portPollTimer;
 
-  /// Fingers currently down anywhere on the session.
-  final Set<int> _pointers = <int>{};
+  /// Whether the Amiga's right mouse button is being held down for us.
+  ///
+  /// Amiga menus are not a click, they are a hold: you press the right button,
+  /// the menu bar appears, you move the pointer onto the item you want, and
+  /// you release. A long-press that clicks and lets go immediately can open a
+  /// menu and cannot choose anything from it, which is why the right button
+  /// has been effectively unusable on touch.
+  ///
+  /// So this latches. Press once and the button stays down while you drag the
+  /// pointer wherever you like; press again to let go, which is what picks
+  /// the item under it.
+  bool _rightHeld = false;
+
 
   int get _pad => _layout.style == PadStyle.cd32 ? 2 : 1;
 
@@ -185,13 +196,23 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
 
   /// Leaves, keeping the exact moment. See the class comment.
   Future<void> _pause() async {
+    _releaseHeld();
     Emulator.forgetBackgroundPause();
     Emulator.stopInProcess();
     if (mounted) Navigator.of(context).pop(EmulatorExit.paused);
   }
 
   /// Leaves, keeping nothing.
+  /// Lets go of anything the Amiga is being told to hold.
+  void _releaseHeld() {
+    if (_rightHeld) {
+      _rightHeld = false;
+      widget.core.mouseButton(1, false);
+    }
+  }
+
   Future<void> _close() async {
+    _releaseHeld();
     Emulator.forgetBackgroundPause();
     Emulator.closeInProcess();
     if (mounted) Navigator.of(context).pop(EmulatorExit.closed);
@@ -214,28 +235,17 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
             // The picture, filling the screen. Any touch that is not the pad
             // and not a control wakes the controls; Listener observes without
             // consuming, so the Amiga still gets the same touch.
-            Listener(
-              behavior: HitTestBehavior.translucent,
-              onPointerDown: (PointerDownEvent event) {
-                _pointers.add(event.pointer);
-                // Two fingers always works, whatever the mode and whatever is
-                // drawn on top -- the pad's own gesture detectors consume
-                // single touches, so a universal gesture cannot be a single
-                // one. In mouse mode a lone finger belongs to the Amiga:
-                // popping the controls over a game on every click is its own
-                // bug, and one that was reported.
-                if (_pointers.length >= 2 || !_mouseMode) _showControls();
-              },
-              onPointerUp: (PointerUpEvent event) =>
-                  _pointers.remove(event.pointer),
-              onPointerCancel: (PointerCancelEvent event) =>
-                  _pointers.remove(event.pointer),
-              child: AmigaScreenView(
+            // No gesture wakes the controls any more: the corner button is
+            // the one way in. Two fingers now BELONGS TO THE AMIGA -- it is
+            // the mouse's hold-and-drag, which is how a Workbench window gets
+            // resized -- and a single touch is the pointer. A gesture that
+            // sometimes opened the menu and sometimes grabbed a window edge
+            // would be wrong every time it guessed.
+            AmigaScreenView(
                 core: widget.core,
                 fill: AppPrefs.screenFill.value,
                 mouseMode: _mouseMode,
               ),
-            ),
             if (_padVisible && !_keyboardUp)
               PadOverlay(
                 layout: _layout,
@@ -448,6 +458,21 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
                             : 'Port 2: mouse — tap to swap the ports',
                         active: _padPort == 1,
                         onPressed: _swapPorts,
+                      ),
+                      _tool(
+                        icon: _rightHeld
+                            ? Icons.ads_click
+                            : Icons.menu_open,
+                        label: _rightHeld ? 'Held' : 'Menu',
+                        tip: _rightHeld
+                            ? 'Right button held — move the pointer, then tap '
+                                  'to choose'
+                            : 'Hold the right mouse button, for Amiga menus',
+                        active: _rightHeld,
+                        onPressed: () {
+                          setState(() => _rightHeld = !_rightHeld);
+                          widget.core.mouseButton(1, _rightHeld);
+                        },
                       ),
                       _tool(
                         icon: Icons.swap_horiz,

@@ -1473,22 +1473,43 @@ void gfx_unlock_picasso(const int monid, const bool dorender)
 		 */
 		if (currprefs.headless && uae4arm_host_framebuffer_output()) {
 			SDL_Surface* surface = get_amiga_surface(monid);
-			static int said = 0;
-			if (!said) {
-				said = 1;
-				const struct picasso_vidbuf_description* v =
-					&picasso_vidinfo[monid];
-				write_log("host framebuffer: RTG publish reached "
-					"(surface=%p %dx%d, rtg %dx%d)\n", (const void*)surface,
-					surface ? surface->w : -1, surface ? surface->h : -1,
-					v->width, v->height);
-			}
 			if (surface != nullptr) {
 				const struct picasso_vidbuf_description* vidinfo =
 					&picasso_vidinfo[monid];
-				uae4arm_host_publish_frame_region(
-					surface, vidinfo->width, vidinfo->height);
+				/*
+				 * The RTG mode's size, and the surface's if it has none.
+				 *
+				 * publish_frame_region takes a zero width or height as "use
+				 * the whole surface", and publish_frame_pixels drops a frame
+				 * whose size is zero without a word -- so a vidinfo that has
+				 * not been filled in yet is a picture that silently never
+				 * arrives. That is indistinguishable from the emulator
+				 * hanging, and it is what cost the last three attempts at
+				 * this: the publish was called and did nothing.
+				 */
+				int rtg_w = vidinfo->width;
+				int rtg_h = vidinfo->height;
+				if (rtg_w <= 0 || rtg_h <= 0) {
+					rtg_w = surface->w;
+					rtg_h = surface->h;
+				}
+				static int said_w = 0, said_h = 0;
+				if (rtg_w != said_w || rtg_h != said_h) {
+					said_w = rtg_w;
+					said_h = rtg_h;
+					write_log("host framebuffer: publishing RTG %dx%d "
+						"(surface %dx%d, vidinfo %dx%d)\n", rtg_w, rtg_h,
+						surface->w, surface->h, vidinfo->width,
+						vidinfo->height);
+				}
+				uae4arm_host_publish_frame_region(surface, rtg_w, rtg_h);
 				mon->render_ok = true;
+			} else {
+				static bool moaned = false;
+				if (!moaned) {
+					moaned = true;
+					write_log("host framebuffer: RTG has no surface to read\n");
+				}
 			}
 			return;
 		}

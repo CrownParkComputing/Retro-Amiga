@@ -6184,6 +6184,32 @@ static void draw_denise_line(int gfx_ypos, enum nln_how how, uae_u32 linecnt, in
 	if (startcycle == 0) {
 		get_line(0, gfx_ypos, how, denise_lol_shift_prev);
 
+		/*
+		 * Never draw through a line pointer get_line refused to set.
+		 *
+		 * get_line starts with xlinebuffer = NULL and only fills it in when
+		 * gfx_ypos lands inside the buffer, so an off-screen line leaves buf1
+		 * null -- and the pixel writers do not check. On this build that is a
+		 * null dereference in the denise thread the moment a line falls above
+		 * the visible area, which happened with gfx_ypos = -34 while booting
+		 * a Workbench headless.
+		 *
+		 * The thread dies where it stands. Nothing else notices: the frame
+		 * queue simply stops being consumed, so the picture freezes on its
+		 * last good frame or never appears at all, and a JIT SIGSEGV handler
+		 * can swallow the signal so the process does not even fall over. It
+		 * reads as the emulator hanging.
+		 *
+		 * The scratch buffer is what the fullline path above already uses for
+		 * exactly this -- somewhere harmless to write a line nobody will see.
+		 */
+		if (!buf1) {
+			buf1 = debug_buf;
+			buf2 = debug_buf;
+			buf_d = debug_bufx;
+			gbuf = NULL;
+		}
+
 		//write_log("# %d %d\n", gfx_ypos, vpos);
 
 		denise_hcounter_prev = -1;

@@ -72,6 +72,15 @@ class AmigaSystem {
 class AmigaSystems {
   const AmigaSystems._();
 
+  /// The folder of arcade RTG collections PiMiga mounts alongside itself.
+  ///
+  /// A sibling of the PiMiga folder under HardDrives, holding the MANX
+  /// conversions -- 1943, S16, R-Type and the rest -- each as a directory,
+  /// plus the shared MANX volume their launchers expect. Kept OUTSIDE the
+  /// PiMiga drive images so the collections can be updated by copying files,
+  /// without rebuilding a 13GB HDF.
+  static const String arcadeFolderName = 'PimigaArcade';
+
   /// The name a generated config gets, kept stable so a system is configured
   /// once rather than once per startup.
   static String configName(HardDriveSet set) =>
@@ -91,7 +100,17 @@ class AmigaSystems {
       final Directory dir = Directory('$root/$name');
       if (!dir.existsSync()) continue;
       final List<HardDriveSet> found = HardDriveSet.discoverIn(index, dir.path);
-      if (found.isNotEmpty) return found;
+      if (found.isNotEmpty) {
+        // The arcade folder is an ADDON, not a system: it holds the RTG
+        // collections PiMiga mounts alongside itself, and has no OS of its
+        // own -- a config generated for it alone would boot to nothing.
+        return found
+            .where(
+              (HardDriveSet set) =>
+                  set.name.toLowerCase() != arcadeFolderName.toLowerCase(),
+            )
+            .toList();
+      }
     }
     return const <HardDriveSet>[];
   }
@@ -226,9 +245,21 @@ class AmigaSystems {
       }
 
       if (path == null) {
+        List<String> mounts = set.allMounts;
+        if (known == AmigaCollection.pimiga) {
+          // PiMiga gets the arcade collections as extra drives, when the
+          // folder is there. MANX is mounted as its own volume because that
+          // is the name the collection launchers look for.
+          final String arcade =
+              '${Directory(set.folder).parent.path}/$arcadeFolderName';
+          if (Directory(arcade).existsSync()) {
+            mounts = <String>[...mounts, arcade, '$arcade/MANX'];
+            AppLog.info('systems', 'PiMiga: arcade collections mounted');
+          }
+        }
         EmulatorSettings settings = known == null
-            ? start.copyWith(hardDrives: set.allMounts)
-            : known.machine(start, set.allMounts);
+            ? start.copyWith(hardDrives: mounts)
+            : known.machine(start, mounts);
         // Without a Kickstart the machine has no ROM, and a machine with no
         // ROM does not fail -- it boots to a black screen and sits there,
         // which is indistinguishable from the emulator being broken. The

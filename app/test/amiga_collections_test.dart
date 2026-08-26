@@ -134,10 +134,7 @@ void main() {
       // buffers on a screen-mode change got the process killed outright.
       expect(s.z3Ram, 256);
       expect(s.rtgMemory, 32);
-      // RTG is off until headless can publish an RTG frame. The card is
-      // still configured -- memory, colour depth -- so turning it back on is
-      // one flag once the publish path exists. See AmigaCollection.machine.
-      expect(s.useRtg, isFalse);
+      expect(s.useRtg, isTrue);
       expect(s.jitCacheSize, 16384);
       expect(s.jitFpu, isTrue);
       // JIT on an 040 needs the compatible/24-bit pair off, or it silently

@@ -7,6 +7,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import '../data/amiga_keys.dart';
+import '../data/app_log.dart';
 import '../ffi/amiga_core.dart';
 import '../ffi/amiga_texture.dart';
 
@@ -115,9 +116,13 @@ class _AmigaScreenViewState extends State<AmigaScreenView>
   bool _textureRefused = false;
 
   /// How many ticks have gone by with the core publishing frames, the texture
-  /// path attached, and nothing reaching the compositor. -1 once the path has
-  /// proved itself. See [_watchTexture].
+  /// path attached, and nothing reaching the compositor. See [_watchTexture].
   int _texturePostedNothing = 0;
+
+  /// The last serials seen from each side, so "is it still delivering" is a
+  /// comparison rather than a guess.
+  int _lastPostedSerial = -1;
+  int _lastPublishedSerial = -1;
 
   bool _uploading = false;
   int _lastSerial = -1;
@@ -135,7 +140,16 @@ class _AmigaScreenViewState extends State<AmigaScreenView>
     _attaching = true;
     try {
       final AmigaTexture? texture = await AmigaTexture.create();
-      if (texture == null) return;
+      if (texture == null) {
+        // Which path the picture is on decides everything about its cost: the
+        // texture is one memcpy on the platform thread, the fallback is a
+        // full decode on the UI thread for every frame. At an RTG
+        // resolution that is the difference between a running app and one
+        // that cannot be touched.
+        AppLog.warn('picture', 'no external texture; using copy-and-decode');
+        return;
+      }
+      AppLog.info('picture', 'external texture ${texture.id} attached');
       if (!mounted) {
         await texture.dispose();
         return;
@@ -153,6 +167,7 @@ class _AmigaScreenViewState extends State<AmigaScreenView>
 
   @override
   void dispose() {
+    _holdTimer?.cancel();
     _ticker.dispose();
     unawaited(_texture?.dispose());
     _source.dispose();
@@ -210,14 +225,30 @@ class _AmigaScreenViewState extends State<AmigaScreenView>
   /// Returns false when the texture has just been dropped, so the caller stops
   /// treating this tick as a texture tick.
   bool _watchTexture() {
-    if (widget.core.texturePostedSerial() > 0) {
-      // Proven. Stop asking: this runs every vsync for the rest of the
-      // session, and it is two FFI calls when it does.
-      _texturePostedNothing = -1;
+    // Watched for the whole session, not just until it first works.
+    //
+    // The old version stopped checking the moment one frame posted, on the
+    // reasoning that a working path stays working. It does not: the picture
+    // can stop reaching the compositor part-way through a session -- after a
+    // screen-mode change, after the surface is recreated -- and the widget
+    // then shows the last frame that made it, frozen. Nothing repaints it
+    // because nothing tells Flutter there is anything new, so the picture
+    // only reappears when something else forces a rebuild. Pausing does,
+    // which is why "I can only see the screen if I press pause".
+    //
+    // So the test is now "is it still delivering", and the answer is
+    // whether the posted serial has moved since we last looked.
+    final int posted = widget.core.texturePostedSerial();
+    if (posted != _lastPostedSerial) {
+      _lastPostedSerial = posted;
+      _texturePostedNothing = 0;
       return true;
     }
-    if (_texturePostedNothing < 0) return true;
-    if (widget.core.publishedSerial() == 0) return true;
+    // Nothing new posted. That is only a fault if the core has something to
+    // post -- a paused or idle machine publishes nothing and is not broken.
+    final int published = widget.core.publishedSerial();
+    if (published == _lastPublishedSerial) return true;
+    _lastPublishedSerial = published;
     if (++_texturePostedNothing < _textureGraceFrames) return true;
 
     // Give it up. The fallback needs nothing but Dart, so there is nothing to
@@ -225,6 +256,11 @@ class _AmigaScreenViewState extends State<AmigaScreenView>
     // and paint.
     final AmigaTexture? dead = _texture;
     _textureRefused = true;
+    AppLog.warn(
+      'picture',
+      'the texture stopped delivering after $published published frame(s); '
+          'falling back to copy-and-decode',
+    );
     setState(() => _texture = null);
     unawaited(dead?.dispose());
     return false;
@@ -323,13 +359,53 @@ class _AmigaScreenViewState extends State<AmigaScreenView>
       child: picture,
     );
     if (!widget.mouseMode) return keyed;
-    return GestureDetector(
+    // The touch mouse, built on raw pointers rather than GestureDetector.
+    //
+    // A gesture recogniser can say "tap", "long press" and "drag", and none
+    // of those is the thing Workbench actually runs on: the LEFT BUTTON HELD
+    // while the pointer moves. Resizing a window, dragging one, lassoing
+    // icons, pulling a slider -- all of it is hold-and-move, and with only
+    // tap and drag available none of it could be done at all.
+    //
+    // The grammar, borrowed from every laptop trackpad:
+    //   one finger moving        the pointer, button up
+    //   a second finger DOWN     the left button goes down and STAYS down
+    //   the second finger UP     the button releases -- the drop
+    //   quick single tap         a click
+    //   press and hold still     a right click
+    return Listener(
       behavior: HitTestBehavior.opaque,
-      onPanUpdate: (DragUpdateDetails d) {
+      onPointerDown: (PointerDownEvent e) {
+        _mousePointers.add(e.pointer);
+        if (_mousePointers.length == 1) {
+          _dragPointer = e.pointer;
+          _downAt = e.position;
+          _moved = false;
+          // A finger held still is a right click -- for context menus and
+          // requesters. Cancelled the moment it moves or a second finger
+          // arrives, because then it is a drag or a hold, not a press.
+          _holdFired = false;
+          _holdTimer?.cancel();
+          _holdTimer = Timer(const Duration(milliseconds: 550), () {
+            if (!_moved && _mousePointers.length == 1) {
+              _holdFired = true;
+              _click(1);
+            }
+          });
+        } else if (_mousePointers.length == 2 && !_lmbHeld) {
+          _holdTimer?.cancel();
+          _lmbHeld = true;
+          widget.core.mouseButton(0, true);
+        }
+      },
+      onPointerMove: (PointerMoveEvent e) {
+        if (e.pointer != _dragPointer) return;
+        if ((e.position - _downAt).distance > 8) _moved = true;
+        if (_moved) _holdTimer?.cancel();
         // Relative, like a trackpad. A touch pixel is roughly a screen pixel;
         // 1.5x makes Workbench crossable in one swipe on a phone.
-        _carryX += d.delta.dx * 1.5;
-        _carryY += d.delta.dy * 1.5;
+        _carryX += e.delta.dx * 1.5;
+        _carryY += e.delta.dy * 1.5;
         final int dx = _carryX.truncate();
         final int dy = _carryY.truncate();
         if (dx != 0 || dy != 0) {
@@ -338,10 +414,40 @@ class _AmigaScreenViewState extends State<AmigaScreenView>
           widget.core.mouseMove(dx, dy);
         }
       },
-      onTap: () => _click(0),
-      onLongPress: () => _click(1),
+      onPointerUp: (PointerUpEvent e) => _mousePointerGone(e.pointer),
+      onPointerCancel: (PointerCancelEvent e) => _mousePointerGone(e.pointer),
       child: keyed,
     );
+  }
+
+  final Set<int> _mousePointers = <int>{};
+  int _dragPointer = -1;
+  Offset _downAt = Offset.zero;
+  bool _moved = false;
+  bool _lmbHeld = false;
+  bool _holdFired = false;
+  Timer? _holdTimer;
+
+  void _mousePointerGone(int pointer) {
+    final bool wasOnly =
+        _mousePointers.length == 1 && _mousePointers.contains(pointer);
+    _mousePointers.remove(pointer);
+    _holdTimer?.cancel();
+    if (_lmbHeld && _mousePointers.length <= 1) {
+      // The second finger lifting is the drop. Releasing on ANY finger going
+      // -- rather than only the second -- means lifting both at once can
+      // never leave the Amiga holding a button with nothing to release it.
+      _lmbHeld = false;
+      widget.core.mouseButton(0, false);
+    }
+    if (wasOnly && !_moved && !_lmbHeld && !_holdFired) {
+      // Down and up in place, alone: a click. NOT after a hold: the hold
+      // already right-clicked, and following it with a left click on the
+      // lift dismissed whatever the right click had just opened -- which
+      // read as the right click not working at all.
+      unawaited(_click(0));
+    }
+    if (_mousePointers.isEmpty) _dragPointer = -1;
   }
 
   double _carryX = 0;

@@ -83,6 +83,27 @@ void main() {
     expect(made.readAsStringSync(), isNot(contains(ConfigStore.collectionMarker)));
   });
 
+  test('the arcade addon folder is not offered as a system of its own', () {
+    // PimigaArcade holds the RTG collections PiMiga mounts alongside itself.
+    // It has no OS, so a config generated for it alone boots to nothing.
+    final Directory hardDrives = Directory('${temporary.path}/HardDrives')
+      ..createSync(recursive: true);
+    final Directory pimiga = Directory('${hardDrives.path}/Pimiga')
+      ..createSync(recursive: true);
+    File('${pimiga.path}/Startup-Sequence').writeAsStringSync('echo hi');
+    final Directory arcade = Directory('${hardDrives.path}/PimigaArcade')
+      ..createSync(recursive: true);
+    File('${arcade.path}/readme').writeAsStringSync('collections');
+
+    final List<HardDriveSet> found = AmigaSystems.discover(
+      const MediaIndex(files: <MediaFile>[], roots: <String>[]),
+      temporary.path,
+    );
+
+    expect(found, hasLength(1));
+    expect(found.single.name, 'Pimiga');
+  });
+
   test('the config name is stable, so a system is configured once', () {
     // configure() writes only where a config of this name is missing. If the
     // name moved between runs, every launch would write another copy and the

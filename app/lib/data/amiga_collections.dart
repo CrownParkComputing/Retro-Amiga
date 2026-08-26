@@ -136,22 +136,24 @@ enum AmigaCollection {
           jitFpu: true,
           chipRam: 16, // 8MB, as PiMiga's own config asks for
           z3Ram: 256,
-          // RTG is OFF until headless can publish an RTG frame.
+          // RTG, which the collections here are built around.
           //
-          // Not a preference -- a limitation. An RTG frame reaches the screen
-          // through amiberry_renderframe(), which needs a renderer, and
-          // headless has none; the tap that hands frames to the app lives in
-          // show_screen(), which that path never reaches. So the machine runs,
-          // Picasso96 draws, and the app is handed nothing: a black panel from
-          // the moment Workbench opens on a graphics-card screen.
+          // This was off for a while because an RTG screen came up black. The
+          // cause turned out not to be the RTG path at all: the chipset's
+          // drawing thread was dereferencing a null line pointer on any line
+          // that fell outside the visible area and dying where it stood, so
+          // the frame queue stopped being consumed and the picture froze or
+          // never arrived. See draw_denise_line in drawing.cpp.
           //
-          // Worse, the choice sticks. The screen mode lives in the Amiga's own
-          // prefs on the user's drive, so once a collection has been switched
-          // to an RTG mode it boots black every time -- and a screen you
-          // cannot see is a screen you cannot use to change it back. A native
-          // screenmode is the only honest default until the publish path
-          // exists.
-          useRtg: false,
+          // An RTG frame does not reach show_screen() -- it goes through
+          // amiberry_renderframe(), which needs a renderer headless does not
+          // have -- so the tap that hands frames to the app is in the picasso
+          // unlock instead. Worth remembering that the screen mode itself
+          // lives in the Amiga's own prefs on the user's drive: once a
+          // collection is switched to an RTG mode it boots into one every
+          // time, so a mode that cannot be published is a machine that cannot
+          // be recovered from its own settings.
+          useRtg: true,
           rtgMemory: 32,
           rtgTrueColour: true,
           romFile: current.romFile,
@@ -185,9 +187,8 @@ enum AmigaCollection {
           jitCacheSize: 16384,
           chipRam: 4,
           z3Ram: 256,
-          // Off for the same reason as PiMiga's above: headless cannot
-          // publish an RTG frame, so an RTG screen is a black panel.
-          useRtg: false,
+          // AGS runs its selector on a graphics-card screen and expects one.
+          useRtg: true,
           rtgMemory: 32,
           rtgTrueColour: true,
           romFile: current.romFile,
@@ -213,11 +214,11 @@ enum AmigaCollection {
   String get machineBlurb {
     switch (this) {
       case AmigaCollection.pimiga:
-        return 'A1200/040, 8MB chip, 256MB Zorro III, native screen';
+        return 'A1200/040, 8MB chip, 256MB Zorro III, RTG';
       case AmigaCollection.amigaVision:
         return 'A1200/040, 2MB chip, 256MB Zorro III, native screen';
       case AmigaCollection.ags:
-        return 'A1200, 2MB chip, 256MB Zorro III, native screen';
+        return 'A1200, 2MB chip, 256MB Zorro III, RTG';
       case AmigaCollection.zebWhdload:
         return 'A1200/020, native screen';
     }

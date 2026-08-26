@@ -70,6 +70,11 @@ class AmigaTexturePlugin(private val registry: TextureRegistry) {
 	private var width = 0
 	private var height = 0
 
+	/** Frames posted and refused since the last report. See doFrame. */
+	private var posted = 0
+	private var refused = 0
+	private var lastReport = 0L
+
 	fun register(engine: FlutterEngine) {
 		MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL)
 			.setMethodCallHandler { call, result ->
@@ -128,7 +133,23 @@ class AmigaTexturePlugin(private val registry: TextureRegistry) {
 				resizeToFrame()
 				// Posting a buffer is what marks the texture frame available,
 				// so there is nothing to schedule.
-				nativePresent()
+				//
+				// The answer is counted rather than discarded. "The picture is
+				// frozen" has two opposite causes -- we are not posting, or we
+				// are posting and nothing is being told about it -- and they
+				// look identical from the outside. One line a second says
+				// which.
+				if (nativePresent()) posted++ else refused++
+				val now = frameTimeNanos / 1_000_000_000L
+				if (now != lastReport) {
+					lastReport = now
+					android.util.Log.i(
+						"RetroAmiga",
+						"texture: posted=$posted refused=$refused in the last second",
+					)
+					posted = 0
+					refused = 0
+				}
 				choreographer.postFrameCallback(this)
 			}
 		}
