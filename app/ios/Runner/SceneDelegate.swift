@@ -216,7 +216,9 @@ class SceneDelegate: FlutterSceneDelegate {
     registerEmulatorChannel()
   }
 
-  func sceneDidDisconnect(_ scene: UIScene) {
+  // override: FlutterSceneDelegate declares this itself on the current SDK,
+  // and Swift makes shadowing-without-override a hard error.
+  override func sceneDidDisconnect(_ scene: UIScene) {
     // The texture holds a display link and a pair of pixel buffers, neither of
     // which the engine tears down for us. Left running, the link keeps waking
     // the display for a scene that is gone.
@@ -267,7 +269,7 @@ class SceneDelegate: FlutterSceneDelegate {
 
       case "setGameRunning":
         let running = (call.arguments as? [String: Any])?["running"] as? Bool ?? false
-        setGameAudioActive(running)
+        self.setGameAudioActive(running)
         result(true)
 
       // Something that changes every time a build is installed, so the

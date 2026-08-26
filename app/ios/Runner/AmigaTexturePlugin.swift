@@ -62,10 +62,12 @@ final class AmigaTexturePlugin: NSObject {
   }
 
   static func register(with controller: FlutterViewController) -> AmigaTexturePlugin? {
+    // `engine` is non-optional on this SDK's FlutterViewController, and
+    // registrar(forPlugin:) is the only optional in the chain.
     guard
-      let registrar = controller.engine?.registrar(forPlugin: "AmigaTexturePlugin"),
-      let textures = registrar.textures() as FlutterTextureRegistry?
+      let registrar = controller.engine.registrar(forPlugin: "AmigaTexturePlugin")
     else { return nil }
+    let textures: FlutterTextureRegistry = registrar.textures()
 
     let plugin = AmigaTexturePlugin(registry: textures)
     let channel = FlutterMethodChannel(
@@ -109,7 +111,11 @@ final class AmigaTexturePlugin: NSObject {
     // Replaced the moment a real frame reports its mode.
     guard resize(width: 720, height: 568) else { return nil }
 
-    let id = registry.registerTexture(self)
+    // register(_:), not registerTexture(_:): the Swift bridge renamed it in
+    // Swift 3 and marks the old name obsoleted, which is a hard error -- and
+    // one that had never surfaced because an invalid Info.plist stopped every
+    // iOS build before the compiler got this far.
+    let id = registry.register(self)
     textureId = id
 
     setSink?(
