@@ -1,10 +1,12 @@
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:ui' show Size;
 
 import 'amiga_collections.dart';
 import 'amiga_model.dart';
 import 'app_log.dart';
+import 'app_prefs.dart';
 import 'config_store.dart';
 import 'emulator_settings.dart';
 import 'file_category.dart';
@@ -30,7 +32,12 @@ class AmigaSystem {
     required this.set,
     required this.collection,
     required this.configPath,
+    this.accurate = false,
   });
+
+  /// Running with the JIT off and the CPU at real speed. Fast is the
+  /// default; this is the way out when a title dislikes the recompiler.
+  final bool accurate;
 
   /// What to call it on the rail. The collection's name where it is one of
   /// the known packs, otherwise the folder's.
@@ -142,6 +149,23 @@ class AmigaSystems {
   static int _rtgHeightFor(Size screen) => math
       .min(math.min(screen.width, screen.height).round(), maxRtgHeight);
 
+  /// Flips one collection between fast and accurate, rebuilding its config.
+  ///
+  /// The config is deleted rather than edited: configure() regenerates it
+  /// from the recipe with the new speed applied, which keeps every other
+  /// recipe improvement instead of freezing the file as it was.
+  static Future<void> setSpeed(
+    AmigaSystem system, {
+    required bool accurate,
+  }) async {
+    await AppPrefs.setCollectionAccurate(system.name, accurate: accurate);
+    try {
+      await File(system.configPath).delete();
+    } on FileSystemException {
+      // Never written, or already gone: configure() writes it fresh anyway.
+    }
+  }
+
   /// Whether [path] was written by the recipe this build carries.
   static Future<bool> _isCurrentRecipe(String path) async {
     try {
@@ -173,7 +197,31 @@ class AmigaSystems {
     Size? screen,
   }) async {
     final String root = await MediaRoot.path();
-    final List<HardDriveSet> sets = discover(index, root);
+    // Off the UI thread, always.
+    //
+    // discover() walks the card with listSync, and the card is not always
+    // idle: quitting a session that runs from a 25GB image leaves the
+    // hardfile threads flushing it for seconds afterwards, and this runs the
+    // moment the emulator screen closes. A synchronous card walk behind that
+    // flush froze the whole app -- reported as "close without saving on
+    // WHDLoad freezes", because only the big-image collection makes the
+    // flush long enough to notice.
+    final (List<HardDriveSet> sets, String arcadePath) =
+        await Isolate.run(() {
+      final List<HardDriveSet> found = discover(index, root);
+      // The arcade folder's existence is checked here too: one existsSync on
+      // a card mid-flush blocks just as thoroughly as a listing does.
+      String arcade = '';
+      for (final HardDriveSet set in found) {
+        final String candidate =
+            '${Directory(set.folder).parent.path}/$arcadeFolderName';
+        if (Directory(candidate).existsSync()) {
+          arcade = candidate;
+          break;
+        }
+      }
+      return (found, arcade);
+    });
     final List<MediaFile> roms = index.of(FileCategory.roms);
     // Said every time, not only when something is written. "No collections"
     // and "collections already configured" look identical on screen, and
@@ -206,6 +254,7 @@ class AmigaSystems {
           : 'using Kickstart ${start.romFile.split('/').last}',
     );
 
+    final Set<String> accurateNames = await AppPrefs.accurateCollections();
     final List<SavedConfig> existing = await ConfigStore.list();
     final Map<String, SavedConfig> byName = <String, SavedConfig>{
       for (final SavedConfig config in existing) config.name: config,
@@ -215,6 +264,8 @@ class AmigaSystems {
     for (final HardDriveSet set in sets) {
       final AmigaCollection? known = AmigaCollection.detect(set);
       final String name = configName(set);
+      final bool accurate =
+          accurateNames.contains(known?.displayName ?? set.name);
       final SavedConfig? adopted = byName[name];
       String? path = adopted?.path;
 
@@ -246,20 +297,22 @@ class AmigaSystems {
 
       if (path == null) {
         List<String> mounts = set.allMounts;
-        if (known == AmigaCollection.pimiga) {
+        if (known == AmigaCollection.pimiga && arcadePath.isNotEmpty) {
           // PiMiga gets the arcade collections as extra drives, when the
           // folder is there. MANX is mounted as its own volume because that
           // is the name the collection launchers look for.
-          final String arcade =
-              '${Directory(set.folder).parent.path}/$arcadeFolderName';
-          if (Directory(arcade).existsSync()) {
-            mounts = <String>[...mounts, arcade, '$arcade/MANX'];
-            AppLog.info('systems', 'PiMiga: arcade collections mounted');
-          }
+          mounts = <String>[...mounts, arcadePath, '$arcadePath/MANX'];
+          AppLog.info('systems', 'PiMiga: arcade collections mounted');
         }
         EmulatorSettings settings = known == null
             ? start.copyWith(hardDrives: mounts)
             : known.machine(start, mounts);
+        if (accurate) {
+          // Accurate mode: no recompiler, real CPU pacing. The rest of the
+          // machine -- chip, memory, the graphics card -- stays as the
+          // recipe wants it; speed is the only thing being traded.
+          settings = settings.copyWith(jitCacheSize: 0, cpuSpeed: 'real');
+        }
         // Without a Kickstart the machine has no ROM, and a machine with no
         // ROM does not fail -- it boots to a black screen and sits there,
         // which is indistinguishable from the emulator being broken. The
@@ -309,6 +362,7 @@ class AmigaSystems {
           set: set,
           collection: known,
           configPath: path,
+          accurate: accurate,
         ),
       );
     }

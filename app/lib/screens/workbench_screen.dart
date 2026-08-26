@@ -594,16 +594,42 @@ extension _CollectionsPage on _WorkbenchScreenState {
             leading: Text(system.icon, style: const TextStyle(fontSize: 28)),
             title: Text(system.name),
             subtitle: Text(
-              '${system.machineSummary}\n'
+              '${system.machineSummary}'
+              '${system.accurate ? ' · accurate' : ''}\n'
               '${system.isFolder ? 'Folder as DH0' : '${system.set.driveCount} drive(s)'}'
               ' · ${system.set.name}',
               style: const TextStyle(fontSize: 11),
             ),
             isThreeLine: true,
-            trailing: FilledButton.icon(
-              onPressed: () => _playSystem(system),
-              icon: const Icon(Icons.play_arrow, size: 18),
-              label: const Text('Play'),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                // Fast (JIT, full CPU speed) or accurate (neither), per
+                // collection. A bolt rather than words: it sits on every
+                // row, and its tooltip carries the explanation.
+                IconButton(
+                  icon: Icon(
+                    system.accurate ? Icons.speed_outlined : Icons.bolt,
+                    color: system.accurate ? AmigaColors.textDim : null,
+                  ),
+                  tooltip: system.accurate
+                      ? 'Accurate: JIT off, real speed — tap for fast'
+                      : 'Fast: JIT on, full speed — tap for accurate',
+                  onPressed: () async {
+                    await AmigaSystems.setSpeed(
+                      system,
+                      accurate: !system.accurate,
+                    );
+                    // Regenerates the config with the new speed.
+                    await _configureSystems();
+                  },
+                ),
+                FilledButton.icon(
+                  onPressed: () => _playSystem(system),
+                  icon: const Icon(Icons.play_arrow, size: 18),
+                  label: const Text('Play'),
+                ),
+              ],
             ),
           ),
         );

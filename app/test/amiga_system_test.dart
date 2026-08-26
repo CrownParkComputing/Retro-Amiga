@@ -8,6 +8,9 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'package:uae4arm2026/data/app_prefs.dart';
 
 import 'package:uae4arm2026/data/amiga_collections.dart';
 import 'package:uae4arm2026/data/amiga_system.dart';
@@ -102,6 +105,17 @@ void main() {
 
     expect(found, hasLength(1));
     expect(found.single.name, 'Pimiga');
+  });
+
+  test('accurate mode strips the JIT and nothing else', () async {
+    // The speed toggle trades ONLY speed. A machine that also lost its
+    // graphics card or its memory when switched to accurate would break the
+    // collection it was trying to fix.
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await AppPrefs.setCollectionAccurate('PiMiga', accurate: true);
+    expect(await AppPrefs.accurateCollections(), contains('PiMiga'));
+    await AppPrefs.setCollectionAccurate('PiMiga', accurate: false);
+    expect(await AppPrefs.accurateCollections(), isNot(contains('PiMiga')));
   });
 
   test('the config name is stable, so a system is configured once', () {

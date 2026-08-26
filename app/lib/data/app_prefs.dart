@@ -16,6 +16,7 @@ class AppPrefs {
   static const String _screenFill = 'screen_fill';
   static const String _showPad = 'show_onscreen_pad';
   static const String _showKeyboard = 'show_onscreen_keyboard';
+  static const String _accurateCollections = 'accurate_collections';
   static const String _musicVolume = 'music_volume';
 
   /// Whether the machine boots the bundled AROS ROM instead of the user's
@@ -160,6 +161,35 @@ class AppPrefs {
     showKeyboard.value = value;
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_showKeyboard, value);
+  }
+
+  /// Collections running in accurate mode: JIT off, real CPU speed.
+  ///
+  /// Fast is the default -- these curated systems are built for a quick 040
+  /// and are painful without one -- but a JIT breaks the odd timing-sensitive
+  /// title, and "this game glitches" needs an answer that is not editing a
+  /// config. Stored by collection NAME, so the choice survives the config
+  /// being regenerated, which is exactly when it matters.
+  static Future<Set<String>> accurateCollections() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    return (prefs.getStringList(_accurateCollections) ?? const <String>[])
+        .toSet();
+  }
+
+  static Future<void> setCollectionAccurate(
+    String name, {
+    required bool accurate,
+  }) async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    final Set<String> current =
+        (prefs.getStringList(_accurateCollections) ?? const <String>[])
+            .toSet();
+    if (accurate) {
+      current.add(name);
+    } else {
+      current.remove(name);
+    }
+    await prefs.setStringList(_accurateCollections, current.toList());
   }
 
   /// Workbench music volume, 0..1.
