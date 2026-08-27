@@ -44,7 +44,12 @@ class AgsSetup {
         .map((MapEntry<String, int> e) => e.key)
         .toList();
 
-    final List<String> roots = <String>['${await MediaRoot.path()}/HardDrives'];
+    // Only the media root. /sdcard and /storage used to be walked too, but
+    // reading either needs all-files access, which this app no longer holds:
+    // under scoped storage the walk finds nothing and only wastes the
+    // isolate's time. An AGS set elsewhere arrives through the folder
+    // picker, which copies it under the media root where this walk looks.
+    final List<String> roots = <String>[await MediaRoot.path()];
 
     // The walk runs in its own isolate. It is synchronous filesystem work over
     // whatever is plugged in - an external drive can be enormous - and on the

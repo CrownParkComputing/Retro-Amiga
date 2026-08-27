@@ -6,10 +6,7 @@ import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Environment;
 import android.os.ParcelFileDescriptor;
-import android.system.ErrnoException;
-import android.system.Os;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.ViewGroup;
@@ -84,20 +81,6 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 	protected void onCreate(Bundle savedInstanceState) {
 		isRunning = true;
 		cleanCache();
-		// SDL starts native code inside super.onCreate(). Point Amiberry at
-		// the shared library first so it never falls back to Android/data.
-		try {
-			Os.setenv(
-				"RETRO_AMIGA_CONTENT_ROOT",
-				new File(Environment.getExternalStorageDirectory(),
-					"Retro-Applications/Amiga").getAbsolutePath(),
-				true
-			);
-		} catch (ErrnoException error) {
-			// Starting with the old Android/data root would silently recreate
-			// the duplication this build removes, so fail visibly instead.
-			throw new IllegalStateException("Could not set shared Amiga root", error);
-		}
 		super.onCreate(savedInstanceState);
 		currentConfigPath = extractConfigPath(getIntent());
 		HostSupport.writeSessionMarker(this, currentConfigPath);

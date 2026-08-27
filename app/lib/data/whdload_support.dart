@@ -120,7 +120,6 @@ class WhdloadSupport {
   };
 
   static Future<String?> home() async {
-    if (Platform.isAndroid) return await MediaRoot.path();
     try {
       return await _channel.invokeMethod<String>('emulatorHomeDirectory');
     } on PlatformException {
@@ -133,15 +132,9 @@ class WhdloadSupport {
   static Future<Directory?> _whdBootDirectory() async {
     final String? base = await home();
     if (base == null || base.isEmpty) return null;
-    try {
-      final Directory dir = Directory('$base/WHDBoot');
-      if (!dir.existsSync()) dir.createSync(recursive: true);
-      return dir;
-    } on FileSystemException {
-      // First launch on Android reaches this before the user has returned
-      // from the all-files access screen. Setup retries after access exists.
-      return null;
-    }
+    final Directory dir = Directory('$base/WHDBoot');
+    if (!dir.existsSync()) dir.createSync(recursive: true);
+    return dir;
   }
 
   static Future<WhdloadStatus> status() async {

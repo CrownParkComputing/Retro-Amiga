@@ -21,7 +21,7 @@ import 'dart:io';
 import 'package:flutter/services.dart' show rootBundle;
 
 import 'aros_rom.dart';
-import 'media_root.dart';
+import 'host_paths.dart';
 
 class ComplianceDemo {
   const ComplianceDemo._();
@@ -32,9 +32,16 @@ class ComplianceDemo {
 
   static const String _diskAsset = 'assets/demo/demo.adf';
 
-  /// The demo's own folder, beside the user's media rather than inside it.
+  /// The demo's own folder, in the app's own storage rather than the user's.
+  ///
+  /// NOT under MediaRoot: the root can be a granted folder adopted in place,
+  /// which is readable but not writable - and this folder is one the app
+  /// writes into. Creating it under a read-only card root is the
+  /// "FileSystemException: Creation failed" crash on launch.
   static Future<Directory> folder() async {
-    final Directory dir = Directory('${await MediaRoot.path()}/Compliance');
+    final Directory dir = Directory(
+      '${await HostPaths.emulatorHome()}/Compliance',
+    );
     if (!dir.existsSync()) dir.createSync(recursive: true);
     return dir;
   }

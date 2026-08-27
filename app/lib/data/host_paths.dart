@@ -46,21 +46,6 @@ class HostPaths {
   }
 
   static String? _emulatorHome;
-  static String? _sharedAmigaDirectory;
-
-  /// The canonical Android library. The Files UI may label primary storage
-  /// "Odin2"; the host resolves that volume rather than Dart guessing it.
-  static Future<String> sharedAmigaDirectory() async {
-    final String? cached = _sharedAmigaDirectory;
-    if (cached != null) return cached;
-    final String? path = await _channel.invokeMethod<String>(
-      'sharedAmigaDirectory',
-    );
-    if (path == null || path.isEmpty) {
-      throw StateError('the host returned no shared Amiga directory');
-    }
-    return _sharedAmigaDirectory = path;
-  }
 
   /// Every volume that could hold a Retro-Applications/Amiga library, best
   /// first. Empty on platforms with only one place for it to be.
@@ -83,16 +68,6 @@ class HostPaths {
     }
   }
 
-  static Future<bool> hasSharedStorageAccess() async {
-    if (!Platform.isAndroid) return true;
-    return await _channel.invokeMethod<bool>('hasSharedStorageAccess') ?? false;
-  }
-
-  static Future<bool> requestSharedStorageAccess() async {
-    if (!Platform.isAndroid) return true;
-    return await _channel.invokeMethod<bool>('requestSharedStorageAccess') ??
-        false;
-  }
 
   /// The folder the core treats as its own: getExternalFilesDir(null) on
   /// Android, which is what SDL_GetAndroidExternalStoragePath returns.

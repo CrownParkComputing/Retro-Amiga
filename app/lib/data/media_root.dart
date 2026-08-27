@@ -45,14 +45,7 @@ class MediaRoot {
 
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     final String? stored = prefs.getString(_prefsKey);
-    final bool oldAndroidSandbox =
-        Platform.isAndroid &&
-        stored != null &&
-        stored.replaceAll(r'\', '/').contains('/Android/data/com.uae4arm2026/');
-    if (stored != null &&
-        stored.isNotEmpty &&
-        !oldAndroidSandbox &&
-        await _isUsable(stored)) {
+    if (stored != null && stored.isNotEmpty && await _isUsable(stored)) {
       _cached = stored;
       return stored;
     }
@@ -74,7 +67,10 @@ class MediaRoot {
   /// Deliberately shallow: one level of per-kind folders and whether any of
   /// them has a file in it. Enough to tell a real collection from the empty
   /// skeleton this app creates, without walking a card full of other
-  /// machines' games to find out.
+  /// machines' games to find out. Public so an import can decide where to
+  /// land its copies.
+  static Future<bool> hasMedia(String path) => _hasMedia(path);
+
   static Future<bool> _hasMedia(String path) async {
     try {
       final Directory dir = Directory(path);
@@ -92,12 +88,18 @@ class MediaRoot {
     }
   }
 
-  /// Whether a root can actually be listed and written.
+  /// Whether a root can actually be listed.
   ///
   /// Checked rather than assumed: the answer changed underneath existing
   /// installs when all-files access was dropped, and a root that cannot be
   /// read fails in the least helpful way possible - a library that is simply
   /// empty, with no error anywhere.
+  ///
+  /// Listable is enough. A granted folder adopted in place can be readable
+  /// without being writable, and that is a working library: the core only
+  /// reads it. Everything the app WRITES - the compliance demo, WHDLoad
+  /// support, configs - lives in the app's own folders, never under the
+  /// root. See ComplianceDemo.folder.
   static Future<bool> _isUsable(String path) async {
     try {
       final Directory dir = Directory(path);
@@ -126,19 +128,15 @@ class MediaRoot {
   /// a launcher that files disks into somebody else's folders is worse than
   /// one that asks.
   static Future<String> defaultPath() async {
-    // One shared library for every Retro application. The Android host
-    // resolves primary storage (shown as "Odin2" on that handheld), and the
-    // native core uses this exact path too. Media stays here in place; it is
-    // never duplicated into Android/data.
+    // The app's own external folder on whichever volume actually holds a
+    // library, not /sdcard/Amiga. Under scoped storage a shared folder can
+    // be neither listed nor written without all-files access, which Play
+    // gates behind a review this app does not pass and does not ask for.
+    // The app-specific folders are the places on Android that always work
+    // with no permission at all - and getExternalFilesDirs covers the SD
+    // card too, so a collection banked there is still found. A collection
+    // anywhere else comes in through the folder picker: see MediaFolder.
     if (Platform.isAndroid) {
-      // The volume with a real library on it, if there is one.
-      //
-      // This used to be sharedAmigaDirectory() alone, which is the internal
-      // emulated volume and can never be anything else. A collection on an SD
-      // card was therefore unreachable: the app pointed at internal storage,
-      // created an empty folder skeleton there, scanned it and reported
-      // nothing found. The card is a different volume and has to be asked for
-      // by name.
       final List<String> candidates = await HostPaths.amigaLibraryRoots();
       for (final String candidate in candidates) {
         if (await _hasMedia(candidate)) {
@@ -146,9 +144,9 @@ class MediaRoot {
           return candidate;
         }
       }
-      // Nothing populated anywhere: internal storage, where the skeleton gets
-      // created and the user is told to put things.
-      return await HostPaths.sharedAmigaDirectory();
+      // Nothing populated anywhere: the emulator home, where the core
+      // already keeps Kickstarts, Floppies and HardDrives.
+      return await HostPaths.emulatorHome();
     }
     if (Platform.isIOS) return await HostPaths.documents();
     final Directory dir = Directory(
@@ -214,7 +212,13 @@ class MediaRoot {
     final Directory dir = Directory(
       '${await path()}/${folders[category] ?? 'Other'}',
     );
-    if (!dir.existsSync()) dir.createSync(recursive: true);
+    try {
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+    } on FileSystemException {
+      // A read-only in-place root without this category's folder. The
+      // caller gets the path it asked about; writes into it will fail and
+      // are counted by whoever attempts them.
+    }
     return dir;
   }
 }
@@ -226,6 +230,7 @@ class ImportResult {
     required this.alreadyInPlace,
     required this.failed,
     this.extracted = 0,
+    this.usedInPlace = false,
   });
 
   final int moved;
@@ -234,6 +239,10 @@ class ImportResult {
 
   /// Disk images taken out of zips and written as real files.
   final int extracted;
+
+  /// True when the granted folder was adopted as the library where it is,
+  /// with nothing copied at all.
+  final bool usedInPlace;
 
   int get total => moved + alreadyInPlace + failed;
 }
@@ -330,10 +339,7 @@ class MediaImporter {
   /// reference zips live on the machine that built them. One that still
   /// holds something unrecognised is kept, moved aside into Archives/.
   static Future<int> _extractArchives(
-    MediaIndex index,
-    String root,
-    Set<FileCategory>? only,
-  ) async {
+      MediaIndex index, String root, Set<FileCategory>? only) async {
     int extracted = 0;
 
     for (final MediaFile file in index.files) {

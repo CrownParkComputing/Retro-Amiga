@@ -3,13 +3,14 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 
+
 import 'amiga_model.dart';
 import 'app_log.dart';
 import 'app_prefs.dart';
 import 'compliance_demo.dart';
 import 'file_category.dart';
 import 'host_paths.dart';
-import 'media_folder.dart';
+
 import 'media_root.dart';
 import '../widgets/alphabet_filter.dart';
 
@@ -319,12 +320,15 @@ class MediaLibrary {
       return <String>[(await ComplianceDemo.folder()).path];
     }
     if (Platform.isAndroid) {
-      // The app's own media root, not the whole of /sdcard. Scoped storage
-      // will not let this app list shared storage at all, so walking /sdcard
-      // returns nothing but a permission error per folder. What the user has
-      // elsewhere reaches the library through the folder picker instead: see
-      // MediaFolder.
-      return <String>[await MediaRoot.path()];
+      // The media root plus the emulator home. The root can be a granted
+      // folder adopted in place on the card; the home is where the app's own
+      // writes land - the demo disk, zips dropped in through the Files app -
+      // and it stops being scanned the moment the root moves elsewhere
+      // unless it is named here too. Never the whole of /sdcard: what the
+      // user has elsewhere reaches the library through the folder picker.
+      final String root = await MediaRoot.path();
+      final String home = await HostPaths.emulatorHome();
+      return root == home ? <String>[root] : <String>[root, home];
     }
     if (Platform.isIOS) {
       return <String>[await HostPaths.documents()];
@@ -449,19 +453,16 @@ class MediaLibrary {
 
     // Only sendable values cross the isolate boundary, so the walk returns
     // plain maps and they are turned back into MediaFiles here.
-    // The granted folder is ENUMERATED, not walked.
     //
-    // This is why a scan of the user's chosen folder found nothing. The SAF
-    // grant was only ever used to guess a filesystem path, which was then
-    // handed to a dart:io walk -- and dart:io cannot list a removable card
-    // without all-files access, which Play will not grant an emulator. So the
-    // app asked the system for permission to read a folder, was given it, and
-    // then tried to read the folder a way the permission does not cover.
-    //
-    // MediaFolder.list goes through the content resolver, which is what the
-    // grant actually authorises. It existed and had no callers.
+    // The granted SAF folder is deliberately NOT part of the index. It used
+    // to be enumerated here and folded in as filesystem-shaped paths, which
+    // worked while all-files access let the core open them in place. Without
+    // that permission those paths cannot be opened, so indexing them fills
+    // the shelf with games that cannot boot and hands the startup import a
+    // list of files it fails to move. The grant is an import SOURCE:
+    // MediaFolderImporter copies what it holds into the media root, and the
+    // walk below then finds the copies like any other file.
     final List<Map<String, Object>> raw = <Map<String, Object>>[];
-    final List<MediaFile> granted = await _fromGrantedFolder(onProgress);
 
     raw.addAll(
       await _runWalk(scanRoots, maxDepth, fileLimit, mediaRoot, onProgress),
@@ -473,11 +474,6 @@ class MediaLibrary {
     for (final Map<String, Object> entry in raw) {
       final MediaFile? file = MediaFile.fromJson(entry);
       if (file != null && seenPaths.add(file.path)) found.add(file);
-    }
-    // The granted folder can sit inside a walked root when the app does hold
-    // all-files access, so the same file arrives twice.
-    for (final MediaFile file in granted) {
-      if (seenPaths.add(file.path)) found.add(file);
     }
 
     found.sort(
@@ -687,47 +683,6 @@ class MediaLibrary {
     }
   }
 
-  /// The granted SAF folder, as media files.
-  ///
-  /// Returns real filesystem paths rather than content URIs, because that is
-  /// what the rest of the app and the emulator core expect. On a removable
-  /// card the path is right even where a dart:io listing of it would fail:
-  /// the enumeration came through the content resolver, and only the naming
-  /// is filesystem-shaped.
-  static Future<List<MediaFile>> _fromGrantedFolder(
-    ScanProgress? onProgress,
-  ) async {
-    if (!MediaFolder.isSupported) return const <MediaFile>[];
-    final String? root = await MediaFolder.displayPath();
-    if (root == null || root.isEmpty) return const <MediaFile>[];
-
-    // Reported as it goes: this call is the slow half of a scan on a card
-    // with a real collection on it, and it used to look like nothing was
-    // happening at all.
-    final List<FolderEntry> entries = await MediaFolder.list(
-      onCount: (int found) => onProgress?.call(found, root),
-    );
-    final List<MediaFile> files = <MediaFile>[];
-    for (final FolderEntry entry in entries) {
-      final FileCategory? category = FileCategory.fromPath(entry.name);
-      if (category == null) continue;
-      final String directory = entry.directory.isEmpty
-          ? root
-          : '$root/${entry.directory}';
-      files.add(
-        MediaFile(
-          path: '$directory/${entry.name}',
-          category: category,
-          size: entry.size,
-        ),
-      );
-      if (files.length % 64 == 0) onProgress?.call(files.length, directory);
-    }
-    onProgress?.call(files.length, root);
-    AppLog.info('scan', '${files.length} files from the granted folder');
-    return files;
-  }
-
   /// Runs the walk in an isolate, reporting progress if anyone is listening.
   ///
   /// Two paths on purpose. Without a listener this is `Isolate.run`, exactly as
@@ -832,29 +787,6 @@ class MediaLibrary {
           continue;
         }
         if (entry is Directory) {
-          // AGS shared/game/save trees can contain tens of thousands of Amiga
-          // files that are contents of a mounted drive, not library entries.
-          // HDF images sit alongside them and are still indexed; skipping the
-          // payload directories turns a minutes-long scan into seconds.
-          final String lowerPath = entry.path.toLowerCase();
-          final String hardDriveRoot = '$mediaRoot/harddrives/'.toLowerCase();
-          final String directoryName = entry.path
-              .replaceAll(r'\', '/')
-              .split('/')
-              .last
-              .toLowerCase();
-          if (lowerPath.startsWith(hardDriveRoot) &&
-              const <String>{
-                'shared',
-                'share',
-                'games',
-                'game-data',
-                'save-data',
-                'savedata',
-                'saves',
-              }.contains(directoryName)) {
-            continue;
-          }
           walkDir(entry, depth + 1);
         } else if (entry is File) {
           FileCategory? category = FileCategory.fromPath(entry.path);

@@ -34,18 +34,15 @@ void main() {
     );
   });
 
-  test(
-    'an SD card keeps its volume id rather than pretending to be /sdcard',
-    () {
-      expect(
-        path(
-          'content://com.android.externalstorage.documents/tree/'
-          '1A2B-3C4D%3AAmiga',
-        ),
-        '/storage/1A2B-3C4D/Amiga',
-      );
-    },
-  );
+  test('an SD card maps to its real mount point under /storage', () {
+    expect(
+      path(
+        'content://com.android.externalstorage.documents/tree/'
+        '1A2B-3C4D%3AAmiga',
+      ),
+      '/storage/1A2B-3C4D/Amiga',
+    );
+  });
 
   test('spaces and brackets in a folder name survive decoding', () {
     expect(

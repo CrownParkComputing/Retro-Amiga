@@ -17,11 +17,16 @@
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
-    <!-- Retro-Amiga operates on the user's canonical emulator library in
-         Retro-Applications/Amiga. Media is never copied into Android/data.
-         Android 11+ requires this special access for the native core's POSIX
-         file APIs and directory-backed AGS installs. -->
-    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+
+    <!-- MANAGE_EXTERNAL_STORAGE (all-files access) is deliberately NOT
+         requested. It is a Play "sensitive permission": shipping it means
+         filling in a declaration form and passing a review that Google
+         normally only grants to file managers, backup and antivirus apps, and
+         an undeclared one blocks the release outright. Instead the user
+         grants one folder through the Storage Access Framework picker and
+         its contents are copied into the app's own media folder, where the
+         native core's POSIX file APIs can read them without any permission.
+         See MediaFolderAccess. -->
 
     <!-- Bluetooth controller support (Steam Controller BLE, HID devices) -->
     <uses-permission android:name="android.permission.BLUETOOTH" />

@@ -10,10 +10,8 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import android.os.Handler
 import android.os.Looper
-import android.provider.Settings
 import android.system.Os
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -78,27 +76,7 @@ class MainActivity : FlutterActivity() {
 		@JvmStatic external fun nativeMusicSetVolume(volume: Float)
 	}
 
-	private fun sharedAmigaDirectory(): File =
-		File(Environment.getExternalStorageDirectory(), SHARED_AMIGA_FOLDER)
-
-	private fun hasSharedStorageAccess(): Boolean =
-		Build.VERSION.SDK_INT < Build.VERSION_CODES.R ||
-			Environment.isExternalStorageManager()
-
 	override fun onCreate(savedInstanceState: Bundle?) {
-		// The in-process core reads this before resolving Amiberry's content
-		// paths. Set it before Flutter can lazily load the native library.
-		//
-		// The BEST root, not the internal one. The core opens floppies and
-		// hard-drive images by path, so if the library is this app's folder on
-		// the SD card then that is the path it has to be told about; pointing it
-		// at internal storage left it looking at an empty skeleton.
-		Os.setenv(
-			"RETRO_AMIGA_CONTENT_ROOT",
-			amigaLibraryRoots().firstOrNull() ?: sharedAmigaDirectory().absolutePath,
-			true,
-		)
-
 		// The real size of this screen, for the core's RTG mode list.
 		//
 		// Headless has no window and no display, so SDL's offscreen driver
@@ -146,11 +124,8 @@ class MainActivity : FlutterActivity() {
 	 * not a SAF grant either. They are also real filesystem paths, which
 	 * matters more here than it looks: the emulator core opens floppies and
 	 * hard-drive images by path, so a content URI is not something it can be
-	 * handed without rewriting how it opens files.
-	 *
-	 * The shared internal folder stays on the list, last, for installs that
-	 * still hold all-files access from an earlier build. It is where the
-	 * skeleton is created when there is nothing anywhere else.
+	 * handed without rewriting how it opens files. A shared folder elsewhere
+	 * comes in through the SAF picker and is copied here: see MediaFolderAccess.
 	 *
 	 * Ordered by what is actually in them, so the launcher adopts a real
 	 * library rather than an empty skeleton it made itself.
@@ -159,28 +134,15 @@ class MainActivity : FlutterActivity() {
 		val candidates = LinkedHashSet<File>()
 
 		// This app's own folder on every volume. No permission, any volume.
+		// Created when missing: these are the app's directories to make, and
+		// an import choosing a destination volume (a collection granted from
+		// an SD card should be copied to the card's app folder, not squeezed
+		// into internal storage) can only choose from folders on this list.
 		for (dir in getExternalFilesDirs(null)) {
-			if (dir != null) candidates.add(File(dir, SHARED_AMIGA_FOLDER))
-		}
-
-		// The shared folder, for installs that can still read it.
-		candidates.add(sharedAmigaDirectory())
-
-		// ...and the same shared folder on EVERY mounted volume, card included.
-		//
-		// This is where a real collection actually lives. getExternalFilesDirs
-		// covers this app's own folder on each volume and
-		// getExternalStorageDirectory covers the shared folder on the internal
-		// one -- but nothing covered the shared folder on a removable card,
-		// which is exactly where someone with a 900GB card puts 25GB of Amiga
-		// files. The library sat at /storage/XXXX-XXXX/Retro-Applications/Amiga
-		// and was not on the list, so the launcher adopted an empty internal
-		// skeleton and truthfully reported nothing found.
-		//
-		// Readable only where the app holds all-files access, which is why the
-		// filter below is `canRead` rather than an assumption.
-		for (volume in storageVolumeDirectories()) {
-			candidates.add(File(volume, SHARED_AMIGA_FOLDER))
+			if (dir == null) continue
+			val folder = File(dir, SHARED_AMIGA_FOLDER)
+			folder.mkdirs()
+			candidates.add(folder)
 		}
 
 		val readable = candidates.filter { it.isDirectory && it.canRead() }
@@ -197,60 +159,21 @@ class MainActivity : FlutterActivity() {
 	}
 
 	/**
-	 * The root directory of every mounted storage volume, internal and
-	 * removable.
+	 * Where the picker should open: the folder the user granted last time,
+	 * because that is where their collection actually is.
 	 *
-	 * StorageManager is the only API that names removable volumes:
-	 * Environment.getExternalStorageDirectory() returns the internal emulated
-	 * volume and nothing else, whatever it is asked.
-	 */
-	private fun storageVolumeDirectories(): List<File> {
-		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return emptyList()
-		val manager = getSystemService(android.os.storage.StorageManager::class.java)
-			?: return emptyList()
-		return manager.storageVolumes.mapNotNull { it.directory }
-	}
-
-	/**
-	 * The Storage Access Framework's name for [path], or null if it cannot be
-	 * expressed as one.
-	 *
-	 * A tree URI is built from a volume id and a path relative to that volume
-	 * -- "primary:Retro-Applications/Amiga", or "FEDD-B1FF:..." for a card.
-	 * The picker's starting location used to hardcode "primary", so it always
-	 * opened on internal storage: a user whose collection is on a card, which
-	 * is most of them, saw an Amiga folder that looked right, tapped "Use this
-	 * folder", and granted the empty internal skeleton. The scan then reported
-	 * nothing found, correctly, about a folder they had never meant to choose.
-	 */
-	private fun documentIdFor(path: File): String? {
-		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
-		val manager = getSystemService(android.os.storage.StorageManager::class.java)
-			?: return null
-		val volume = try {
-			manager.getStorageVolume(path)
-		} catch (error: IllegalArgumentException) {
-			null
-		} ?: return null
-		val id = if (volume.isPrimary) "primary" else volume.uuid ?: return null
-		val root = volume.directory?.absolutePath ?: return null
-		val relative = path.absolutePath
-			.removePrefix(root)
-			.trim('/')
-		return "$id:$relative"
-	}
-
-	/**
-	 * Where the picker should open: the volume that actually holds a library.
-	 *
-	 * Falls back to the internal shared folder, which is what it always used,
-	 * when nothing else is readable.
+	 * NOT the app's own per-volume folders. Those are the import
+	 * DESTINATION, and the first of them is an empty internal skeleton --
+	 * opening the picker there shows a bare "Amiga" folder that looks right,
+	 * gets confirmed with "Use this folder", and grants a library with
+	 * nothing in it. Falls back to null, which lets MediaFolderAccess start
+	 * at the shared Retro-Applications/Amiga location the collections
+	 * conventionally live at.
 	 */
 	private fun pickerStartDocumentId(subfolder: String?): String? {
-		val best = amigaLibraryRoots().firstOrNull()?.let(::File)
-			?: sharedAmigaDirectory()
-		val target = if (subfolder.isNullOrBlank()) best else File(best, subfolder)
-		return documentIdFor(if (target.isDirectory) target else best)
+		val tree = MediaFolderAccess.grantedTree(this) ?: return null
+		val id = android.provider.DocumentsContract.getTreeDocumentId(tree)
+		return if (subfolder.isNullOrBlank()) id else "$id/$subfolder"
 	}
 
 	/**
@@ -262,8 +185,6 @@ class MainActivity : FlutterActivity() {
 	 * backing out, or a second attempt would be refused as "busy" forever.
 	 */
 	private var pendingFolderPick: MethodChannel.Result? = null
-	private var pendingStorageAccess: MethodChannel.Result? = null
-	private var waitingForStorageSettings = false
 
 	/// Set once the engine is up, so controller changes can be pushed to Dart.
 	private var channel: MethodChannel? = null
@@ -514,12 +435,6 @@ class MainActivity : FlutterActivity() {
 		super.onResume()
 		(getSystemService(INPUT_SERVICE) as? InputManager)
 			?.registerInputDeviceListener(inputDeviceListener, Handler(Looper.getMainLooper()))
-		if (waitingForStorageSettings) {
-			waitingForStorageSettings = false
-			val pending = pendingStorageAccess
-			pendingStorageAccess = null
-			pending?.success(hasSharedStorageAccess())
-		}
 	}
 
 	override fun onPause() {
@@ -630,43 +545,17 @@ class MainActivity : FlutterActivity() {
 					"emulatorHomeDirectory" ->
 						result.success(getExternalFilesDir(null)?.absolutePath)
 
-					"sharedAmigaDirectory" ->
-						result.success(sharedAmigaDirectory().absolutePath)
-
 					// Every volume that could hold the library, best first.
 					// See amigaLibraryRoots: an SD-card collection is only
 					// reachable this way.
 					"amigaLibraryRoots" -> result.success(amigaLibraryRoots())
 
-					"hasSharedStorageAccess" ->
-						result.success(hasSharedStorageAccess())
-
-					"requestSharedStorageAccess" -> {
-						if (hasSharedStorageAccess()) {
-							result.success(true)
-						} else if (pendingStorageAccess != null) {
-							result.error(
-								"busy",
-								"storage access settings are already open",
-								null,
-							)
-						} else {
-							pendingStorageAccess = result
-							waitingForStorageSettings = true
-							val intent = Intent(
-								Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-								Uri.parse("package:$packageName"),
-							)
-							try {
-								startActivity(intent)
-							} catch (error: Exception) {
-								startActivity(
-									Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION),
-								)
-							}
-						}
-					}
-
+					// Scoped storage will not let the app walk a folder like
+					// /sdcard/Amiga, and the permission that would - all-files
+					// access - is one Play gates behind a review aimed at file
+					// managers. Instead the user grants one folder through the
+					// system picker and the grant is persisted. See
+					// MediaFolderAccess.
 					// The in-process panel draws its own pad and needs the same
 					// answer the emulator activity already had: is there real
 					// hardware to play on? Without this it always drew touch
@@ -749,6 +638,57 @@ class MainActivity : FlutterActivity() {
 						}
 					}
 
+					"copyFromMediaFolder" -> {
+						val documentId = call.argument<String>("documentId")
+						val destination = call.argument<String>("destination")
+						val tree = MediaFolderAccess.grantedTree(this)
+						if (documentId == null || destination == null) {
+							result.error(
+								"bad_args",
+								"copyFromMediaFolder needs documentId and destination",
+								null,
+							)
+						} else if (tree == null) {
+							result.error("no_folder", "no folder has been granted", null)
+						} else {
+							mediaIoExecutor.execute {
+								val ok = MediaFolderAccess.copyDocument(
+									contentResolver,
+									tree,
+									documentId,
+									destination,
+								)
+								Handler(Looper.getMainLooper()).post { result.success(ok) }
+							}
+						}
+					}
+
+					"copyFromMediaFolderBatch" -> {
+						val copies = call.argument<List<Map<String, Any?>>>("copies")
+						val tree = MediaFolderAccess.grantedTree(this)
+						if (copies == null) {
+							result.error("bad_args", "copies are required", null)
+						} else if (tree == null) {
+							result.error("no_folder", "no folder has been granted", null)
+						} else {
+							mediaIoExecutor.execute {
+								val copied = copies.map { copy ->
+									val documentId = copy["documentId"] as? String
+									val destination = copy["destination"] as? String
+									documentId != null && destination != null &&
+										MediaFolderAccess.copyDocument(
+											contentResolver,
+											tree,
+											documentId,
+											destination,
+										)
+								}
+								Handler(Looper.getMainLooper()).post {
+									result.success(copied)
+								}
+							}
+						}
+					}
 					"musicPlay" -> {
 						val path = call.argument<String>("path")
 						result.success(

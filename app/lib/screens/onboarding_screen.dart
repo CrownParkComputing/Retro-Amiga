@@ -11,7 +11,6 @@ import 'getting_started.dart';
 import '../data/compliance_demo.dart';
 import '../data/aros_rom.dart';
 import '../data/file_category.dart';
-import '../data/host_paths.dart';
 import '../data/hard_drive_set.dart';
 import '../data/media_folder.dart';
 import '../data/media_library.dart';
@@ -257,8 +256,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
   }
 
-  /// Android's one way in: the user grants a shared folder, which both the
-  /// launcher and native core then read in place.
+  /// Android's one way in: the user hands over a folder through the system
+  /// picker, and what it holds is copied into the app's own media folder.
+  /// Scoped storage will not let this app walk shared storage in place, and
+  /// the permission that would - all-files access - is one Play gates behind
+  /// a review this app does not ask for.
   Future<void> _importFolder() async {
     // Always ask, even when a folder is already granted: picking the wrong
     // one is easy, and a button that silently reuses the previous choice
@@ -284,15 +286,19 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     try {
       final ImportResult result = await MediaFolderImporter.importAll(
         onProgress: (int done, int total) {
-          _progress.value = (found: done, folder: 'Indexing $done of $total…');
+          _stage.value = 'Copying your collection…';
+          _progress.value = (found: done, folder: 'Copying $done of $total…');
         },
       );
       await _scan();
       if (!mounted) return;
       setState(
-        () => _notice = result.failed > 0
-            ? '${result.failed} files could not be read.'
-            : 'Using this library in place. No media was copied.',
+        () => _notice = result.usedInPlace
+            ? 'Using the collection where it is. Nothing was copied.'
+            : result.total == 0
+            ? 'Nothing the app recognises in that folder.'
+            : '${result.moved} copied, ${result.alreadyInPlace} already here'
+                  '${result.failed > 0 ? ', ${result.failed} failed' : ''}.',
       );
     } on Exception catch (e) {
       if (mounted) {
@@ -305,6 +311,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     } finally {
       if (mounted) setState(() => _scanning = false);
     }
+    // Index what was just copied, so the sections below fill in.
+    await _scan();
   }
 
   /// [importMedia] false files the Kickstart and nothing else. The
@@ -357,19 +365,17 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         },
       );
 
-      // The granted folder IS the library, and it outranks anything derived.
-      //
-      // Without this the header and the scan could disagree: the index was
-      // built from the granted tree while the path on screen came from
-      // MediaRoot, which resolves independently and had every chance of
-      // landing on internal storage -- where the AROS pair alone is enough to
-      // make the folder look populated. The wizard would find a card full of
-      // games and then name a different, empty folder as the place it found
-      // them.
+      // The granted folder is shown as the SOURCE, but it is never adopted
+      // as the media root. It used to be, back when all-files access let the
+      // core read it in place; without that permission the shared folder is
+      // read-only at best, and a root that cannot be written means every
+      // import fails and Compliance/ cannot even be created - the
+      // "FileSystemException: Creation failed" on an external card. The
+      // library lives in the app's own folder; the grant only feeds copies
+      // into it.
       final String? grantedFolder = await MediaFolder.displayPath();
-      if (grantedFolder != null && grantedFolder.isNotEmpty) {
-        await MediaRoot.setPath(grantedFolder);
-        if (mounted) setState(() => _sourceFolder = grantedFolder);
+      if (grantedFolder != null && grantedFolder.isNotEmpty && mounted) {
+        setState(() => _sourceFolder = grantedFolder);
       }
 
       // Adopt the folder the collection already lives in, unless the user has
@@ -434,11 +440,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Future<void> _storeCompliance() async {
     setState(() => _busyCompliance = true);
     try {
-      if (MediaFolder.isSupported &&
-          !await HostPaths.hasSharedStorageAccess() &&
-          !await HostPaths.requestSharedStorageAccess()) {
-        return;
-      }
       await ComplianceDemo.prepare();
       await AppPrefs.setComplianceMode(value: true);
       await AppPrefs.setDefaultModel(_model);

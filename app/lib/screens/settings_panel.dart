@@ -98,18 +98,15 @@ class _SettingsPanelState extends State<SettingsPanel> {
     try {
       await ImportProgressDialog.run<ImportResult>(
         context,
-        title: 'Reading Amiga library',
+        title: 'Importing Amiga files',
         initialMessage: 'Scanning the selected folder and AGS collection…',
-        operation: (ImportProgressUpdate update) async {
-          final ImportResult result = await MediaFolderImporter.importAll(
-            onProgress: (int done, int total) =>
-                update('Indexing recognised files…', done: done, total: total),
-          );
-          update('Indexing the shared library…');
-          await MediaLibrary.scan();
-          return result;
-        },
+        operation: (ImportProgressUpdate update) =>
+            MediaFolderImporter.importAll(
+              onProgress: (int done, int total) =>
+                  update('Copying recognised files…', done: done, total: total),
+            ),
       );
+      await MediaLibrary.scan();
     } on Exception {
       // The import reports its own failures to the log; the reload below
       // shows whatever did land rather than leaving a half-updated screen.
