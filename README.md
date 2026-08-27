@@ -1,17 +1,22 @@
 <div align="center">
 
-# UAE4ARM 2026
+# Retro-Amiga
 
 ### Your Amiga. In your pocket. With the Boing ball bouncing behind it.
 
-*Powered by Amiberry*
+*Powered by Amiberry · sold on Google Play as Retro-Amiga (package `com.uae4arm2026`, its UAE4ARM 2026 heritage)*
+
+[![Build signed Android App Bundle](https://github.com/CrownParkComputing/Retro-Amiga/actions/workflows/signed-aab.yml/badge.svg)](https://github.com/CrownParkComputing/Retro-Amiga/actions/workflows/signed-aab.yml)
+[Latest release](https://github.com/CrownParkComputing/Retro-Amiga/releases/latest) ·
+[App page](https://www.crownparkcomputing.com/apps/retro-amiga) ·
+[Feedback board](https://github.com/CrownParkComputing/Retro-Amiga/discussions)
 
 </div>
 
 ---
 
 Remember loading a game off a floppy, listening to the drive chatter, and waiting for that
-title screen to fade in? **UAE4ARM 2026** brings all of that back — the Amiga 500 under the
+title screen to fade in? **Retro-Amiga** brings all of that back — the Amiga 500 under the
 telly, the A1200 you saved up for, the CD32 you always wanted — and puts it on your Android
 phone or handheld.
 
@@ -81,7 +86,7 @@ Everything you save turns up on the shelf, sorted by type and machine.
 
 ## A note on ROMs and games
 
-UAE4ARM 2026 ships **no copyrighted Amiga software**. No Kickstart ROMs, no games, no disk
+Retro-Amiga ships **no copyrighted Amiga software**. No Kickstart ROMs, no games, no disk
 images. You bring your own — from *Amiga Forever*, from your own floppies, or from the many
 titles their authors have since released freely.
 
@@ -89,6 +94,17 @@ The mod music bundled with the app is **demoscene work**, included as a nod to t
 made the Amiga what it was.
 
 ---
+
+## Releases and the wider family
+
+A `v*` tag builds the signed AAB and APK and publishes them as a GitHub
+Release; the site's app page picks the files up automatically. Retro-Amiga is
+one of the Retro-* workbench family — the shared GUI lives at
+[retro-workbench](https://github.com/CrownParkComputing/retro-workbench), and
+an experimental sibling built on the Rust
+[Copperline](https://github.com/LinuxJedi/Copperline) core instead of Amiberry
+is growing at
+[Retro-Amiga-Copperline](https://github.com/CrownParkComputing/Retro-Amiga-Copperline).
 
 ## Credits
 
