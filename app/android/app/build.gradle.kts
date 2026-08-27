@@ -218,11 +218,14 @@ android {
                 // signal that this build cannot go to Play.
                 signingConfigs.getByName("debug")
             }
-            // SDL registers its Java native methods by name at library load
-            // time. Keep the release bridge unshrunk: removing an apparently
-            // unused native declaration makes ART abort before the game starts.
-            isMinifyEnabled = false
-            isShrinkResources = false
+            // R8 shrinks and optimizes the release build (Play flags an
+            // unshrunk bundle). SDL and this app's bridge classes register
+            // their native methods by name at library load time, so both are
+            // kept wholesale in proguard-rules.pro: removing an apparently
+            // unused native declaration makes ART abort before the game
+            // starts.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
