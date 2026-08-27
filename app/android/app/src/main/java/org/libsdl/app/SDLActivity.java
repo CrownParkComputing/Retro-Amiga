@@ -30,6 +30,9 @@ import android.util.DisplayMetrics;
 import android.util.Log;
 import android.util.SparseArray;
 import android.view.Display;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import android.view.Gravity;
 import android.view.InputDevice;
 import android.view.KeyEvent;
@@ -57,7 +60,7 @@ import java.util.Locale;
 /**
     SDL Activity
 */
-public class SDLActivity extends Activity implements View.OnSystemUiVisibilityChangeListener {
+public class SDLActivity extends Activity {
     private static final String TAG = "SDL";
     private static final int SDL_MAJOR_VERSION = 3;
     private static final int SDL_MINOR_VERSION = 4;
@@ -495,8 +498,6 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
 
         setWindowStyle(false);
 
-        getWindow().getDecorView().setOnSystemUiVisibilityChangeListener(this);
-
         // Get filename from "Open with" of another application
         Intent intent = getIntent();
         if (intent != null && intent.getData() != null) {
@@ -931,22 +932,23 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
                     if (context instanceof Activity) {
                         Window window = ((Activity) context).getWindow();
                         if (window != null) {
+                            // The androidx insets controller, not the
+                            // deprecated setSystemUiVisibility flags: Play
+                            // flags those as deprecated edge-to-edge APIs on
+                            // targetSdk 35+, and with BEHAVIOR_SHOW_TRANSIENT
+                            // the bars re-hide themselves, so no visibility
+                            // listener or rehide loop is needed either.
+                            WindowInsetsControllerCompat insets =
+                                    WindowCompat.getInsetsController(window, window.getDecorView());
                             if ((msg.obj instanceof Integer) && ((Integer) msg.obj != 0)) {
-                                int flags = View.SYSTEM_UI_FLAG_FULLSCREEN |
-                                        View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
-                                        View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY |
-                                        View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
-                                        View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
-                                        View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.INVISIBLE;
-                                window.getDecorView().setSystemUiVisibility(flags);
-                                window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-                                window.clearFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
+                                WindowCompat.setDecorFitsSystemWindows(window, false);
+                                insets.setSystemBarsBehavior(
+                                        WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                                insets.hide(WindowInsetsCompat.Type.systemBars());
                                 SDLActivity.mFullscreenModeActive = true;
                             } else {
-                                int flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_VISIBLE;
-                                window.getDecorView().setSystemUiVisibility(flags);
-                                window.addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
-                                window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                                WindowCompat.setDecorFitsSystemWindows(window, true);
+                                insets.show(WindowInsetsCompat.Type.systemBars());
                                 SDLActivity.mFullscreenModeActive = false;
                             }
                             if (Build.VERSION.SDK_INT >= 30 /* Android 11 (R) */) {
@@ -1790,34 +1792,6 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         });
 
         dialog.show();
-    }
-
-    private final Runnable rehideSystemUi = new Runnable() {
-        @Override
-        public void run() {
-            if (Build.VERSION.SDK_INT >= 19 /* Android 4.4 (KITKAT) */) {
-                int flags = View.SYSTEM_UI_FLAG_FULLSCREEN |
-                        View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
-                        View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY |
-                        View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
-                        View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
-                        View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.INVISIBLE;
-
-                SDLActivity.this.getWindow().getDecorView().setSystemUiVisibility(flags);
-            }
-        }
-    };
-
-    public void onSystemUiVisibilityChange(int visibility) {
-        if (SDLActivity.mFullscreenModeActive && ((visibility & View.SYSTEM_UI_FLAG_FULLSCREEN) == 0 || (visibility & View.SYSTEM_UI_FLAG_HIDE_NAVIGATION) == 0)) {
-
-            Handler handler = getWindow().getDecorView().getHandler();
-            if (handler != null) {
-                handler.removeCallbacks(rehideSystemUi); // Prevent a hide loop.
-                handler.postDelayed(rehideSystemUi, 2000);
-            }
-
-        }
     }
 
     /**
