@@ -1,0 +1,32 @@
+name: Checks
+
+# Analyze and unit tests on every push and PR - the cheap gate the rest of
+# the family already has. Signed builds stay in signed-aab.yml; this one
+# needs no secrets and runs on forks.
+
+on:
+  push:
+    branches: [main, upstream-rebase]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    name: Analyze & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.41.9"
+          cache: true
+      - name: Install dependencies
+        working-directory: app
+        run: flutter pub get
+      - name: Analyze
+        working-directory: app
+        run: flutter analyze --no-fatal-infos
+      - name: Unit tests
+        working-directory: app
+        run: flutter test
