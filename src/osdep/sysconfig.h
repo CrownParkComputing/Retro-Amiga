@@ -117,7 +117,12 @@
 #define ACTION_REPLAY /* Action Replay 1/2/3 support */
 #define PICASSO96 /* Picasso96 display card emulation */
 #define UAEGFX_INTERNAL /* built-in libs:picasso96/uaegfx.card */
+/* The iOS core is built without any guest networking: no bsdsocket.library,
+ * no A2065, no SLIRP. Defined by cmake/SourceFiles.cmake for that host;
+ * everywhere else these stay on as before. */
+#ifndef UAE_NO_NETWORK
 #define BSDSOCKET /* bsdsocket.library emulation */
+#endif
 #define CAPS /* CAPS-image support */
 #define SCP /* SuperCardPro */
 #define FDI2RAW /* FDI 1.0 and 2.x image support */
@@ -128,7 +133,9 @@
 /* #define LOGITECHLCD */ /* Logitech G15 LCD */
 #define SAVESTATE /* State file support */
 #define A2091 /* A590/A2091 SCSI */
+#ifndef UAE_NO_NETWORK
 #define A2065 /* A2065 Ethernet card */
+#endif
 #define GFXBOARD /* Hardware graphics board */
 #define SANA2 /* SANA2 network driver */
 #define AMAX /* A-Max ROM adapter emulation */
@@ -136,8 +143,10 @@
 #define WITH_CHD
 /* #define WITH_LUA */ /* lua scripting */
 #define WITH_UAENATIVE
+#ifndef UAE_NO_NETWORK
 #define WITH_SLIRP
 #define WITH_BUILTIN_SLIRP
+#endif
 #define WITH_TABLETLIBRARY
 /* #define WITH_UAENET_PCAP */ // defined externally in Amiberry
 #define WITH_TOCCATA
