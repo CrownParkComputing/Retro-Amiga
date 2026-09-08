@@ -11,8 +11,10 @@ UAE_DEFINE_IMPORT_FUNCTION(qemu_uae_version)
 UAE_DEFINE_IMPORT_FUNCTION(qemu_uae_init)
 UAE_DEFINE_IMPORT_FUNCTION(qemu_uae_start)
 
+#ifdef WITH_SLIRP
 UAE_DEFINE_IMPORT_FUNCTION(qemu_uae_slirp_init)
 UAE_DEFINE_IMPORT_FUNCTION(qemu_uae_slirp_input)
+#endif
 
 UAE_DEFINE_IMPORT_FUNCTION(qemu_uae_ppc_init)
 UAE_DEFINE_IMPORT_FUNCTION(qemu_uae_ppc_in_cpu_thread)

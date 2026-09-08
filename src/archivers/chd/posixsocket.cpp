@@ -28,6 +28,21 @@
 #include <unistd.h>
 
 
+#ifdef UAE_NO_NETWORK
+// A host with no networking: MAME's "socket." and "domain." path forms are
+// simply not recognised, so osd_file::open never reaches a socket. The
+// signatures stay so posixfile.cpp compiles untouched.
+bool posix_check_socket_path(std::string const&) noexcept { return false; }
+bool posix_check_domain_path(std::string const&) noexcept { return false; }
+std::error_condition posix_open_socket(std::string const&, std::uint32_t, osd_file::ptr&, std::uint64_t&) noexcept
+{
+	return std::errc::function_not_supported;
+}
+std::error_condition posix_open_domain(std::string const&, std::uint32_t, osd_file::ptr&, std::uint64_t&) noexcept
+{
+	return std::errc::function_not_supported;
+}
+#else // UAE_NO_NETWORK
 namespace {
 
 	char const* const posixfile_socket_identifier = "socket.";
@@ -262,3 +277,4 @@ std::error_condition posix_open_domain(std::string const& path, std::uint32_t op
 
 	return create_socket(sau, sock, openflags, file, filesize);
 }
+#endif // UAE_NO_NETWORK
