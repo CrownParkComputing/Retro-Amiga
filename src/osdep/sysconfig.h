@@ -137,7 +137,9 @@
 #define A2065 /* A2065 Ethernet card */
 #endif
 #define GFXBOARD /* Hardware graphics board */
+#ifndef UAE_NO_NETWORK
 #define SANA2 /* SANA2 network driver */
+#endif
 #define AMAX /* A-Max ROM adapter emulation */
 /* #define RETROPLATFORM */ /* Cloanto RetroPlayer support */
 #define WITH_CHD
