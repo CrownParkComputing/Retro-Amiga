@@ -333,7 +333,19 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 	set_source_files_properties(${SLIRP_SOURCES} PROPERTIES COMPILE_FLAGS "-Wno-pragma-pack")
 endif()
 
-list(APPEND SOURCE_FILES ${SLIRP_SOURCES})
+# The iOS core ships with no guest networking at all. The SLIRP files carry no
+# feature guard of their own, and bsdsocket_host.cpp compiles its POSIX half
+# unconditionally, so both are left out of the list rather than defined away.
+if(IOS)
+    add_compile_definitions(UAE_NO_NETWORK)
+    list(REMOVE_ITEM SOURCE_FILES
+        src/bsdsocket.cpp
+        src/osdep/bsdsocket_host.cpp
+        src/a2065.cpp
+        src/slirp_uae.cpp)
+else()
+    list(APPEND SOURCE_FILES ${SLIRP_SOURCES})
+endif()
 
 
 set(PCEM_SOURCE_FILES

@@ -358,7 +358,10 @@ class ConfigGenerator {
     out.writeln('sound_stereo_separation=${settings.soundStereoSeparation}');
     out.writeln('sound_interpol=${settings.soundInterpolation}');
 
-    out.writeln('bsdsocket_emu=true');
+    // The emulated TCP/IP stack (bsdsocket.library over SLIRP) is compiled
+    // out of the iOS core, so the guest has no network there; say so in the
+    // config rather than asking for a library that does not exist.
+    out.writeln('bsdsocket_emu=${Platform.isIOS ? 'false' : 'true'}');
 
     // Display
     final int activeWidth = settings.useRtg

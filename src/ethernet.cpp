@@ -44,7 +44,9 @@ static const int slirp_ports[] = { 21, 22, 23, 80, 0 };
 
 static struct ethernet_data *slirp_data;
 static bool slirp_inited;
+#ifdef WITH_SLIRP
 uae_sem_t slirp_sem1, slirp_sem2;
+#endif
 static int netmode;
 
 static struct netdriverdata slirpd =
@@ -66,6 +68,7 @@ static struct netdriverdata slirpd2 =
 	1
 };
 
+#ifdef WITH_SLIRP
 void slirp_output (const uint8_t *pkt, int pkt_len)
 {
 	if (!slirp_data)
@@ -75,6 +78,7 @@ void slirp_output (const uint8_t *pkt, int pkt_len)
 	slirp_data->gotfunc (slirp_data->userdata, pkt, pkt_len);
 	uae_sem_post (&slirp_sem1);
 }
+#endif
 
 void ethernet_trigger (struct netdriverdata *ndd, void *vsd)
 {

@@ -3169,6 +3169,7 @@ void rethink_uae_int(void)
 		}
 	}
 
+#ifdef BSDSOCKET
 	{
 		extern void bsdsock_fake_int_handler(void);
 		extern int volatile bsd_int_requested;
@@ -3176,6 +3177,7 @@ void rethink_uae_int(void)
 			bsdsock_fake_int_handler();
 		}
 	}
+#endif
 	if (irq6) {
 		safe_interrupt_set(IRQ_SOURCE_UAE, 0, true);
 	}

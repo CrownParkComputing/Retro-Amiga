@@ -1,23 +1,44 @@
-This is a hardware emulator for the Commodore Amiga (1985), permitted under
-App Review Guideline 4.7. It ships with no games and no Kickstart ROMs.
+GUIDELINE 4.7.4 -- INDEX OF GAMES AND SOFTWARE AVAILABLE IN THE APP
 
-Amiga Kickstart ROMs are still under copyright, held by Cloanto, and cannot
-legally be distributed with the app, so the user supplies their own, exactly
-as with every other Amiga emulator. Cloanto sell them as Amiga Forever, and
-anyone who owns an Amiga may already have one. On first launch the app
-explains this and offers a scan that finds and installs whatever is provided.
+The app offers, downloads, streams or links to no non-embedded software; there is no catalogue, store or server. Every executable component is embedded and listed here:
 
-To evaluate a working emulator, place a Kickstart ROM (for example
-kick13.rom or kick31.rom) in the app's Documents folder via the Files app,
-then use Paths > Scan. A zipped ROM set works as-is, with no unpacking.
-Adding any .adf floppy image alongside it gives you something to boot.
+1. Amiberry (the Amiga emulator core, as libuae4arm)
+   Developer: Dimitris Panokostas and contributors (from UAE/WinUAE)
+   Licence: GNU GPL v3
+   URL: https://github.com/BlitterStudio/amiberry
 
-Without a Kickstart the app intentionally shows setup guidance rather than a
-black screen, so nothing here is a crash or a non-functional state.
+2. AROS m68k ROM (an independent open reimplementation of AmigaOS, used as the fallback Kickstart; contains no Commodore code)
+   Developer: The AROS Development Team
+   Licence: AROS Public License
+   URL: https://aros.sourceforge.io
 
-The app has no accounts, no login, no server, and no network features, so no
-demo account is needed. It collects no data at all; the privacy policy is at
-https://www.crownparkcomputing.com/privacy
+3. DEMO.ADF (the built-in demonstration disk)
+   Developer: Crown Park Computing (us); an original boot block written for this app, source included (tool/demo_boot.s)
+   URL: https://github.com/CrownParkComputing/Retro-Amiga
 
-The Music tab is a player for tracker modules the user imports. It ships with
-none, so it is empty on a clean install; that is expected, not a fault.
+4. WHDLoad, JST and AmiQuit (Amiga-side loaders for the user's own hard-drive installs), with Amiberry's boot-data.zip and the skick .RTB tables
+   Developers: Bert Jahn (WHDLoad, whdload.de), Jean-Francois Fabre (JST), the Amiberry project (AmiQuit, boot data)
+   Licence: freeware, redistributed under their authors' terms; boot data GPL v3 with Amiberry
+   They run nothing on their own; they are only invoked on a game install the user supplies.
+
+No Commodore ROMs, commercial games, music or third-party game data are included or offered. Users open their own files through the Files app; the app supplies, indexes and links to none. This index will accompany every future submission.
+
+----------------------------------------------------------------------
+
+REVIEW ENVIRONMENT
+
+Retro-Amiga is a hardware emulator for the Commodore Amiga (1985) under Guideline 4.7. No account, login, credentials or files are needed. Launch the app, tap Finish setup, and the emulator boots on the bundled AROS ROM and the DEMO.ADF disk. To evaluate with a real Kickstart, put one (e.g. kick31.rom) in the app's Documents folder via the Files app and use Settings > Run setup again. Commodore's ROMs are Cloanto's copyright (Amiga Forever) and are NOT included.
+
+THE APP HAS NO NETWORK CODE. The iOS binary contains no HTTP client, no socket calls and no networking of any kind; the emulated Amiga has no network interface. No accounts, payments, analytics, advertising, AI or third-party data; it collects nothing. Privacy policy: https://www.crownparkcomputing.com/privacy
+
+The camera, photo library, location and Bluetooth usage strings in Info.plist exist only because the bundled file picker and SDL link those frameworks and upload validation demands a string for each (ITMS-90683). The app never requests those permissions and has no feature using them.
+
+The Music tab plays tracker modules the user imports. It ships with none and lists twenty well-known Amiga tunes as a reading list, each marked "not on this device" until the user adds it; nothing is downloaded.
+
+No regional differences; free everywhere; English (UK) only. Verified on the iOS Simulator; device testing via TestFlight.
+
+----------------------------------------------------------------------
+
+WHAT CHANGED SINCE THE 5.6 REJECTION OF 28 AUGUST
+
+We found the cause and removed it. Our earlier notes said the app had no network features, but the embedded emulator core still contained UAE's bsdsocket.library emulation over a user-mode TCP/IP stack (SLIRP), and the app enabled it in every machine configuration, so Amiga software inside the emulator had internet access we had described nowhere. Not deliberate, but a real gap between the binary and our notes. In this build that code is compiled out of the iOS core (no socket imports remain), and the configuration no longer enables it. The Music tab no longer shows a download glyph on absent tunes. These notes now carry the full 4.7.4 index and explain the permission strings, so nothing in the binary is undeclared.

@@ -44,7 +44,13 @@
 
 //#define DEBUG_NE2000
 
+#ifdef A2065
 extern int log_a2065;
+#else
+// The A2065 (and its logging switch) is compiled out on hosts with no guest
+// networking; the NE2000 emulation keeps building, silently.
+static const int log_a2065 = 0;
+#endif
 
 struct NetClientState
 {

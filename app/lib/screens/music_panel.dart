@@ -143,7 +143,9 @@ class _MusicPanelState extends State<MusicPanel> {
             ? (_state.paused ? Icons.pause_circle : Icons.graphic_eq)
             : present
             ? Icons.play_circle_outline
-            : Icons.download_outlined,
+            // Absent entries are a reading list, not a store: nothing is
+            // fetched, so no download glyph that says otherwise.
+            : Icons.music_off_outlined,
         color: isCurrent
             ? AmigaColors.accent
             : present
