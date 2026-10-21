@@ -65,4 +65,21 @@ set(AMIBERRY_DISPLAY_NAME "${PRODUCT_DISPLAY_NAME}")
 include(GNUInstallDirs)
 include(cmake/StandardProjectSettings.cmake)
 include(cmake/SourceFiles.cmake)
+
+if(ANDROID)
+    # The texture JNI lives in a library of its own, NOT in a core. Both
+    # cores export the same uae4arm_host_* surface, and Java_... symbols in
+    # two loaded libraries race JNI's lazy binding -- whichever copy ART
+    # found first would own the surface. This lib owns the entry points and
+    # is told which core is running (nativeUseCore), then reaches it through
+    # dlopen/dlsym. See native/amigatexture/amigatexture.cpp.
+    add_library(amigatexture SHARED native/amigatexture/amigatexture.cpp)
+    target_link_libraries(amigatexture PRIVATE android log)
+
+    # The second core is a Rust cdylib, built by cargo-ndk straight into
+    # jniLibs/ -- see the buildCopperlineCore task in
+    # app/android/app/build.gradle.kts, which is what puts
+    # libcopperline_ffi.so in the APK.
+endif()
+
 include(cmake/Dependencies.cmake)

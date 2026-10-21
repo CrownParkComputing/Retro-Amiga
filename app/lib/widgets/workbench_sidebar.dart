@@ -27,7 +27,7 @@
 enum WorkbenchSection {
   // The C64 rail's shape, so the family reads as one: what you play at the
   // top, how the machine is set up in the middle, the extras at the bottom.
-  setups('Games', '🎮', 0),
+  setups('Configs', '🎮', 0),
   resume('Resume', '🚀', 0),
   // Everything ready to run, in one place: AGS, AmigaVision, PiMiga, a
   // WHDLoad pack, a folder someone copied off a real Amiga. One entry rather

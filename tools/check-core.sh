@@ -23,32 +23,38 @@ fail() { say "${RED}FAIL${PLAIN}  $*"; failures=$((failures + 1)); }
 # ---- build ----------------------------------------------------------------
 
 if [ -z "${SKIP_BUILD:-}" ]; then
-    say "==> building the Linux core"
+    say "==> building the Amiberry core"
     cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=RelWithDebInfo \
         -DUAE4ARM_CORE_LIBRARY=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
         > /tmp/check-core-configure.log 2>&1 \
         || { fail "configure (see /tmp/check-core-configure.log)"; exit 1; }
     cmake --build build-linux -j"$(nproc)" > /tmp/check-core-build.log 2>&1 \
         || { fail "build (see /tmp/check-core-build.log)"; exit 1; }
+
+    # The Copperline core is Rust; its harness is the smoke binary beside
+    # the crate, which drives the same lifecycle the phone hosts do -- run,
+    # publish frames, quit, run again in one process.
+    if cargo --version > /dev/null 2>&1; then
+        say "==> building the Copperline core"
+        cargo build --release --manifest-path native/copperline_ffi/Cargo.toml \
+            > /tmp/check-core-copperline-build.log 2>&1 \
+            || fail "copperline build (see /tmp/check-core-copperline-build.log)"
+    else
+        say "skip: no cargo - the Copperline core is not built or checked"
+    fi
 fi
 
 CORE=build-linux/libuae4arm.so
 [ -f "$CORE" ] || { fail "no core at $CORE"; exit 1; }
+COPPER=native/copperline_ffi/target/release/libcopperline_ffi.so
+HAVE_COPPER=0
+[ -f "$COPPER" ] && HAVE_COPPER=1
 
 WORK=$(mktemp -d /tmp/check-core.XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
 
 cc tools/core-twice.c  -ldl -lpthread -o "$WORK/core-twice"  || exit 1
 cc tools/core-again.c  -ldl -lpthread -o "$WORK/core-again"  || exit 1
-
-# Test media: any two WHDLoad archives from the library. The scenarios need
-# real archives because the archive-mount path is where the statics bite.
-LHA_DIR="${AMIGA_LHA_DIR:-$HOME/Amiga-Retro/LHA}"
-mapfile -t GAMES < <(ls "$LHA_DIR"/*.lha 2>/dev/null | head -2)
-if [ "${#GAMES[@]}" -lt 2 ]; then
-    say "skip: needs two .lha archives in $LHA_DIR (set AMIGA_LHA_DIR)"
-    exit 0
-fi
 
 run() { # name, expected-runs, harness args...
     local name=$1 expected=$2; shift 2
@@ -67,9 +73,16 @@ run() { # name, expected-runs, harness args...
     cp "$log" "/tmp/check-core-$name.log"
 }
 
-# ---- scenarios -------------------------------------------------------------
+# ---- scenarios: Amiberry ---------------------------------------------------
 # Each one is a former bug. Comments name the corpse.
 #
+# Test media: any two WHDLoad archives from the library. The scenarios need
+# real archives because the archive-mount path is where the statics bite.
+LHA_DIR="${AMIGA_LHA_DIR:-$HOME/Amiga-Retro/LHA}"
+mapfile -t GAMES < <(ls "$LHA_DIR"/*.lha 2>/dev/null | head -2)
+if [ "${#GAMES[@]}" -lt 2 ]; then
+    say "skip: needs two .lha archives in $LHA_DIR (set AMIGA_LHA_DIR)"
+else
 # JIT off, to match the hosts this stands in for: iOS cannot JIT and Android
 # starts each game in a fresh process, so no shipped host ever re-enters the
 # JIT in one process. The Linux build does, and its translation cache does
@@ -102,6 +115,30 @@ if [ "$(grep -c "Command line parameters" "$WORK/different-games.log")" -ge 2 ];
     pass "both runs parse their command line"
 else
     fail "run 2 lost its command line"
+fi
+fi # two .lha archives present
+
+# ---- scenarios: Copperline -------------------------------------------------
+# The same lifecycle - run, frames, quit, run again in one process - through
+# the uae4arm_host_* surface on the Rust core. No media needed: the bundled
+# AROS boots with no Kickstart. COPPERLINE_AROS_DIR points the asset search
+# at the source tree because the harness binary lives in a temp dir.
+if [ "$HAVE_COPPER" -eq 1 ]; then
+    cc native/copperline_ffi/smoke_host.c \
+        -L native/copperline_ffi/target/release -lcopperline_ffi -lpthread \
+        -o "$WORK/smoke_host" \
+        || { fail "copperline smoke build"; exit 1; }
+    COPPERLINE_AROS_DIR="$PWD/copperline/assets/aros" \
+        LD_LIBRARY_PATH=native/copperline_ffi/target/release \
+        timeout 180 "$WORK/smoke_host" > "$WORK/copperline.log" 2>&1
+    if grep -q "HOST SMOKE OK" "$WORK/copperline.log"; then
+        pass "copperline run-quit-run (frames, pads, session, recent.txt)"
+    else
+        fail "copperline smoke (log: /tmp/check-core-copperline.log)"
+        cp "$WORK/copperline.log" /tmp/check-core-copperline.log
+    fi
+else
+    say "skip: no Copperline core at $COPPER"
 fi
 
 # ---- verdict ---------------------------------------------------------------

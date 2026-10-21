@@ -1,0 +1,17 @@
+# This library exports the uae4arm_host_* surface -- the same symbol names
+# the Amiberry core exports. On ELF platforms an exported function called
+# from inside the library is a preemptible reference: with another
+# uae4arm_host_* library loaded into the global scope first (the Linux
+# runner dlopens libuae4arm RTLD_GLOBAL for the music player; JNI does the
+# same on Android), those internal calls bind to the OTHER library and this
+# core silently returns its peer's answers. -Bsymbolic-functions binds the
+# library's own references to its own definitions, so the exported ABI is
+# unchanged but nothing inside can be interposed. Darwin does not need it:
+# Mach-O's two-level namespace binds each reference to a library at link
+# time already.
+
+[target.'cfg(target_os = "linux")']
+rustflags = ["-C", "link-args=-Wl,-Bsymbolic-functions"]
+
+[target.'cfg(target_os = "android")']
+rustflags = ["-C", "link-args=-Wl,-Bsymbolic-functions"]

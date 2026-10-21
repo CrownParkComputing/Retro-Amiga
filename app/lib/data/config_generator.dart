@@ -139,6 +139,11 @@ class ConfigGenerator {
         : settings.joyport1;
 
     out.writeln(generatedByHeader);
+    // Which core runs this setup. A comment, so a parser or a core that
+    // does not know it skips it; and only written for a non-default core,
+    // so an Amiberry config stays byte-identical to what it always was.
+    final String? coreMarker = settings.core.markerLine;
+    if (coreMarker != null) out.writeln(coreMarker);
     out.writeln();
 
     // CPU

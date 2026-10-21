@@ -1,4 +1,5 @@
 import 'amiga_model.dart';
+import 'core_kind.dart';
 import 'emulator_settings.dart';
 
 /// Reads a .uae file back into [EmulatorSettings].
@@ -71,7 +72,16 @@ class ConfigParser {
     final AmigaModel machine = model ?? modelFrom(text);
     final EmulatorSettings defaults = EmulatorSettings.fromModel(machine);
 
+    // One pair of gfx keys stands for two settings: with a graphics card
+    // they are the card's modes, without one the native framebuffer's.
+    final bool rtgMounted =
+        _int(pairs['gfxcard_size'], 0) > 0 ||
+        pairs['gfxcard_type'] == 'ZorroIII';
+    final int gfxW = _int(pairs['gfx_width'], 0);
+    final int gfxH = _int(pairs['gfx_height'], 0);
+
     return defaults.copyWith(
+      core: CoreKind.fromConfigText(text),
       // Key names are the generator's: cpu_model and compfpu, not cpu_type and
       // comp_fpu. Reading a key the generator never writes means silently
       // falling back to the machine default, which looks right whenever the
@@ -112,6 +122,22 @@ class ConfigParser {
       cd32Fmv: _bool(pairs['cd32fmv'], defaults.cd32Fmv),
       whdloadFilename: pairs['whdload_filename'] ?? defaults.whdloadFilename,
 
+      // RTG: the card is there when its memory is. rtg_modes is only written
+      // for the true-colour set, so its presence is the flag's round trip.
+      useRtg: rtgMounted,
+      rtgMemory: _int(pairs['gfxcard_size'], defaults.rtgMemory),
+      rtgTrueColour: pairs.containsKey('rtg_modes'),
+
+      gfxWidth: rtgMounted
+          ? defaults.gfxWidth
+          : (gfxW > 0 ? gfxW : defaults.gfxWidth),
+      gfxHeight: rtgMounted
+          ? defaults.gfxHeight
+          : (gfxH > 0 ? gfxH : defaults.gfxHeight),
+      rtgWidth: rtgMounted && gfxW > 0 ? gfxW : defaults.rtgWidth,
+      rtgHeight: rtgMounted && gfxH > 0 ? gfxH : defaults.rtgHeight,
+
+      soundOutput: pairs['sound_output'] ?? defaults.soundOutput,
       soundFreq: _int(pairs['sound_frequency'], defaults.soundFreq),
       soundChannels: pairs['sound_channels'] ?? defaults.soundChannels,
       soundStereoSeparation: _int(
@@ -125,7 +151,24 @@ class ConfigParser {
         pairs['amiberry.gfx_correct_aspect'] ?? pairs['gfx_correct_aspect'],
         defaults.correctAspect,
       ),
+      autoCrop: _bool(
+        pairs['amiberry.gfx_auto_crop'] ?? pairs['gfx_auto_crop'],
+        defaults.autoCrop,
+      ),
       showLeds: _bool(pairs['show_leds'], defaults.showLeds),
+
+      // joyport1 is written twice: the native key for the core and the
+      // amiberry.android_joyport1 key for the overlay, which is the one the
+      // user picked and the one to hand back.
+      joyport0: pairs['joyport0'] ?? defaults.joyport0,
+      joyport1:
+          pairs['amiberry.android_joyport1'] ??
+          pairs['joyport1'] ??
+          defaults.joyport1,
+      onScreenKeyboard: _bool(
+        pairs['amiberry.show_android_keyboard_button'],
+        defaults.onScreenKeyboard,
+      ),
 
       // Hard drives are read back because the editor rewrites the whole file:
       // anything not parsed is not written, and a setup that lost its hard

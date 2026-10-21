@@ -15,6 +15,12 @@ set(APPLICATION_ID "com.uae4arm2026.uae4arm2026")
 set(UAE4ARM_CORE_LIBRARY "${CMAKE_CURRENT_SOURCE_DIR}/../../build-linux/libuae4arm.so"
     CACHE FILEPATH "Path to the UAE4ARM shared core")
 
+# The second core: cargo build --release in native/copperline_ffi produces
+# it. Optional -- a bundle without it simply never offers the core.
+set(COPPERLINE_CORE_LIBRARY
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../native/copperline_ffi/target/release/libcopperline_ffi.so"
+    CACHE FILEPATH "Path to the Copperline shared core")
+
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
 cmake_policy(SET CMP0063 NEW)
@@ -105,6 +111,13 @@ if(EXISTS "${UAE4ARM_CORE_LIBRARY}")
     DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
 else()
   message(WARNING "UAE4ARM core not found at ${UAE4ARM_CORE_LIBRARY}; Linux launch will be unavailable")
+endif()
+
+if(EXISTS "${COPPERLINE_CORE_LIBRARY}")
+  install(FILES "${COPPERLINE_CORE_LIBRARY}"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
+else()
+  message(STATUS "Copperline core not found at ${COPPERLINE_CORE_LIBRARY}; single-core bundle")
 endif()
 
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"

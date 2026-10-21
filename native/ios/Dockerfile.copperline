@@ -1,0 +1,11 @@
+# Build environment for the Copperline iOS core.
+#
+# The Copperline core is Rust, which the uae4arm-iosbox image does not
+# carry. This layers a minimal toolchain (stable + aarch64-apple-ios) on
+# top of it; the clang cross toolchain, ld64.lld and iOS SDK all still come
+# from iosbox and the iosbox-sdk volume.
+FROM uae4arm-iosbox:latest
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --profile minimal --default-toolchain stable \
+    && /root/.cargo/bin/rustup target add aarch64-apple-ios

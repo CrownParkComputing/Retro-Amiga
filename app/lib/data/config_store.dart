@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'amiga_model.dart';
 import 'config_generator.dart';
+import 'core_kind.dart';
 import 'host_paths.dart';
 import 'file_category.dart';
 import 'app_prefs.dart';
@@ -19,10 +20,16 @@ class SavedConfig {
     required this.summary,
     this.mediaPaths = const <String>[],
     this.isCollection = false,
+    this.core = CoreKind.amiberry,
   });
 
   final String name;
   final String path;
+
+  /// Which core launches this setup, read from the file's
+  /// `; retro-amiga: core=` marker. Amiberry when the marker is absent --
+  /// every setup written before cores existed.
+  final CoreKind core;
 
   /// Written by the app for a collection it found, rather than built by the
   /// user in the wizard.
@@ -460,6 +467,7 @@ class ConfigStore {
           model: _modelFrom(text),
           summary: _summaryFrom(text),
           mediaPaths: mediaPathsIn(text),
+          core: CoreKind.fromConfigText(text),
           isCollection: text.contains(collectionMarker) ||
               name.startsWith(collectionNamePrefix) ||
               name.startsWith(legacyCollectionNamePrefix),

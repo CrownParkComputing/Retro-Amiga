@@ -435,6 +435,15 @@ if(ANDROID OR IOS OR UAE4ARM_CORE_LIBRARY)
     # launches a binary, and those differences are otherwise only reproducible
     # on a phone.
     add_library(${PROJECT_NAME} SHARED ${SOURCE_FILES})
+    if(ANDROID OR (UNIX AND NOT APPLE))
+        # The Copperline core exports the same uae4arm_host_* names. An
+        # exported function called from inside this library is a
+        # preemptible ELF reference: the moment a second host-ABI library
+        # sits in the global scope ahead of it, those calls bind to the
+        # wrong core. Bind our own references to our own definitions --
+        # the exported ABI is unchanged, only interposition is refused.
+        target_link_options(${PROJECT_NAME} PRIVATE -Wl,-Bsymbolic-functions)
+    endif()
     if(IOS)
         # Without this the install name is the absolute build path, which does
         # not exist on the device: the loader has to find the dylib next to the

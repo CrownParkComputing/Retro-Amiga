@@ -13,6 +13,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${IOSBOX_IMAGE:-mobaiapp/iosbox:latest}"
 SDK_VOLUME="${IOSBOX_SDK_VOLUME:-iosbox-sdk}"
 CORE="$REPO_ROOT/native/ios/out/libuae4arm.dylib"
+# The second core is optional: an absent dylib leaves a single-core build,
+# which stays a valid app -- the Dart side simply never offers a core whose
+# library did not ship (AmigaCore.isAvailable).
+COPPERLINE="$REPO_ROOT/native/ios/out/libcopperline.dylib"
 
 if ! docker volume inspect "$SDK_VOLUME" >/dev/null 2>&1; then
     echo "error: Docker volume '$SDK_VOLUME' not found - the iOS SDK is not registered." >&2
@@ -96,6 +100,46 @@ if [ -f "$CORE" ]; then
 </dict>
 </plist>
 PLIST
+
+    if [ -f "$COPPERLINE" ]; then
+        echo "==> bundling the Copperline core"
+        FW="$APP/Frameworks/libcopperline.framework"
+        rm -rf "$FW"
+        mkdir -p "$FW"
+        cp -v "$COPPERLINE" "$FW/libcopperline"
+        cat > "$FW/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>libcopperline</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.crownparkcomputing.amigaretro.copperline</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>libcopperline</string>
+	<key>CFBundlePackageType</key>
+	<string>FMWK</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>iPhoneOS</string>
+	</array>
+	<key>MinimumOSVersion</key>
+	<string>13.0</string>
+</dict>
+</plist>
+PLIST
+    else
+        echo "==> no Copperline core at $COPPERLINE - single-core build"
+    fi
 
     rm -rf "$REPO_ROOT/app/build/iosbox/Payload"
     mkdir -p "$REPO_ROOT/app/build/iosbox/Payload"

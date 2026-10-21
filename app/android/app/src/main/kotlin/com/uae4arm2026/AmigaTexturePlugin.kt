@@ -51,11 +51,24 @@ class AmigaTexturePlugin(private val registry: TextureRegistry) {
 		const val CHANNEL = "uae4arm2026/texture"
 
 		/**
-		 * The library is the emulator's own, and it is tens of megabytes.
-		 * Loading it here would slow every cold start for a screen most
-		 * sessions reach only after choosing something to run; by the time a
-		 * texture is asked for, the in-process core has loaded it already.
+		 * The JNI entry points live in their own small library, not in a
+		 * core: two cores in one process export the same uae4arm_host_*
+		 * symbols, and JNI lazy binding would attach this surface to
+		 * whichever library it found first. libamigatexture owns the
+		 * Java-side surface and is TOLD which core is running, then talks
+		 * to that core through dlsym.
 		 */
+		init {
+			try {
+				System.loadLibrary("amigatexture")
+			} catch (error: UnsatisfiedLinkError) {
+				// A build without it still works: attach() catches the
+				// same error on first use and the panel falls back to
+				// copy-and-decode.
+			}
+		}
+
+		@JvmStatic external fun nativeUseCore(libraryName: String): Boolean
 		@JvmStatic external fun nativeAttachSurface(surface: android.view.Surface?): Boolean
 		@JvmStatic external fun nativeDetachSurface()
 		@JvmStatic external fun nativePresent(): Boolean
@@ -79,7 +92,10 @@ class AmigaTexturePlugin(private val registry: TextureRegistry) {
 		MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL)
 			.setMethodCallHandler { call, result ->
 				when (call.method) {
-					"create" -> result.success(create())
+					// The argument is the running core's soname, so the
+					// native side binds to that copy of the shared API and
+					// not to whichever library JNI happened to find first.
+					"create" -> result.success(create(call.arguments as? String))
 					"dispose" -> {
 						dispose()
 						result.success(true)
@@ -89,8 +105,16 @@ class AmigaTexturePlugin(private val registry: TextureRegistry) {
 			}
 	}
 
-	private fun create(): Map<String, Any>? {
+	private fun create(coreLibrary: String?): Map<String, Any>? {
 		dispose()
+		// Select the core before attaching anything. Default keeps an older
+		// Dart side (or a single-core build) pointed at Amiberry.
+		val bound = try {
+			nativeUseCore(coreLibrary ?: "libuae4arm.so")
+		} catch (error: UnsatisfiedLinkError) {
+			false
+		}
+		if (!bound) return null
 		val created = try {
 			registry.createSurfaceTexture()
 		} catch (error: Throwable) {

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../data/amiga_model.dart';
 import '../data/config_store.dart';
+import '../data/core_kind.dart';
 import '../emulator.dart';
 import '../theme/amiga_theme.dart';
 import '../widgets/alphabet_filter.dart';
@@ -397,15 +398,36 @@ class _SetupRow extends StatelessWidget {
                     // The whole name, on a line wide enough to hold it. Two
                     // setups for one game differ at the end - "(Disk 1)",
                     // "AGA", "WHDLoad" - which is exactly what a card cropped.
-                    Text(
-                      config.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color: AmigaColors.text,
-                      ),
+                    Row(
+                      children: <Widget>[
+                        Flexible(
+                          child: Text(
+                            config.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: AmigaColors.text,
+                            ),
+                          ),
+                        ),
+                        // Amiberry is the default and carries no mark; only
+                        // a setup that runs on the other core says so.
+                        if (config.core == CoreKind.copperline)
+                          const Padding(
+                            padding: EdgeInsets.only(left: 6),
+                            child: Text(
+                              'Copperline',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                color: AmigaColors.textDim,
+                                letterSpacing: 0.4,
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                     Text(
                       config.summary,

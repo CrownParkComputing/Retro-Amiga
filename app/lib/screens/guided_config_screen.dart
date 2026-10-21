@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/amiga_model.dart';
 import '../data/config_generator.dart';
 import '../data/config_store.dart';
+import '../data/core_kind.dart';
 import '../data/emulator_settings.dart';
 import '../data/file_category.dart';
 import '../data/amiga_collections.dart';
@@ -10,6 +11,7 @@ import '../data/hard_drive_set.dart';
 import '../data/media_library.dart';
 import '../data/zeb_whdload_support.dart';
 import '../emulator.dart';
+import '../ffi/amiga_core.dart';
 import '../widgets/amiga_logo.dart';
 import '../widgets/media_chooser.dart';
 
@@ -128,6 +130,13 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
   bool _wantsSecondDrive = false;
   String _selectedDriveSetName = '';
 
+  /// One-shot latch for the WHDLoad fast path. Files → Set up arrives with
+  /// the machine pre-decided (AGA → A1200/3.1, else A500/1.3) and the .lha
+  /// already mounted, so once a Kickstart is picked the remaining questions
+  /// are tailor and save. The latch stops a Back→machine→Next walk from
+  /// teleporting past the steps the user came back to change.
+  bool _autoAdvanced = false;
+
   /// `<media> (<machine>)`, from whatever media the setup has.
   String get _suggestedName {
     String basename(String path) {
@@ -166,6 +175,14 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
   /// why _autoPickRoms runs from build rather than once at startup.
   MediaIndex _index = const MediaIndex.empty();
 
+  /// The model the last automatic Kickstart pick was made for. An automatic
+  /// pick for a different model is re-done - the first build runs before the
+  /// machine step is answered, and the 1.3 ROM that suits the default A500
+  /// used to stay put even after the user picked an A1200. A ROM the user
+  /// chose themselves clears this and is never re-picked.
+  AmigaModel? _romAutoPickedFor;
+  AmigaModel? _romExtAutoPickedFor;
+
   /// Chooses the ROMs the machine needs, where the user has not.
   ///
   /// A CD console needs two - its Kickstart and an extended ROM with the CD
@@ -177,13 +194,23 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
     if (roms.isEmpty) return;
 
     EmulatorSettings updated = _settings;
-    if (updated.romFile.isEmpty) {
+    if (updated.romFile.isEmpty ||
+        (_romAutoPickedFor != null && _romAutoPickedFor != updated.baseModel)) {
       final MediaFile? rom = RomPicker.kickstartFor(updated.baseModel, roms);
-      if (rom != null) updated = updated.copyWith(romFile: rom.path);
+      if (rom != null) {
+        updated = updated.copyWith(romFile: rom.path);
+        _romAutoPickedFor = updated.baseModel;
+      }
     }
-    if (updated.baseModel.needsExtendedRom && updated.romExtFile.isEmpty) {
+    if (updated.baseModel.needsExtendedRom &&
+        (updated.romExtFile.isEmpty ||
+            (_romExtAutoPickedFor != null &&
+                _romExtAutoPickedFor != updated.baseModel))) {
       final MediaFile? ext = RomPicker.extendedRomFor(updated.baseModel, roms);
-      if (ext != null) updated = updated.copyWith(romExtFile: ext.path);
+      if (ext != null) {
+        updated = updated.copyWith(romExtFile: ext.path);
+        _romExtAutoPickedFor = updated.baseModel;
+      }
     }
     if (!identical(updated, _settings) && updated != _settings) {
       // Assigned directly: this runs during build, and setState there is an
@@ -230,7 +257,10 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
     // holding the CD firmware, and with neither set the core starts and shows
     // nothing at all.
     steps.add(WizardStep.rom);
-    steps.add(WizardStep.mediaPrimary);
+    // A setup opened for a file has already answered this -- Set up on an
+    // .lha knows its WHDLoad archive. Asking again reads as the wizard
+    // having forgotten the file it was opened for.
+    if (!_primaryMediaFilled) steps.add(WizardStep.mediaPrimary);
     if (widget.mode == WizardMode.floppy ||
         widget.mode == WizardMode.hardDrive) {
       steps.add(WizardStep.mediaOptional);
@@ -238,6 +268,23 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
     steps.add(WizardStep.tailor);
     steps.add(WizardStep.save);
     return steps;
+  }
+
+  /// True when the mode's primary slot already holds a file -- the wizard
+  /// was opened for one, so its media step would only re-ask.
+  bool get _primaryMediaFilled {
+    switch (widget.mode) {
+      case WizardMode.floppy:
+        return _settings.floppy0.isNotEmpty;
+      case WizardMode.hardDrive:
+        return _settings.hardDrives.any((String d) => d.isNotEmpty);
+      case WizardMode.cd:
+        return _settings.cdImage.isNotEmpty;
+      case WizardMode.whdload:
+        return _settings.whdloadFilename.isNotEmpty;
+      default:
+        return false;
+    }
   }
 
   bool get _canAdvance {
@@ -298,7 +345,19 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
           whdloadArchive: prepared.whdloadFilename,
         );
       }
-      if (mounted) Navigator.of(context).pop(true);
+      if (mounted) {
+        // launch() flipped Emulator.playing, and the workbench answered by
+        // pushing the session screen over this route. pop() removes whatever
+        // is on top -- it would complete the emulator screen's route with a
+        // bool and leave the session unclosable -- so when this route is no
+        // longer current it is removed by name instead.
+        final ModalRoute<dynamic>? route = ModalRoute.of(context);
+        if (route != null && !route.isCurrent) {
+          Navigator.of(context).removeRoute(route, true);
+        } else {
+          Navigator.of(context).pop(true);
+        }
+      }
     } on Exception catch (e) {
       if (mounted) setState(() => _error = '$e');
     }
@@ -308,6 +367,17 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
   Widget build(BuildContext context) {
     _autoPickRoms();
     _refreshSuggestedName();
+    // WHDLoad fast path: media is mounted and the machine is pre-decided;
+    // once a Kickstart is in place, tailor is the first real question. The
+    // full route still exists so Back reaches machine/ROM for review.
+    if (!_autoAdvanced &&
+        _step == WizardStep.machine &&
+        widget.mode == WizardMode.whdload &&
+        _primaryMediaFilled &&
+        _settings.romFile.isNotEmpty) {
+      _step = WizardStep.tailor;
+      _autoAdvanced = true;
+    }
     final List<WizardStep> route = _route;
     final int index = route.indexOf(_step);
     final bool last = _step == WizardStep.save;
@@ -408,10 +478,14 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
         if (_settings.baseModel.needsExtendedRom) {
           return _CdRomStep(
             settings: _settings,
-            onKickstart: (String p) =>
-                setState(() => _settings = _settings.copyWith(romFile: p)),
-            onExtended: (String p) =>
-                setState(() => _settings = _settings.copyWith(romExtFile: p)),
+            onKickstart: (String p) => setState(() {
+              _romAutoPickedFor = null;
+              _settings = _settings.copyWith(romFile: p);
+            }),
+            onExtended: (String p) => setState(() {
+              _romExtAutoPickedFor = null;
+              _settings = _settings.copyWith(romExtFile: p);
+            }),
           );
         }
         return _ChooseStep(
@@ -420,8 +494,10 @@ class _GuidedConfigScreenState extends State<GuidedConfigScreen> {
               'Firmware for the ${_settings.baseModel.displayName}. You supply your own.',
           category: FileCategory.roms,
           selected: _settings.romFile,
-          onSelected: (String p) =>
-              setState(() => _settings = _settings.copyWith(romFile: p)),
+          onSelected: (String p) => setState(() {
+            _romAutoPickedFor = null;
+            _settings = _settings.copyWith(romFile: p);
+          }),
         );
 
       case WizardStep.mediaPrimary:
@@ -867,6 +943,35 @@ class _TailorStep extends StatelessWidget {
           style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 8),
+        // Only offered when both cores shipped: see the config editor. The
+        // default needs no marker, so a setup that never touches this is
+        // byte-for-byte what the wizard always wrote.
+        if (AmigaCore.isAvailable(CoreKind.copperline))
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Emulator core'),
+            subtitle: Text(
+              settings.core == CoreKind.copperline
+                  ? 'Copperline - the newer core. Fewer switches, stricter '
+                        'timing.'
+                  : 'Amiberry - the core everything already runs on.',
+            ),
+            trailing: SegmentedButton<CoreKind>(
+              segments: const <ButtonSegment<CoreKind>>[
+                ButtonSegment<CoreKind>(
+                  value: CoreKind.amiberry,
+                  label: Text('Amiberry'),
+                ),
+                ButtonSegment<CoreKind>(
+                  value: CoreKind.copperline,
+                  label: Text('Copperline'),
+                ),
+              ],
+              selected: <CoreKind>{settings.core},
+              onSelectionChanged: (Set<CoreKind> picked) =>
+                  onChanged(settings.copyWith(core: picked.first)),
+            ),
+          ),
         if (canJit)
           SwitchListTile(
             title: const Text('JIT acceleration'),

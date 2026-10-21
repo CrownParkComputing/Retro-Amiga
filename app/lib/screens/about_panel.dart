@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../data/core_kind.dart';
 import '../emulator.dart';
 import '../theme/amiga_theme.dart';
 import '../widgets/amiga_logo.dart';
@@ -106,14 +107,16 @@ class _AboutBody extends StatelessWidget {
         ),
         const SizedBox(height: 22),
         const _Section(
-          title: 'The emulator',
+          title: 'The emulators',
           body:
-              'Amiberry, which is WinUAE\'s core with a Linux and handheld '
-              'front end. It is vendored and built for each platform in turn, '
-              'because they do not agree on much: iOS cannot JIT at all, so '
-              'that build compiles the JIT out entirely rather than switching '
-              'it off at runtime.',
+              'Each saved setup picks a core - the picker is in the guided '
+              'setup and the config editor, and the shelf badge beside a '
+              'setup\'s name says which it uses. Both speak the same host '
+              'interface, so controls, screens and the resume shelf work '
+              'identically either way; only save-state files differ.',
         ),
+        const _CoreSection(kind: CoreKind.amiberry),
+        const _CoreSection(kind: CoreKind.copperline),
         const _Section(
           title: 'The front end',
           body:
@@ -145,10 +148,62 @@ class _AboutBody extends StatelessWidget {
         const _Section(
           title: 'Thanks',
           body:
-              'Amiberry, WinUAE, and the people who wrote the demos that '
-              'made anyone want a machine like this in the first place.',
+              'Amiberry, WinUAE, Copperline, and the people who wrote the '
+              'demos that made anyone want a machine like this in the '
+              'first place.',
         ),
       ],
+    );
+  }
+}
+
+/// A core's name, vendored version and a paragraph on how it differs from
+/// the other, drawn from CoreKind so the picker and the page agree.
+class _CoreSection extends StatelessWidget {
+  const _CoreSection({required this.kind});
+
+  final CoreKind kind;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: <Widget>[
+              Text(
+                kind.label,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: AmigaColors.accent,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                kind.coreVersion,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AmigaColors.textDim,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          Text(
+            kind.description,
+            style: const TextStyle(
+              fontSize: 13,
+              height: 1.4,
+              color: AmigaColors.textDim,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

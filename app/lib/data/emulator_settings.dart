@@ -1,4 +1,5 @@
 import 'amiga_model.dart';
+import 'core_kind.dart';
 
 /// Everything a saved setup holds, in the shape the core's .uae files expect.
 ///
@@ -7,6 +8,7 @@ import 'amiga_model.dart';
 class EmulatorSettings {
   const EmulatorSettings({
     this.baseModel = AmigaModel.a500,
+    this.core = CoreKind.amiberry,
     // CPU
     this.cpuModel = 68000,
     this.cpuCompatible = true,
@@ -71,6 +73,11 @@ class EmulatorSettings {
   });
 
   final AmigaModel baseModel;
+
+  /// The core this setup launches on. Written as a `; retro-amiga: core=`
+  /// comment in the .uae; absent means Amiberry, which is what every
+  /// config written before cores existed decodes to.
+  final CoreKind core;
 
   final int cpuModel;
   final bool cpuCompatible;
@@ -275,6 +282,7 @@ class EmulatorSettings {
 
   EmulatorSettings copyWith({
     AmigaModel? baseModel,
+    CoreKind? core,
     int? cpuModel,
     bool? cpuCompatible,
     bool? address24Bit,
@@ -328,6 +336,7 @@ class EmulatorSettings {
   }) {
     return EmulatorSettings(
       baseModel: baseModel ?? this.baseModel,
+      core: core ?? this.core,
       cpuModel: cpuModel ?? this.cpuModel,
       cpuCompatible: cpuCompatible ?? this.cpuCompatible,
       address24Bit: address24Bit ?? this.address24Bit,

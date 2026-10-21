@@ -8,6 +8,7 @@ import 'dart:ui' as ui show Size;
 import 'package:ffi/ffi.dart';
 
 import '../data/app_log.dart';
+import '../data/core_kind.dart';
 
 /// The emulator core, running INSIDE the launcher process.
 ///
@@ -29,60 +30,102 @@ import '../data/app_log.dart';
 /// plain call from the UI isolate: the frame buffer and the host API live in
 /// process memory, which both isolates share.
 class AmigaCore {
-  AmigaCore._(this._lib);
+  AmigaCore._(this._lib, this._libPath, this.kind);
 
   final DynamicLibrary _lib;
 
-  static AmigaCore? _instance;
+  /// Which core this is. The two libraries export the same symbols, so the
+  /// only difference the UI can show is which file was opened.
+  final CoreKind kind;
 
-  /// Where this platform keeps the core, or null where there is none (tests,
-  /// and platforms the core does not build for yet).
-  ///
-  /// One resolver for every host, because the library IS the same everywhere:
-  /// the same CMake target, the same uae4arm_host API, the same framebuffer
-  /// tap. Only the packaging differs -- the loader's search path on Android,
-  /// lib/ beside the executable on Linux, Frameworks/ on iOS.
-  static String? _libraryPath() {
-    if (Platform.isAndroid) return 'libuae4arm.so';
-    if (Platform.isIOS) {
-      // Relative to the loader's rpath, which points at Frameworks/.
-      return 'libuae4arm.framework/libuae4arm';
+  /// The file this instance opened, kept so the core isolate opens the
+  /// SAME library the UI isolate did -- they share process memory only if
+  /// they share the file. Public so the Android texture dispatcher can be
+  /// pointed at the same copy.
+  final String _libPath;
+
+  /// The library file this instance was opened from.
+  String get libraryPath => _libPath;
+
+  /// One instance per core kind: both libraries can be resident at once
+  /// (they export the same symbols, so they must be opened by path and
+  /// kept apart), while a second open of the same kind is the same object.
+  static final Map<CoreKind, AmigaCore> _instances = <CoreKind, AmigaCore>{};
+
+  /// Where this platform keeps [kind]'s library, or null where there is
+  /// none (tests, and platforms a core does not build for yet).
+  static String? _libraryPath(CoreKind kind) {
+    switch (kind) {
+      case CoreKind.amiberry:
+        if (Platform.isAndroid) return 'libuae4arm.so';
+        if (Platform.isIOS) {
+          // Relative to the loader's rpath, which points at Frameworks/.
+          return 'libuae4arm.framework/libuae4arm';
+        }
+        if (Platform.isLinux) {
+          // An explicit override first, for harnesses and odd layouts.
+          final String? env = Platform.environment['UAE4ARM_CORE'];
+          if (env != null && env.isNotEmpty && File(env).existsSync()) {
+            return env;
+          }
+          // The installed bundle: <exe>/lib/libuae4arm.so, the same file
+          // the GTK runner dlopens.
+          final String exeDir = File(Platform.resolvedExecutable).parent.path;
+          final String bundled = '$exeDir/lib/libuae4arm.so';
+          if (File(bundled).existsSync()) return bundled;
+          // A dev run (`flutter run` from app/): the harness build.
+          Directory dir = Directory.current;
+          for (int i = 0; i < 4; i++) {
+            final String dev = '${dir.path}/build-linux/libuae4arm.so';
+            if (File(dev).existsSync()) return dev;
+            dir = dir.parent;
+          }
+          return null;
+        }
+        return null;
+      case CoreKind.copperline:
+        if (Platform.isAndroid) return 'libcopperline_ffi.so';
+        if (Platform.isIOS) {
+          return 'libcopperline.framework/libcopperline';
+        }
+        if (Platform.isLinux) {
+          final String? env = Platform.environment['COPPERLINE_CORE'];
+          if (env != null && env.isNotEmpty && File(env).existsSync()) {
+            return env;
+          }
+          final String exeDir = File(Platform.resolvedExecutable).parent.path;
+          final String bundled = '$exeDir/lib/libcopperline_ffi.so';
+          if (File(bundled).existsSync()) return bundled;
+          Directory dir = Directory.current;
+          for (int i = 0; i < 4; i++) {
+            final String dev =
+                '${dir.path}/native/copperline_ffi/target/release/'
+                'libcopperline_ffi.so';
+            if (File(dev).existsSync()) return dev;
+            dir = dir.parent;
+          }
+          return null;
+        }
+        return null;
     }
-    if (Platform.isLinux) {
-      // An explicit override first, for harnesses and odd layouts.
-      final String? env = Platform.environment['UAE4ARM_CORE'];
-      if (env != null && env.isNotEmpty && File(env).existsSync()) return env;
-      // The installed bundle: <exe>/lib/libuae4arm.so, the same file the GTK
-      // runner dlopens.
-      final String exeDir = File(Platform.resolvedExecutable).parent.path;
-      final String bundled = '$exeDir/lib/libuae4arm.so';
-      if (File(bundled).existsSync()) return bundled;
-      // A dev run (`flutter run` from app/): the harness build in the repo.
-      Directory dir = Directory.current;
-      for (int i = 0; i < 4; i++) {
-        final String dev = '${dir.path}/build-linux/libuae4arm.so';
-        if (File(dev).existsSync()) return dev;
-        dir = dir.parent;
-      }
-      return null;
-    }
-    return null;
   }
 
-  /// The resolved path, kept so the core isolate opens the SAME library the
-  /// UI isolate did -- they share process memory only if they share the file.
-  static String? _openedPath;
+  /// Whether [kind]'s library exists where this platform would load it --
+  /// the picker uses this to offer only the cores that shipped.
+  static bool isAvailable(CoreKind kind) => _libraryPath(kind) != null;
 
-  /// Opens the core, or null where there is none to open (tests have no core
-  /// at all, and some desktop platforms still run it as a child process).
-  static AmigaCore? open() {
-    if (_instance != null) return _instance;
-    final String? path = _libraryPath();
+  /// Opens [kind]'s core, or null where there is none to open (tests have
+  /// no core at all, and some desktop platforms still run one as a child
+  /// process).
+  static AmigaCore? open([CoreKind kind = CoreKind.amiberry]) {
+    final AmigaCore? existing = _instances[kind];
+    if (existing != null) return existing;
+    final String? path = _libraryPath(kind);
     if (path == null) return null;
     try {
-      final AmigaCore core = AmigaCore._(DynamicLibrary.open(path));
-      _openedPath = path;
-      return _instance = core;
+      final AmigaCore core =
+          AmigaCore._(DynamicLibrary.open(path), path, kind);
+      return _instances[kind] = core;
     } on ArgumentError {
       return null;
     }
@@ -244,7 +287,7 @@ class AmigaCore {
       if (!exited.isCompleted) exited.complete();
     });
     await Isolate.spawn(_runCore, <String>[
-      _openedPath!,
+      _libPath,
       ...args,
     ], onExit: onExit.sendPort);
   }
@@ -604,10 +647,15 @@ void _runCore(List<String> pathAndArgs) {
         int Function(int, Pointer<Pointer<Utf8>>)
       >('uae4arm_host_run');
 
-  final argv = calloc<Pointer<Utf8>>(args.length + 1);
+  // A conventional argv: element 0 is the program name, which both cores
+  // skip the way a real main does. Without it the first real flag was
+  // silently eaten -- harmless while that was --rescan-roms, fatal the
+  // moment it was --config.
+  final argv = calloc<Pointer<Utf8>>(args.length + 2);
+  argv[0] = 'uae4arm'.toNativeUtf8();
   for (var i = 0; i < args.length; i++) {
-    argv[i] = args[i].toNativeUtf8();
+    argv[i + 1] = args[i].toNativeUtf8();
   }
-  argv[args.length] = nullptr;
-  run(args.length, argv);
+  argv[args.length + 1] = nullptr;
+  run(args.length + 1, argv);
 }

@@ -17,7 +17,26 @@ final class EmulatorHost {
 
   static let shared = EmulatorHost()
 
-  private var handle: UnsafeMutableRawPointer?
+  /// The core a name resolves to. Dart knows them by marker name; the file
+  /// names are the packaging contract build-ios-app.sh produces.
+  static let amiberryLibrary = "libuae4arm.framework/libuae4arm"
+  static let copperlineLibrary = "libcopperline.framework/libcopperline"
+
+  /// One handle per library, keyed by its name: both cores can be resident
+  /// at once, and they export the same symbols, so nothing about which one
+  /// is running may be left to a search order.
+  private var handles: [String: UnsafeMutableRawPointer] = [:]
+
+  /// The core the current launch uses, and the one `symbol`/`coreSymbol`
+  /// resolve against. Music is different: the ProTracker player only exists
+  /// in Amiberry, so those calls name that library explicitly.
+  private var activeLibrary = EmulatorHost.amiberryLibrary
+
+  /// The library [selectCore] last chose -- the texture plugin watches this
+  /// to know when its bound symbols belong to a core that is no longer the
+  /// running one.
+  var activeLibraryName: String { activeLibrary }
+
   private var running = false
 
   /// True from X being pressed until the core actually returns. A new launch
@@ -33,8 +52,39 @@ final class EmulatorHost {
     return load() != nil
   }
 
+  /// Selects which core subsequent `symbol`/`coreSymbol` lookups bind. The
+  /// name is either a kind ("amiberry"/"copperline", as the .uae marker
+  /// spells it) or the framework-relative path Dart opened -- both name the
+  /// same file, and dlopen hands back the image already loaded.
+  ///
+  /// Returns false when the named core did not ship in this build.
+  @discardableResult
+  func selectCore(_ name: String) -> Bool {
+    let library = EmulatorHost.libraryName(for: name)
+    guard let handle = open(library) else { return false }
+    handles[library] = handle
+    activeLibrary = library
+    return true
+  }
+
+  /// Maps a kind name or a framework-relative path onto the name used for
+  /// Frameworks/ lookups.
+  static func libraryName(for name: String) -> String {
+    switch name {
+    case "amiberry": return amiberryLibrary
+    case "copperline": return copperlineLibrary
+    default: return name
+    }
+  }
+
   private func load() -> UnsafeMutableRawPointer? {
-    if let handle = handle { return handle }
+    if let handle = handles[activeLibrary] { return handle }
+    guard let opened = open(activeLibrary) else { return nil }
+    handles[activeLibrary] = opened
+    return opened
+  }
+
+  private func open(_ library: String) -> UnsafeMutableRawPointer? {
     // A .framework bundle, not a bare .dylib. App Store validation rejects an
     // upload carrying a loose dylib in Frameworks/ with "90426: Invalid Swift
     // Support. The SwiftSupport folder is missing" -- historically the only
@@ -43,12 +93,13 @@ final class EmulatorHost {
     // 15.0 deployment target. The rejection is unfixable while the bare dylib
     // is there, and `altool --validate-app` passes every time because the
     // check only runs server-side after the upload.
-    let path = Bundle.main.bundlePath + "/Frameworks/libuae4arm.framework/libuae4arm"
+    let path = library.hasPrefix("/")
+      ? library
+      : Bundle.main.bundlePath + "/Frameworks/" + library
     guard let opened = dlopen(path, RTLD_NOW | RTLD_GLOBAL) else {
-      NSLog("uae4arm: dlopen failed: %@", String(cString: dlerror()))
+      NSLog("uae4arm: dlopen %@ failed: %@", library, String(cString: dlerror()))
       return nil
     }
-    handle = opened
     return opened
   }
 
@@ -71,7 +122,16 @@ final class EmulatorHost {
   /// It is dispatched rather than called inline so the method channel can send
   /// its reply back to Dart first - the reply would otherwise be stuck behind
   /// a main thread that never comes back.
-  func launch(args: [String]) throws {
+  /// [core] is the marker name from the config's `; retro-amiga: core=`
+  /// line, or nil for a caller that does not know -- nil means Amiberry,
+  /// which is also the answer for every config written before cores
+  /// existed.
+  func launch(args: [String], core: String? = nil) throws {
+    if let core = core {
+      if !selectCore(core) {
+        throw HostError.message("The \(core) core is not in this build.")
+      }
+    }
     if running && !quitting {
       throw HostError.message("Emulation is already running.")
     }
@@ -326,6 +386,20 @@ final class EmulatorHost {
     return dlsym(handle, name)
   }
 
+  /// Music resolves against Amiberry specifically, whatever the active
+  /// core is: the ProTracker player has no Copperline implementation, so
+  /// the shim there exports no-ops that would just sit silent.
+  private func musicSymbol(_ name: String) -> UnsafeMutableRawPointer? {
+    if let handle = handles[EmulatorHost.amiberryLibrary] {
+      return dlsym(handle, name)
+    }
+    guard let opened = open(EmulatorHost.amiberryLibrary) else {
+      return nil
+    }
+    handles[EmulatorHost.amiberryLibrary] = opened
+    return dlsym(opened, name)
+  }
+
   /// The same lookup, for the other things in this app that talk to the core.
   ///
   /// AmigaTexturePlugin needs four of its own entry points, and there is
@@ -338,27 +412,27 @@ final class EmulatorHost {
   }
 
   func musicPlay(path: String) -> Bool {
-    guard let fn = symbol("uae4arm_host_music_play") else { return false }
+    guard let fn = musicSymbol("uae4arm_host_music_play") else { return false }
     return path.withCString { unsafeBitCast(fn, to: PlayFn.self)($0) }
   }
 
   func musicStop() {
-    guard let fn = symbol("uae4arm_host_music_stop") else { return }
+    guard let fn = musicSymbol("uae4arm_host_music_stop") else { return }
     unsafeBitCast(fn, to: VoidFn.self)()
   }
 
   func musicReleaseAudio() {
-    guard let fn = symbol("uae4arm_host_music_release_audio") else { return }
+    guard let fn = musicSymbol("uae4arm_host_music_release_audio") else { return }
     unsafeBitCast(fn, to: VoidFn.self)()
   }
 
   func musicSetPaused(_ paused: Bool) {
-    guard let fn = symbol("uae4arm_host_music_set_paused") else { return }
+    guard let fn = musicSymbol("uae4arm_host_music_set_paused") else { return }
     unsafeBitCast(fn, to: SetBoolFn.self)(paused)
   }
 
   func musicSetVolume(_ volume: Double) {
-    guard let fn = symbol("uae4arm_host_music_set_volume") else { return }
+    guard let fn = musicSymbol("uae4arm_host_music_set_volume") else { return }
     unsafeBitCast(fn, to: SetFloatFn.self)(Float(volume))
   }
 
@@ -366,16 +440,16 @@ final class EmulatorHost {
   /// second and a channel round trip per field would be wasteful.
   func musicState() -> [String: Any] {
     func flag(_ name: String) -> Bool {
-      guard let fn = symbol(name) else { return false }
+      guard let fn = musicSymbol(name) else { return false }
       return unsafeBitCast(fn, to: BoolFn.self)()
     }
     var title = ""
-    if let fn = symbol("uae4arm_host_music_title"),
+    if let fn = musicSymbol("uae4arm_host_music_title"),
        let raw = unsafeBitCast(fn, to: StringFn.self)() {
       title = String(cString: raw)
     }
     var level: Double = 0
-    if let fn = symbol("uae4arm_host_music_level") {
+    if let fn = musicSymbol("uae4arm_host_music_level") {
       level = Double(unsafeBitCast(fn, to: FloatFn.self)())
     }
     return [

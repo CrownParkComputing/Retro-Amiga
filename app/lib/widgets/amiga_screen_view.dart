@@ -82,12 +82,20 @@ class AmigaScreenView extends StatefulWidget {
   /// is the right button.
   final bool mouseMode;
 
+  /// Called once if the core's run loop returns while this view is still up.
+  ///
+  /// A machine that fails to build -- a bad ROM, a config the core refuses --
+  /// exits before its first frame, and nothing else would ever take the
+  /// placeholder down or the session flag off.
+  final VoidCallback? onCoreExit;
+
   const AmigaScreenView({
     super.key,
     required this.core,
     this.pollInterval,
     this.fill = false,
     this.mouseMode = false,
+    this.onCoreExit,
   });
 
   @override
@@ -128,6 +136,9 @@ class _AmigaScreenViewState extends State<AmigaScreenView>
   int _lastSerial = -1;
   Duration _lastUpload = const Duration(days: -1);
 
+  /// [onCoreExit] fires once, not once per tick after the run loop is gone.
+  bool _reportedExit = false;
+
   @override
   void initState() {
     super.initState();
@@ -139,7 +150,8 @@ class _AmigaScreenViewState extends State<AmigaScreenView>
     if (!AmigaTexture.isSupported || _textureRefused) return;
     _attaching = true;
     try {
-      final AmigaTexture? texture = await AmigaTexture.create();
+      final AmigaTexture? texture =
+          await AmigaTexture.create(coreLibrary: widget.core.libraryPath);
       if (texture == null) {
         // Which path the picture is on decides everything about its cost: the
         // texture is one memcpy on the platform thread, the fallback is a
@@ -176,6 +188,16 @@ class _AmigaScreenViewState extends State<AmigaScreenView>
   }
 
   void _onTick(Duration elapsed) {
+    // A core whose run loop has ended is a session that is over. Checked
+    // before the attach gate: a dead core needs no picture path at all.
+    if (!widget.core.isRunning) {
+      if (!_reportedExit) {
+        _reportedExit = true;
+        widget.onCoreExit?.call();
+      }
+      return;
+    }
+
     // Still deciding which path this is. Polling now would consume the frame
     // the texture path is about to want.
     if (_attaching) return;

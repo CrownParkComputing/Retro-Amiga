@@ -237,22 +237,60 @@ class RomPicker {
       return null;
     }
 
-    final List<String> wanted = switch (model) {
-      AmigaModel.cd32 => <String>['cd32'],
-      AmigaModel.cdtv => <String>['cdtv'],
-      AmigaModel.a1200 => <String>['a1200', '40.068'],
-      AmigaModel.a4000 => <String>['a4000', '40.068'],
-      AmigaModel.a600 => <String>['a600', '37.300', '40.063'],
-      AmigaModel.a500Plus => <String>['a500+', '37.', '2.04'],
-      _ => <String>['1.3', '34.005', 'a500'],
+    // Each entry is a set of strings that must ALL appear in the name, tried
+    // in order. The AGA machines want their 3.1 Kickstart first -- a bare
+    // 'a1200' match would take whatever sorted earliest, 3.0 and 2.0 ROMs
+    // included -- so the revision is required before the machine name alone
+    // is allowed to answer.
+    final List<List<String>> wanted = switch (model) {
+      AmigaModel.cd32 => <List<String>>[
+          <String>['cd32'],
+        ],
+      AmigaModel.cdtv => <List<String>>[
+          <String>['cdtv'],
+        ],
+      AmigaModel.a1200 => <List<String>>[
+          <String>['a1200', '40.068'],
+          <String>['a1200', '40068'],
+          <String>['40.068'],
+          <String>['a1200'],
+        ],
+      AmigaModel.a4000 => <List<String>>[
+          <String>['a4000', '40.068'],
+          <String>['a4000', '40068'],
+          <String>['40.068'],
+          <String>['a4000'],
+        ],
+      AmigaModel.a600 => <List<String>>[
+          <String>['a600', '40.063'],
+          <String>['a600', '40063'],
+          <String>['40.063'],
+          <String>['a600'],
+          <String>['37.300'],
+        ],
+      AmigaModel.a500Plus => <List<String>>[
+          <String>['a500+'],
+          <String>['37.'],
+          <String>['2.04'],
+        ],
+      _ => <List<String>>[
+          <String>['1.3'],
+          <String>['34.005'],
+          <String>['a500'],
+        ],
     };
 
-    for (final String needle in wanted) {
+    for (final List<String> needles in wanted) {
       for (final MediaFile rom in candidates) {
-        if (_mentions(rom.name, <String>[needle])) return rom;
+        if (_mentionsAll(rom.name, needles)) return rom;
       }
     }
     return candidates.first;
+  }
+
+  static bool _mentionsAll(String name, List<String> needles) {
+    final String lower = name.toLowerCase();
+    return needles.every(lower.contains);
   }
 
   /// The extended ROM for [model], or null when it needs none.
@@ -579,110 +617,6 @@ class MediaLibrary {
     return _ambiguous.contains(path.substring(dot + 1).toLowerCase());
   }
 
-  /// Whether this file is only music because of the Amiga's "mod.name" way
-  /// round, rather than because of its extension.
-  static bool _isPrefixNamed(String path) {
-    final int slash = path.lastIndexOf('/');
-    final String name = (slash < 0 ? path : path.substring(slash + 1))
-        .toLowerCase();
-    return name.startsWith('mod.') || name.startsWith('med.');
-  }
-
-  /// Suffixes that mean "this mod. is somebody's source file".
-  static const Set<String> _codeSuffixes = <String>{
-    'rs',
-    'js',
-    'ts',
-    'py',
-    'c',
-    'h',
-    'cc',
-    'cpp',
-    'hpp',
-    'go',
-    'rb',
-    'php',
-    'java',
-    'kt',
-    'dart',
-    'swift',
-    'sh',
-    'md',
-    'txt',
-    'json',
-    'yaml',
-    'yml',
-    'toml',
-    'lock',
-    'info',
-    'html',
-    'css',
-    'xml',
-    'cmake',
-    'am',
-    'in',
-  };
-
-  /// Whether a file named the Amiga way round - mod.axel_f - is really a tune.
-  ///
-  /// The magic at offset 1080 settles it when it is there, but it is not
-  /// always: the fifteen-sample modules that came before M.K. have no tag at
-  /// all, and Modland is full of them. So a file is also taken as a tune when
-  /// it is big enough to be one and its suffix is not a programming language -
-  /// which is what mod.rs, mod.js and mod.ts are, and they were being indexed
-  /// as music.
-  static bool isNamedModule(String path, int size) {
-    final int dot = path.lastIndexOf('.');
-    final String suffix = dot < 0 ? '' : path.substring(dot + 1).toLowerCase();
-    if (_codeSuffixes.contains(suffix)) return false;
-    if (size < 1084) return false;
-    return true;
-  }
-
-  /// Whether a file is a tracker module.
-  ///
-  /// A ProTracker module names its format at offset 1080 - M.K. for the
-  /// four-channel original, and a handful of others for the variants that
-  /// followed. Anything shorter than that is not a module whatever it is
-  /// called.
-  static bool looksLikeModule(File file) {
-    const List<String> tags = <String>[
-      'M.K.',
-      'M!K!',
-      'M&K!',
-      'FLT4',
-      'FLT8',
-      '4CHN',
-      '6CHN',
-      '8CHN',
-      'CD81',
-      'OKTA',
-      '16CN',
-      '32CN',
-    ];
-    try {
-      final RandomAccessFile handle = file.openSync();
-      try {
-        if (handle.lengthSync() < 1084) return false;
-        handle.setPositionSync(1080);
-        final List<int> tag = handle.readSync(4);
-        if (tag.length < 4) return false;
-        final String text = String.fromCharCodes(tag);
-        if (tags.contains(text)) return true;
-        // OctaMED and the 15-sample originals say so at the very start
-        // instead.
-        handle.setPositionSync(0);
-        final List<int> head = handle.readSync(4);
-        return head.length == 4 && String.fromCharCodes(head) == 'MMD0' ||
-            String.fromCharCodes(head) == 'MMD1';
-      } finally {
-        handle.closeSync();
-      }
-    } on FileSystemException {
-      return false;
-    }
-  }
-
   /// Runs the walk in an isolate, reporting progress if anyone is listening.
   ///
   /// Two paths on purpose. Without a listener this is `Isolate.run`, exactly as
@@ -833,15 +767,6 @@ class MediaLibrary {
           }
           // Checked by content, because the name lies for both of these.
           if (category == FileCategory.roms && !looksLikeKickstart(entry)) {
-            continue;
-          }
-          // "mod.name" is the Amiga's way round, and it is also how Rust
-          // names a module: this scan indexed fifty mod.rs files, eleven
-          // mod.js and nine mod.ts as tunes. A module says what it is at
-          // offset 1080, so ask it.
-          if (category == FileCategory.music &&
-              _isPrefixNamed(entry.path) &&
-              !isNamedModule(entry.path, size)) {
             continue;
           }
           if (!seen.add(entry.path)) continue;

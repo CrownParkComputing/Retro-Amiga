@@ -1,0 +1,3 @@
+[submodule "copperline"]
+	path = copperline
+	url = https://github.com/CopperlineHQ/Copperline

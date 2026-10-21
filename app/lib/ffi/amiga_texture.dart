@@ -45,11 +45,17 @@ class AmigaTexture {
 
   /// Registers a texture and starts the platform's frame loop, or returns null
   /// if this platform or this core cannot do it.
-  static Future<AmigaTexture?> create() async {
+  ///
+  /// [coreLibrary] names the library the running core was opened from. Both
+  /// cores export the same uae4arm_host_* surface, so the native side cannot
+  /// be left to pick: it is handed this name and dlopens the same copy Dart
+  /// already holds. Null means Amiberry, which is what a single-core build
+  /// or an older Dart side always ran.
+  static Future<AmigaTexture?> create({String? coreLibrary}) async {
     if (!isSupported) return null;
     try {
       final Map<Object?, Object?>? reply = await _channel
-          .invokeMapMethod<Object?, Object?>('create');
+          .invokeMapMethod<Object?, Object?>('create', coreLibrary);
       if (reply == null) return null;
       final int? id = (reply['id'] as num?)?.toInt();
       if (id == null) return null;

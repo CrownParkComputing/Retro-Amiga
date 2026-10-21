@@ -1,0 +1,32 @@
+[package]
+name = "copperline_ffi"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "C ABI bridge: the Retro-Amiga workbench GUI over the headless Copperline core"
+publish = false
+
+# Standalone on purpose, like copperline-web: building the bridge never
+# touches the core submodule's lockfile.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# The headless core only - no winit/pixels. Same surface the wasm frontend
+# builds against, which is the whole reason this bridge is small. Audio
+# output is the bridge's own cpal sink (audio_out.rs): the core's CpalSink
+# sits behind the `frontend` feature, which pulls in the whole desktop UI.
+# cd32-fmv: the translator emits `fmv`/`fmv_rom` whenever a .uae says
+# cd32fmv=true (every CD32 setup the wizard writes). Without the feature the
+# core refuses to build those machines. Pure-Rust decoders only, so it is
+# safe on every host we target.
+copperline = { path = "../../copperline", default-features = false, features = ["cd32-fmv"] }
+anyhow = "1"
+log = "0.4"
+ringbuf = "0.4"
+cpal = "0.18"
+
+[profile.release]
+lto = "thin"

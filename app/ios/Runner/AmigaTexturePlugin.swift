@@ -56,6 +56,10 @@ final class AmigaTexturePlugin: NSObject {
   private var frameSize: SizeFn?
   private var copyStrided: CopyFn?
 
+  /// Which library the bound symbols came from. A session on the other core
+  /// must rebind: the same symbol name resolves to a different function.
+  private var boundLibrary: String?
+
   init(registry: FlutterTextureRegistry) {
     self.registry = registry
     super.init()
@@ -75,6 +79,12 @@ final class AmigaTexturePlugin: NSObject {
     channel.setMethodCallHandler { call, result in
       switch call.method {
       case "create":
+        // The argument names the running core's library. Two cores export
+        // the same uae4arm_host_* surface, so the plugin must be told which
+        // handle to dlsym rather than left to a search order.
+        if let library = call.arguments as? String {
+          _ = EmulatorHost.shared.selectCore(library)
+        }
         result(plugin.create())
       case "dispose":
         plugin.dispose()
@@ -105,6 +115,17 @@ final class AmigaTexturePlugin: NSObject {
 
   private func create() -> [String: Any]? {
     dispose()
+    // The bound pointers belong to one library. If the core changed since
+    // they were taken, drop them so bindSymbols rebinds against the running
+    // one rather than happily presenting the last core's framebuffer.
+    let library = EmulatorHost.shared.activeLibraryName
+    if boundLibrary != library {
+      setSink = nil
+      present = nil
+      frameSize = nil
+      copyStrided = nil
+      boundLibrary = library
+    }
     guard bindSymbols() else { return nil }
 
     // A first size so there is a texture before the Amiga has drawn anything.

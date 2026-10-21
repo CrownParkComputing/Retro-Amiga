@@ -234,6 +234,77 @@ android {
     }
 }
 
+// The second core: a Rust cdylib (native/copperline_ffi) that Gradle's CMake
+// integration cannot see, so cargo-ndk is driven from here -- once for every
+// shipped ABI, straight into src/main/jniLibs where packaging already looks.
+// Skipped with a warning rather than a failure when the toolchain is absent:
+// the single-core build stays valid, and the Dart side simply never offers
+// a core whose library did not ship (AmigaCore.isAvailable).
+val copperlineNdkTargets = androidAbiFilters.mapNotNull { abi ->
+    when (abi) {
+        "arm64-v8a" -> "aarch64-linux-android"
+        "x86_64" -> "x86_64-linux-android"
+        else -> null
+    }
+}
+
+val buildCopperlineCore = tasks.register<Exec>("buildCopperlineCore") {
+    group = "build"
+    description = "Builds libcopperline_ffi.so for the shipped ABIs."
+    // rootDir is the Gradle project root (app/android); the crate and the
+    // submodule live two levels up, beside the top-level CMakeLists the
+    // externalNativeBuild block already points at.
+    val repoRoot = rootDir.resolve("../..")
+    val crateDir = repoRoot.resolve("native/copperline_ffi")
+    val jniLibsDir = layout.projectDirectory.dir("src/main/jniLibs").asFile
+
+    inputs.dir(crateDir.resolve("src")).withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.file(crateDir.resolve("Cargo.toml"))
+    inputs.dir(repoRoot.resolve("copperline/src"))
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    outputs.dir(jniLibsDir)
+
+    onlyIf {
+        val hasTool = try {
+            ProcessBuilder("cargo", "ndk", "--version")
+                .redirectErrorStream(true)
+                .start()
+                .waitFor() == 0
+        } catch (e: Exception) {
+            false
+        }
+        if (!hasTool) {
+            logger.warn(
+                "cargo-ndk is not installed; libcopperline_ffi.so will not " +
+                    "ship in this build and the Copperline core will not be " +
+                    "offered. `cargo install cargo-ndk` to build it."
+            )
+        }
+        hasTool
+    }
+
+    doFirst { jniLibsDir.mkdirs() }
+    workingDir = crateDir
+    environment(
+        // cargo-ndk finds the NDK itself when ANDROID_NDK_HOME points at it;
+        // Gradle knows which NDK this project builds against, so say so
+        // rather than let cargo-ndk pick a different one.
+        "ANDROID_NDK_HOME", android.ndkDirectory.absolutePath,
+    )
+    commandLine(
+        mutableListOf(
+            "cargo", "ndk",
+            "--platform", "28", // minSdk
+            "-o", jniLibsDir.absolutePath,
+        ) + copperlineNdkTargets.flatMap { listOf("-t", it) } + listOf(
+            "build", "--release",
+        )
+    )
+}
+
+// The .so must exist before packaging reads jniLibs.
+tasks.named("preBuild") { dependsOn(buildCopperlineCore) }
+
 // The last word on which ABIs are BUILT.
 //
 // packaging.jniLibs above stops the extra ones shipping, but they are still

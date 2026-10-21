@@ -195,12 +195,18 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
     if (!open) _restartControlsTimer();
   }
 
+  /// The session only gets to end once -- the ticker's core-exit notice and
+  /// the user's own close can arrive together.
+  bool _leaving = false;
+
   /// Leaves, keeping the exact moment. See the class comment.
   Future<void> _pause() async {
+    if (_leaving) return;
+    _leaving = true;
     _releaseHeld();
     Emulator.forgetBackgroundPause();
     Emulator.stopInProcess();
-    if (mounted) Navigator.of(context).pop(EmulatorExit.paused);
+    if (mounted) _leave(EmulatorExit.paused);
   }
 
   /// Leaves, keeping nothing.
@@ -213,10 +219,28 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
   }
 
   Future<void> _close() async {
+    if (_leaving) return;
+    _leaving = true;
     _releaseHeld();
     Emulator.forgetBackgroundPause();
     Emulator.closeInProcess();
-    if (mounted) Navigator.of(context).pop(EmulatorExit.closed);
+    if (mounted) _leave(EmulatorExit.closed);
+  }
+
+  /// Takes this screen's route off the stack.
+  ///
+  /// Navigator.pop removes whatever is on top, which is not necessarily this
+  /// route: a launch from a screen that stays open underneath (the wizard)
+  /// leaves entries above and below in states pop() must not touch. When this
+  /// route is not current it is removed by name -- which also finishes the
+  /// removal of an entry a bad pop left half-removed.
+  void _leave(EmulatorExit how) {
+    final ModalRoute<dynamic>? route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) {
+      Navigator.of(context).removeRoute(route, how);
+    } else {
+      Navigator.of(context).pop(how);
+    }
   }
 
   @override
@@ -246,6 +270,10 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
                 core: widget.core,
                 fill: AppPrefs.screenFill.value,
                 mouseMode: _mouseMode,
+                // A machine that never starts -- a bad hardfile, a missing
+                // ROM -- ends the run loop it was given; the screen goes
+                // with it rather than sitting on a placeholder forever.
+                onCoreExit: () => unawaited(_close()),
               ),
             if (_padVisible && !_keyboardUp)
               PadOverlay(
@@ -288,6 +316,29 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
+                        if (widget.title.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 18),
+                            child: Column(
+                              children: <Widget>[
+                                Text(
+                                  widget.title,
+                                  style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 15,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                                Text(
+                                  'on ${widget.core.kind.label}',
+                                  style: const TextStyle(
+                                    color: Colors.white38,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         _ResumeButton(onPressed: _toggleMenu),
                         const SizedBox(height: 14),
                         // Leaving with your place kept.
@@ -336,6 +387,11 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
   /// places and wore two faces, and pressing it a second time looked like the
   /// button had been replaced rather than flipped. One button, one place: a
   /// hamburger while the game runs, a play arrow while it is stopped.
+  ///
+  /// Beside it a chip names the core running the machine -- Amiberry or
+  /// Copperline -- because the two cores are told apart nowhere else while
+  /// a game is up, and "which engine is this" is the first question a bug
+  /// report has to answer.
   Widget _menuHandle() {
     return Align(
       alignment: Alignment.topLeft,
@@ -344,24 +400,49 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
           padding: const EdgeInsets.all(6),
           child: Opacity(
             opacity: _controlsVisible || _menuOpen ? 1 : 0.35,
-            child: Material(
-              color: _menuOpen
-                  ? const Color(0xF24040E0)
-                  : const Color(0xCC12151A),
-              shape: const CircleBorder(),
-              clipBehavior: Clip.antiAlias,
-              child: InkWell(
-                onTap: _toggleMenu,
-                child: SizedBox(
-                  width: 34,
-                  height: 34,
-                  child: Icon(
-                    _menuOpen ? Icons.play_arrow : Icons.menu,
-                    color: Colors.white,
-                    size: 18,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Material(
+                  color: _menuOpen
+                      ? const Color(0xF24040E0)
+                      : const Color(0xCC12151A),
+                  shape: const CircleBorder(),
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    onTap: _toggleMenu,
+                    child: SizedBox(
+                      width: 34,
+                      height: 34,
+                      child: Icon(
+                        _menuOpen ? Icons.play_arrow : Icons.menu,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                    ),
                   ),
                 ),
-              ),
+                const SizedBox(width: 6),
+                IgnorePointer(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 7,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xCC12151A),
+                      borderRadius: BorderRadius.circular(17),
+                    ),
+                    child: Text(
+                      widget.core.kind.label,
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),

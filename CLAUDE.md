@@ -38,8 +38,12 @@ cmake --build build-linux -j$(nproc)
 
 # iOS (Docker cross-build via iosbox; produces an UNSIGNED IPA)
 SKIP_SDL=1 tools/build-ios-core.sh   # core dylib -> native/ios/out/
-tools/build-ios-app.sh               # Flutter app + core packaged as
-                                     # Frameworks/libuae4arm.framework/
+tools/build-ios-copperline.sh        # Copperline dylib (Rust cross-build in
+                                     # the copperline-iosbox image) ->
+                                     # native/ios/out/libcopperline.dylib
+tools/build-ios-app.sh               # Flutter app + cores packaged as
+                                     # Frameworks/libuae4arm.framework/ and
+                                     # Frameworks/libcopperline.framework/
 
 # Android
 cd app && flutter build apk --release
@@ -141,3 +145,12 @@ deliberate.
 `main`). See `docs/upstream-sync.md`. Local changes concentrate in
 `src/osdep/uae4arm_host.*`, the strip, and the multi-run fixes — keep diffs
 against upstream small and deliberate.
+
+`copperline/` is a submodule pinned to upstream v1.0.1. One deliberate
+working-tree delta lives inside it: `src/blockdev/unsupported.rs` (+ its
+`mod.rs` dispatch), a no-device backend for platforms without a blockdev
+implementation — required for the Android/iOS Rust builds, upstreamable as a
+narrow fix. It is NOT committed anywhere: a fresh clone or
+`git submodule update` loses it and those cross-builds break. It needs to be
+pushed to a fork (or upstream) and the submodule repointed before this tree
+is cloned elsewhere.

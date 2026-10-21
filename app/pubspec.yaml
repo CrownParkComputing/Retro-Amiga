@@ -64,6 +64,19 @@ flutter:
     - assets/whdboot/kick40063.A600.RTB
     - assets/whdboot/kick40068.A1200.RTB
     - assets/whdboot/kick40068.A4000.RTB
+    # The WHDLoad archives as Copperline's booter wants them: whole, not
+    # unpacked. WHDLoad_usr.lha is the same freely-distributable file the
+    # files above are unpacked from; skick346.lha carries the RTB tables.
+    # Both fetch-verified against the checksums copperline's
+    # tools/fetch-whdload.sh pins.
+    - assets/whdboot/WHDLoad_usr.lha
+    - assets/whdboot/skick346.lha
+    # Copperline's bundled ROM assets, needed on hosts where "next to the
+    # executable" is not a place files can live: the open A2091 SCSI
+    # autoboot ROM, and the open CD32 FMV cartridge ROM. Copied from
+    # copperline/assets/ at v1.0.1; both are redistributable.
+    - assets/copperline/a2091/copperline-a2091.rom
+    - assets/copperline/fmv/copperline-fmv.rom
     # The AROS m68k ROM: an open reimplementation of AmigaOS, and what the
     # core falls back to when the user has supplied no Kickstart ("Could not
     # load system ROM, trying AROS ROM replacement"). It is what makes a clean

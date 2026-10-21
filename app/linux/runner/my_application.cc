@@ -10,8 +10,14 @@
 #include <glib.h>
 #include <sys/stat.h>
 #include <dlfcn.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <linux/joystick.h>
+#include <linux/input.h>
 
 #include <atomic>
+#include <cstring>
 #include <string>
 #include <thread>
 #include <vector>
@@ -68,6 +74,230 @@ static Function core_symbol(const char* name) {
 // app around the launcher, so this answers for itself.
 static constexpr char kChannel[] = "uae4arm2026/emulator";
 
+// ---- Physical controller ---------------------------------------------
+//
+// The Amiberry core sees a gamepad through the SDL it links; the Rust core
+// has no SDL and learns about a pad only through uae4arm_host_pad_*. Both
+// get the same events because the Dart side of the channel is what pushes
+// them -- the same physicalPad* messages Android's activity produces. This
+// is that producer for the desktop: the kernel joystick API on
+// /dev/input/jsN, read on the GLib main loop.
+//
+// Events are forwarded whether or not a game is running. Dart drops them
+// when no core is listening, and on a desktop nothing needs swallowing --
+// the same buttons the pad uses are ones the keyboard still owns.
+
+static FlMethodChannel* emulator_channel = nullptr;
+constexpr int kPadMax = 4;
+static int pad_fds[kPadMax] = {-1, -1, -1, -1};
+static bool pad_left = false, pad_right = false,
+            pad_up = false, pad_down = false;
+
+// The real wiring of each pad, read at open: js slot number -> evdev code.
+// Slot order is per-device - the d-pad is a hat on one pad and four buttons
+// on the next - so events are translated by code, never by slot.
+static uint8_t pad_axis_maps[kPadMax][ABS_MAX + 1] = {};
+static uint16_t pad_button_maps[kPadMax][KEY_MAX - BTN_MISC + 1] = {};
+static int pad_axis_counts[kPadMax] = {}, pad_button_counts[kPadMax] = {};
+
+static bool pad_any_connected() {
+  for (int i = 0; i < kPadMax; i++)
+    if (pad_fds[i] >= 0) return true;
+  return false;
+}
+
+static void pad_invoke(const char* method, FlValue* args) {
+  if (emulator_channel == nullptr) return;
+  fl_method_channel_invoke_method(emulator_channel, method, args, nullptr,
+                                  nullptr, nullptr);
+}
+
+static void pad_connected_changed(bool connected) {
+  pad_invoke("gamepadChanged", fl_value_new_bool(connected));
+}
+
+static void pad_push_direction() {
+  g_autoptr(FlValue) args = fl_value_new_map();
+  fl_value_set_string_take(args, "left", fl_value_new_bool(pad_left));
+  fl_value_set_string_take(args, "right", fl_value_new_bool(pad_right));
+  fl_value_set_string_take(args, "up", fl_value_new_bool(pad_up));
+  fl_value_set_string_take(args, "down", fl_value_new_bool(pad_down));
+  pad_invoke("physicalPadDirection", args);
+}
+
+static void pad_push_button(int button, bool pressed) {
+  g_autoptr(FlValue) args = fl_value_new_map();
+  fl_value_set_string_take(args, "button", fl_value_new_int(button));
+  fl_value_set_string_take(args, "pressed", fl_value_new_bool(pressed));
+  pad_invoke("physicalPadButton", args);
+}
+
+// Direction from a stick or a hat: past halfway is a direction, the same
+// deal the Android side makes.
+static void pad_direction_axis(uint16_t code, int16_t value) {
+  const bool negative = value < -16000;
+  const bool positive = value > 16000;
+  bool changed = false;
+  switch (code) {
+    case ABS_X:
+    case ABS_HAT0X:
+      changed = pad_left != negative || pad_right != positive;
+      pad_left = negative;
+      pad_right = positive;
+      break;
+    case ABS_Y:
+    case ABS_HAT0Y:
+      changed = pad_up != negative || pad_down != positive;
+      pad_up = negative;
+      pad_down = positive;
+      break;
+    default:
+      break;
+  }
+  if (changed) pad_push_direction();
+}
+
+// The cross pad arrives as four buttons on pads that do not model it as a
+// hat - cheap clones and most Bluetooth modes among them.
+static void pad_direction_button(uint16_t code, bool pressed) {
+  bool changed = false;
+  switch (code) {
+    case BTN_DPAD_LEFT:
+      changed = pad_left != pressed;
+      pad_left = pressed;
+      break;
+    case BTN_DPAD_RIGHT:
+      changed = pad_right != pressed;
+      pad_right = pressed;
+      break;
+    case BTN_DPAD_UP:
+      changed = pad_up != pressed;
+      pad_up = pressed;
+      break;
+    case BTN_DPAD_DOWN:
+      changed = pad_down != pressed;
+      pad_down = pressed;
+      break;
+    default:
+      break;
+  }
+  if (changed) pad_push_direction();
+}
+
+static void pad_axis(int slot, uint8_t number, int16_t value) {
+  // The kernel only reports slots the device has, and unmapped slots read
+  // back as ABS_X - a count gate would misread them as left/right.
+  pad_direction_axis(pad_axis_maps[slot][number & ABS_MAX], value);
+}
+
+// The Amiga has two buttons, so the whole right-hand cluster maps to them;
+// Select and Mode are the way back to the controls, the same deal Android
+// makes. The d-pad codes feed directions for pads that report the cross as
+// buttons instead of a hat.
+static void pad_button(int slot, uint8_t number, bool pressed) {
+  if (number >= pad_button_counts[slot]) return;
+  switch (pad_button_maps[slot][number]) {
+    case BTN_SOUTH:  // A
+    case BTN_WEST:   // X
+      pad_push_button(0, pressed);
+      break;
+    case BTN_EAST:   // B
+    case BTN_NORTH:  // Y
+      pad_push_button(1, pressed);
+      break;
+    case BTN_SELECT:
+    case BTN_MODE:
+      if (pressed) pad_invoke("physicalPadMenu", nullptr);
+      break;
+    default:
+      pad_direction_button(pad_button_maps[slot][number], pressed);
+      break;
+  }
+}
+
+static gboolean pad_io(GIOChannel* source, GIOCondition condition,
+                       gpointer user_data) {
+  const int slot = GPOINTER_TO_INT(user_data);
+  const int fd = pad_fds[slot];
+  if (condition & (G_IO_HUP | G_IO_ERR | G_IO_NVAL)) {
+    // Unplugged, or the node went away.
+    close(fd);
+    pad_fds[slot] = -1;
+    pad_connected_changed(pad_any_connected());
+    return G_SOURCE_REMOVE;
+  }
+
+  js_event event;
+  ssize_t bytes;
+  while ((bytes = read(fd, &event, sizeof(event))) ==
+         static_cast<ssize_t>(sizeof(event))) {
+    if (event.type & JS_EVENT_INIT) continue;
+    if (event.type == JS_EVENT_AXIS) {
+      pad_axis(slot, event.number, event.value);
+    } else if (event.type == JS_EVENT_BUTTON) {
+      pad_button(slot, event.number, event.value != 0);
+    }
+  }
+  if (bytes < 0 && errno != EAGAIN) {
+    close(fd);
+    pad_fds[slot] = -1;
+    pad_connected_changed(pad_any_connected());
+    return G_SOURCE_REMOVE;
+  }
+  return G_SOURCE_CONTINUE;
+}
+
+// Poll for pads until all js nodes are taken. A js node only exists while
+// the device is there, so probing /dev/input/jsN is the whole hotplug story
+// on this end; removal is the HUP branch above.
+static gboolean pad_probe(gpointer user_data) {
+  for (int slot = 0; slot < kPadMax; slot++) {
+    if (pad_fds[slot] >= 0) continue;
+    g_autofree gchar* node = g_strdup_printf("/dev/input/js%d", slot);
+    const int fd = open(node, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) continue;
+    pad_fds[slot] = fd;
+
+    // The slot-to-code maps decide what each event means. Both ioctls
+    // return the map's byte count on success, so a nonzero answer is NOT
+    // an error - treating it as one puts every unmapped slot on ABS_X,
+    // which is a d-pad that only steers horizontally. A pad whose maps
+    // really fail still works, on the common-layout assumption: stick on
+    // axes 0/1, hat on 16/17, and the gamepad button block in order.
+    uint8_t count = 0;
+    if (ioctl(fd, JSIOCGAXES, &count) == 0) pad_axis_counts[slot] = count;
+    if (ioctl(fd, JSIOCGAXMAP, pad_axis_maps[slot]) < 0) {
+      // 0xff is no valid ABS code, so a slot we don't know lands in the
+      // direction switch's default arm instead of steering horizontally.
+      memset(pad_axis_maps[slot], 0xff, sizeof(pad_axis_maps[slot]));
+      pad_axis_maps[slot][0] = ABS_X;
+      pad_axis_maps[slot][1] = ABS_Y;
+      pad_axis_maps[slot][16] = ABS_HAT0X;
+      pad_axis_maps[slot][17] = ABS_HAT0Y;
+    }
+    count = 0;
+    if (ioctl(fd, JSIOCGBUTTONS, &count) == 0) pad_button_counts[slot] = count;
+    if (ioctl(fd, JSIOCGBTNMAP, pad_button_maps[slot]) < 0) {
+      static const uint16_t kCommon[11] = {
+          BTN_SOUTH, BTN_EAST,   BTN_WEST,  BTN_NORTH,
+          BTN_TL,    BTN_TR,     BTN_SELECT, BTN_START,
+          BTN_MODE,  BTN_THUMBL, BTN_THUMBR,
+      };
+      memcpy(pad_button_maps[slot], kCommon, sizeof(kCommon));
+      pad_button_counts[slot] = 11;
+    }
+
+    GIOChannel* io = g_io_channel_unix_new(fd);
+    g_io_channel_set_encoding(io, nullptr, nullptr);
+    g_io_add_watch(io,
+                   static_cast<GIOCondition>(G_IO_IN | G_IO_HUP | G_IO_ERR),
+                   pad_io, GINT_TO_POINTER(slot));
+    g_io_channel_unref(io);
+    pad_connected_changed(true);
+  }
+  return G_SOURCE_CONTINUE;
+}
+
 // Everything the launcher writes lives under one directory, the way it does on
 // a phone: configs, save states, the media index and the pad layout.
 static gchar* app_support_directory() {
@@ -115,6 +345,14 @@ static void handle_method_call(FlMethodChannel* channel, FlMethodCall* call,
     g_autoptr(FlValue) value = fl_value_new_bool(TRUE);
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(value));
   } else if (g_strcmp0(method, "requestAllFilesAccess") == 0) {
+    g_autoptr(FlValue) value = fl_value_new_bool(TRUE);
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(value));
+  } else if (g_strcmp0(method, "hasGamepad") == 0) {
+    g_autoptr(FlValue) value = fl_value_new_bool(pad_any_connected());
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(value));
+  } else if (g_strcmp0(method, "setGameRunning") == 0) {
+    // Forwarded always: Dart drops pad events when no core is listening,
+    // and on a desktop nothing needs the keys swallowed.
     g_autoptr(FlValue) value = fl_value_new_bool(TRUE);
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(value));
   } else if (g_strcmp0(method, "openControllerMapping") == 0) {
@@ -228,11 +466,11 @@ static void my_application_activate(GApplication* application) {
   if (use_header_bar) {
     GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
     gtk_widget_show(GTK_WIDGET(header_bar));
-    gtk_header_bar_set_title(header_bar, "uae4arm2026");
+    gtk_header_bar_set_title(header_bar, "Retro-Amiga");
     gtk_header_bar_set_show_close_button(header_bar, TRUE);
     gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
   } else {
-    gtk_window_set_title(window, "uae4arm2026");
+    gtk_window_set_title(window, "Retro-Amiga");
   }
 
   gtk_window_set_default_size(window, 1280, 720);
@@ -264,6 +502,12 @@ static void my_application_activate(GApplication* application) {
       FL_METHOD_CODEC(codec));
   fl_method_channel_set_method_call_handler(channel, handle_method_call,
                                             g_object_ref(view), g_object_unref);
+
+  // The physicalPad* producer: the pad events this sends are what
+  // Dart pushes into whichever core is running.
+  emulator_channel = channel;
+  pad_probe(nullptr);
+  g_timeout_add_seconds(2, pad_probe, nullptr);
 
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }

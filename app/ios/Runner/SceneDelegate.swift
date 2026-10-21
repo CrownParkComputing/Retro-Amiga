@@ -319,8 +319,9 @@ class SceneDelegate: FlutterSceneDelegate {
                               details: nil))
           return
         }
+        let core = (call.arguments as? [String: Any])?["core"] as? String
         do {
-          try EmulatorHost.shared.launch(args: args)
+          try EmulatorHost.shared.launch(args: args, core: core)
           result(nil)
         } catch EmulatorHost.HostError.message(let message) {
           result(FlutterError(code: "launch_failed", message: message, details: nil))

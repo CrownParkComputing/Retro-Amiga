@@ -521,8 +521,20 @@ class _LibraryPanelState extends State<LibraryPanel> {
       case FileCategory.cdImages:
         return base.copyWith(cdImage: file.path);
       case FileCategory.hardDrives:
-      case FileCategory.whdloadGames:
         return base.copyWith(hardDrives: <String>[file.path]);
+      case FileCategory.whdloadGames:
+        // The package slot, not a drive: an .lha in hardDrives was written
+        // out as a hardfile, which Copperline refuses to build and Amiberry
+        // mounts as a garbage disk. Every WHDLoad setup gets the A1200
+        // profile - Kickstart 3.1, 68020, 2M chip + 8M fast - because
+        // practically every slave wants it; a different machine is a
+        // manual pick on the wizard's machine step.
+        final EmulatorSettings whd = WizardMode.whdload
+            .settingsFor(AmigaModel.a1200)
+            .copyWith(whdloadFilename: file.path);
+        return base.useRtg
+            ? whd.copyWith(useRtg: true, z3Ram: 64)
+            : whd;
       case FileCategory.roms:
         return base.copyWith(romFile: file.path);
       case FileCategory.archives:

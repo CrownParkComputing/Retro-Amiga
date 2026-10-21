@@ -66,4 +66,16 @@ void main() {
     ];
     expect(RomPicker.kickstartFor(AmigaModel.a1200, roms), real);
   });
+
+  test('an A1200 gets its 3.1 Kickstart, not an earlier one that sorted first', () {
+    // Sorting puts v3.0 before v3.1; a bare machine-name match would take it,
+    // and WHDLoad setups run against 3.1.
+    final MediaFile v31 = _rom('Kickstart v3.1 r40.068 (A1200).rom', 524288);
+    final List<MediaFile> roms = <MediaFile>[
+      _rom('Kickstart v3.0 r39.106 (A1200).rom', 524288),
+      v31,
+      _rom('Kickstart v1.3 r34.005 (A500).rom', 262144),
+    ];
+    expect(RomPicker.kickstartFor(AmigaModel.a1200, roms), v31);
+  });
 }

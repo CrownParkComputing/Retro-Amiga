@@ -5,7 +5,11 @@ import 'package:flutter/services.dart';
 
 import 'ffi/amiga_core.dart';
 
+import 'data/config_parser.dart';
 import 'data/config_store.dart';
+import 'data/copperline_config.dart';
+import 'data/core_kind.dart';
+import 'data/emulator_settings.dart';
 import 'data/whdload_support.dart';
 
 import 'data/app_log.dart';
@@ -29,8 +33,18 @@ class Emulator {
   /// Activity. Null on a core too old to hand frames back, or on a platform
   /// that runs the core as a child process -- and then [launch] falls back to
   /// the Activity exactly as before.
+  /// The core the last launch selected. Everything that talks to the
+  /// running machine - suspend, stop, the emulator screen - asks for this
+  /// one, because the two libraries export the same symbols and are told
+  /// apart only by which handle was opened.
+  static CoreKind _activeKind = CoreKind.amiberry;
+
+  /// The core kind the last launch resolved, for UI that wants to say
+  /// which engine is running.
+  static CoreKind get activeKind => _activeKind;
+
   static AmigaCore? get inProcessCore {
-    final core = AmigaCore.open();
+    final core = AmigaCore.open(_activeKind);
     if (core == null || !core.hasFramebufferOutput) return null;
     return core;
   }
@@ -91,7 +105,57 @@ class Emulator {
     await MusicPlayer.stop(byUser: false);
     Session.markStarted();
 
+    // Which core the config asks for. No marker - or no config at all, for
+    // a bare model boot - is Amiberry, which is also what every config
+    // written before core selection existed resolves to.
+    final int at = args.indexOf('--config');
+    String? configPath;
+    CoreKind kind = CoreKind.amiberry;
+    if (at >= 0 && at + 1 < args.length) {
+      configPath = args[at + 1];
+      try {
+        kind = CoreKind.fromConfigText(File(configPath).readAsStringSync());
+      } on FileSystemException {
+        // Unreadable: the core's own launch failure names it.
+      }
+    }
+    _activeKind = kind;
+
+    if (kind == CoreKind.copperline && configPath != null) {
+      // Copperline reads TOML, not .uae, and takes its WHDLoad archive as
+      // --whdload rather than --autoload. The .uae stays the source of
+      // truth: translate into a scratch file beside it and hand that over.
+      final EmulatorSettings settings =
+          ConfigParser.parse(File(configPath).readAsStringSync());
+      final File toml =
+          await CopperlineConfig.writeScratchSettings(settings, configPath);
+      final int st = args.indexOf('--statefile');
+      args = <String>[
+        '--config',
+        toml.path,
+        if (st >= 0 && st + 1 < args.length) ...<String>[
+          '--statefile',
+          args[st + 1],
+        ],
+        if (settings.whdloadFilename.isNotEmpty) ...<String>[
+          '--whdload',
+          settings.whdloadFilename,
+        ],
+      ];
+      AppLog.info('launch', 'copperline: ${args.join(' ')}');
+    }
+
     final AmigaCore? core = inProcessCore;
+    if (core == null && kind != CoreKind.amiberry) {
+      // The native launch below hands the args to the SDL activity, which
+      // loads libuae4arm unconditionally -- it cannot run a Copperline
+      // config, and feeding it the translated TOML would launch the wrong
+      // core. Only Amiberry keeps the separate-process route.
+      final String message =
+          'The ${kind.label} core is not available in this build.';
+      AppLog.error('launch', message);
+      throw PlatformException(code: 'core_unavailable', message: message);
+    }
     if (core != null) {
       // In-process: the launcher stays on screen and the picture appears in
       // its panel. No Activity, no window, no wipe. A session that is still
@@ -100,17 +164,22 @@ class Emulator {
       AppLog.info('launch', 'in-process core');
       playing.value = false;
       await core.start(args);
-      // Where pausing puts its snapshot: states/<config name>.uss, the same
-      // rule every host uses, so the Resume shelf reads one index. A launch
-      // with no config - a bare model boot - has no session to come back to.
-      final int at = args.indexOf('--config');
-      if (at >= 0 && at + 1 < args.length) {
-        final String configPath = args[at + 1];
+      // Where pausing puts its snapshot: states/<config name>.uss (.clstate
+      // for Copperline), the same rule every host uses, so the Resume shelf
+      // reads one index. The recorded config is the .uae read above - after
+      // translation, --config in args is the throwaway TOML, and resuming
+      // needs the real one. A launch with no config - a bare model boot -
+      // has no session to come back to.
+      if (configPath != null) {
         String name = configPath.split('/').last;
         final int dot = name.lastIndexOf('.');
         if (dot > 0) name = name.substring(0, dot);
         final String support = await HostPaths.appSupport();
-        core.setSession('$support/states/$name.uss', configPath, name);
+        core.setSession(
+          '$support/states/$name${kind.stateExtension}',
+          configPath,
+          name,
+        );
         playingTitle = name;
       }
       playing.value = true;
@@ -120,6 +189,9 @@ class Emulator {
     try {
       await _channel.invokeMethod<bool>('launch', <String, Object?>{
         'args': args,
+        // The hosts that still launch natively need to know which library
+        // to dlopen; the in-process path never reaches here.
+        'core': kind.name,
       });
     } on PlatformException catch (e) {
       AppLog.error('launch', '${e.code}: ${e.message}');
@@ -130,21 +202,27 @@ class Emulator {
   /// Ends an in-process session and puts the workbench back in charge.
   static void stopInProcess() {
     final AmigaCore? core = inProcessCore;
-    if (core == null || !core.isRunning) return;
-    // Running again before it is told to stop.
-    //
-    // A paused core's main loop is not turning, so the quit it is handed sits
-    // in the queue unread: the run never returns, start() waits twenty
-    // seconds for an isolate that will never exit, and the app is left
-    // believing a session is still going. Nothing can be launched after that.
-    //
-    // The commands are a queue in order, so the resume is applied before the
-    // save and the quit that follow it.
-    core.setPaused(false);
-    // Leaving keeps your place, the way the C64 front end's pause does: the
-    // snapshot is written before the machine goes down, and Resume offers it.
-    core.saveSession();
-    core.quit();
+    if (core != null && core.isRunning) {
+      // Running again before it is told to stop.
+      //
+      // A paused core's main loop is not turning, so the quit it is handed
+      // sits in the queue unread: the run never returns, start() waits
+      // twenty seconds for an isolate that will never exit, and the app is
+      // left believing a session is still going. Nothing can be launched
+      // after that.
+      //
+      // The commands are a queue in order, so the resume is applied before
+      // the save and the quit that follow it.
+      core.setPaused(false);
+      // Leaving keeps your place, the way the C64 front end's pause does:
+      // the snapshot is written before the machine goes down, and Resume
+      // offers it.
+      core.saveSession();
+      core.quit();
+    }
+    // A core that already ended -- a machine that failed to build -- still
+    // has its session flag to clear, or the workbench believes a game is
+    // live that the screen just walked away from.
     playing.value = false;
   }
 
@@ -156,10 +234,12 @@ class Emulator {
   /// with sessions nobody asked to keep, and each one is a full memory dump.
   static void closeInProcess() {
     final AmigaCore? core = inProcessCore;
-    if (core == null || !core.isRunning) return;
-    // See stopInProcess: a paused core cannot act on a quit.
-    core.setPaused(false);
-    core.quit();
+    if (core != null && core.isRunning) {
+      // See stopInProcess: a paused core cannot act on a quit.
+      core.setPaused(false);
+      core.quit();
+    }
+    // See stopInProcess: the flag clears even when the core died on its own.
     playing.value = false;
   }
 
