@@ -443,6 +443,8 @@ fn run_loop(first: LaunchArgs) -> i32 {
     };
     let mut published_frame: Option<u64> = None;
     let start = Instant::now();
+    let beam_watch = std::env::var_os("CL_BEAM_WATCH").is_some();
+    let mut beam_next = 0.0f64;
     let mut exit = 0i32;
 
     loop {
@@ -578,6 +580,30 @@ fn run_loop(first: LaunchArgs) -> i32 {
         if PAUSED.load(Ordering::Acquire) {
             std::thread::sleep(std::time::Duration::from_millis(5));
             continue;
+        }
+        if beam_watch {
+            let now = start.elapsed().as_secs_f64();
+            if now >= beam_next {
+                beam_next = now + 1.0;
+                if let Some(e) = &mut emu {
+                    let bus = e.emu.bus();
+                    eprintln!(
+                        "BEAM t={:.1}s emu_t={:.3} frames={} vpos={} hpos={} pc={:06x} | rendered={:?} published={:?} present_len={} rows={} w={} serial={}",
+                        now,
+                        bus.emulated_seconds(),
+                        bus.emulated_frames(),
+                        bus.agnus.vpos,
+                        bus.agnus.hpos,
+                        e.emu.machine.pc(),
+                        e.last_rendered_frame,
+                        published_frame,
+                        e.present.len(),
+                        e.present_rows,
+                        e.present_width,
+                        crate::framebuffer::uae4arm_host_framebuffer_serial(),
+                    );
+                }
+            }
         }
         if let Some(e) = &mut emu {
             let now_ms = start.elapsed().as_secs_f64() * 1000.0;
