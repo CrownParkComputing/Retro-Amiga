@@ -9,6 +9,7 @@ import 'app_log.dart';
 import 'file_category.dart';
 import 'hard_drive_set.dart';
 import 'host_paths.dart';
+import 'media_layout.dart';
 import 'media_root.dart';
 
 /// One file the user's granted folder holds.
@@ -348,16 +349,34 @@ class MediaFolderImporter {
     if (inPlace != null) {
       await MediaRoot.setPath(inPlace);
       AppLog.info('folder', 'using the library in place at $inPlace');
-      return const ImportResult(
+      final MediaLayoutReport report = await MediaLayoutCheck.fromPath(
+        inPlace,
+      );
+      return ImportResult(
         moved: 0,
         alreadyInPlace: 0,
         failed: 0,
         usedInPlace: true,
+        layout: MediaLayoutReport(
+          recognizedMedia: report.recognizedMedia,
+          presentSubfolders: report.presentSubfolders,
+          looseMediaFiles: report.looseMediaFiles,
+          readableInPlace: true,
+          umbrellaFolder: report.umbrellaFolder,
+          cloantoKeys: report.cloantoKeys,
+          encryptedRoms: await MediaLayoutCheck.countEncryptedRoms(
+            Directory('$inPlace/${MediaRoot.folders[FileCategory.roms]}'),
+          ),
+        ),
       );
     }
 
     await _adoptRootNearSource();
     final List<FolderEntry> entries = await MediaFolder.list();
+    final MediaLayoutReport layout = MediaLayoutCheck.fromEntries(
+      entries,
+      readableInPlace: false,
+    );
 
     // Only files the app knows what to do with. A granted folder may be the
     // top of somebody's storage, and copying every photo on the phone into an
@@ -429,6 +448,17 @@ class MediaFolderImporter {
       moved: copied,
       alreadyInPlace: alreadyThere,
       failed: failed,
+      layout: MediaLayoutReport(
+        recognizedMedia: layout.recognizedMedia,
+        presentSubfolders: layout.presentSubfolders,
+        looseMediaFiles: layout.looseMediaFiles,
+        readableInPlace: false,
+        umbrellaFolder: layout.umbrellaFolder,
+        cloantoKeys: layout.cloantoKeys,
+        encryptedRoms: await MediaLayoutCheck.countEncryptedRoms(
+          await MediaRoot.folderFor(FileCategory.roms),
+        ),
+      ),
     );
   }
 

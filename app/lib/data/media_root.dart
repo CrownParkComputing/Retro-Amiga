@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'app_log.dart';
 import 'file_category.dart';
 import 'host_paths.dart';
+import 'media_layout.dart';
 import 'media_library.dart';
 
 /// Where imported media lives, and what goes where inside it.
@@ -231,6 +232,7 @@ class ImportResult {
     required this.failed,
     this.extracted = 0,
     this.usedInPlace = false,
+    this.layout,
   });
 
   final int moved;
@@ -243,6 +245,10 @@ class ImportResult {
   /// True when the granted folder was adopted as the library where it is,
   /// with nothing copied at all.
   final bool usedInPlace;
+
+  /// What the picked folder looked like - wrong level, no subfolder layout,
+  /// encrypted ROMs - for the caller to surface. See MediaLayoutReport.
+  final MediaLayoutReport? layout;
 
   int get total => moved + alreadyInPlace + failed;
 }

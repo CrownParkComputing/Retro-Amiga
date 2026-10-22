@@ -10,6 +10,7 @@ import '../data/media_library.dart';
 import '../data/media_root.dart';
 import '../theme/amiga_theme.dart';
 import '../widgets/import_progress_dialog.dart';
+import '../widgets/media_layout_dialog.dart';
 
 /// Where things live and how they get there, after setup has run.
 ///
@@ -96,7 +97,8 @@ class _SettingsPanelState extends State<SettingsPanel> {
 
     setState(() => _busy = true);
     try {
-      await ImportProgressDialog.run<ImportResult>(
+      final ImportResult result =
+          await ImportProgressDialog.run<ImportResult>(
         context,
         title: 'Importing Amiga files',
         initialMessage: 'Scanning the selected folder and AGS collection…',
@@ -107,6 +109,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
             ),
       );
       await MediaLibrary.scan();
+      if (mounted) await showMediaLayoutWarnings(context, result.layout);
     } on Exception {
       // The import reports its own failures to the log; the reload below
       // shows whatever did land rather than leaving a half-updated screen.

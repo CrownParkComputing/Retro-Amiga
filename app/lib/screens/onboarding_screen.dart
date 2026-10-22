@@ -18,6 +18,7 @@ import '../data/media_root.dart';
 import '../data/startup_import.dart';
 import '../data/whdload_support.dart';
 import '../widgets/amiga_logo.dart';
+import '../widgets/media_layout_dialog.dart';
 
 /// First-run setup.
 ///
@@ -300,6 +301,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             : '${result.moved} copied, ${result.alreadyInPlace} already here'
                   '${result.failed > 0 ? ', ${result.failed} failed' : ''}.',
       );
+      if (mounted) await showMediaLayoutWarnings(context, result.layout);
     } on Exception catch (e) {
       if (mounted) {
         setState(() {

@@ -7,6 +7,7 @@ import '../data/file_category.dart';
 import '../data/media_folder.dart';
 import '../data/media_root.dart';
 import '../data/media_library.dart';
+import 'media_layout_dialog.dart';
 
 /// Offers what a scan found, rather than making the user go and find it.
 ///
@@ -134,6 +135,7 @@ class _MediaChooserState extends State<MediaChooser> {
             : '${result.moved} copied, ${result.alreadyInPlace} already here'
                   '${result.failed > 0 ? ', ${result.failed} failed' : ''}.',
       );
+      if (mounted) await showMediaLayoutWarnings(context, result.layout);
     } on Exception catch (e) {
       if (mounted) setState(() => _notice = 'Import failed: $e');
     } finally {
