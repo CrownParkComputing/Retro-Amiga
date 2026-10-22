@@ -953,9 +953,11 @@ public class SDLActivity extends Activity {
                             }
                             if (Build.VERSION.SDK_INT >= 30 /* Android 11 (R) */) {
                                 window.getAttributes().layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
-                            } else if (Build.VERSION.SDK_INT >= 28 /* Android 9 (Pie) */) {
-                                window.getAttributes().layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
                             }
+                            // Below API 30 upstream SDL sets no cutout mode at
+                            // all, and neither do we: the only other option,
+                            // SHORT_EDGES, is one of the deprecated edge-to-edge
+                            // APIs Play flags on targetSdk 35+.
                             if (Build.VERSION.SDK_INT >= 30 /* Android 11 (R) */ &&
                                 Build.VERSION.SDK_INT < 35 /* Android 15 */) {
                                 SDLActivity.onNativeInsetsChanged(0, 0, 0, 0);
