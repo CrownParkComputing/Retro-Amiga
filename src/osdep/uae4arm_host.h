@@ -129,7 +129,11 @@ void uae4arm_host_set_session(const char* state_path, const char* config_path,
 	const char* title);
 bool uae4arm_host_save_session(void);
 
-void uae4arm_host_insert_floppy(int drive, const char* path);
+/* Puts a disk image in a drive while the machine runs. Returns false when the
+ * image cannot be opened, in which case the drive keeps what it had: the swap
+ * itself completes two emulated seconds later, long after the host has been
+ * told "done", so a bad path has to be refused here or not at all. */
+bool uae4arm_host_insert_floppy(int drive, const char* path);
 void uae4arm_host_eject_floppy(int drive);
 int  uae4arm_host_get_floppy_count(void);
 

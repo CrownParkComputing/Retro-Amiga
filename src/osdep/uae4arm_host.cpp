@@ -18,6 +18,7 @@
 #include "amiberry_gfx.h"
 #include "protracker.h"
 #include "savestate.h"
+#include "zfile.h"
 #include "uae.h"
 
 #include <algorithm>
@@ -133,11 +134,26 @@ void uae4arm_host_restart(void)
 	uae_restart(&currprefs, 0, nullptr);
 }
 
-void uae4arm_host_insert_floppy(int drive, const char* path)
+bool uae4arm_host_insert_floppy(int drive, const char* path)
 {
 	if (drive < 0 || drive > 3 || !path || !*path)
-		return;
+		return false;
+	/* disk_insert only arms the swap: the drive ejects, the program is given
+	   two emulated seconds to see DSKCHANGE, and the image goes in after
+	   that. An image that cannot be opened fails back there, where the only
+	   trace is a realpath() line in the log and the old disk quietly
+	   returning - and a host that was told "inserted" has nothing to show
+	   the player but a game still asking for disk two. The one moment there
+	   is anybody to tell is now.
+
+	   zfile_exists rather than a plain stat: an image is as often inside a
+	   .zip or .adz as it is a bare file, and both are legitimate here. */
+	if (!zfile_exists(path)) {
+		write_log(_T("host: cannot open '%s' - DF%d keeps its disk\n"), path, drive);
+		return false;
+	}
 	disk_insert(drive, path);
+	return true;
 }
 
 void uae4arm_host_eject_floppy(int drive)

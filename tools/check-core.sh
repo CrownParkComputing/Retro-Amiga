@@ -40,6 +40,7 @@ trap 'rm -rf "$WORK"' EXIT
 
 cc tools/core-twice.c  -ldl -lpthread -o "$WORK/core-twice"  || exit 1
 cc tools/core-again.c  -ldl -lpthread -o "$WORK/core-again"  || exit 1
+cc tools/core-swap-disk.c -ldl -lpthread -o "$WORK/core-swap" || exit 1
 
 # Test media: any two WHDLoad archives from the library. The scenarios need
 # real archives because the archive-mount path is where the statics bite.
@@ -102,6 +103,48 @@ if [ "$(grep -c "Command line parameters" "$WORK/different-games.log")" -ge 2 ];
     pass "both runs parse their command line"
 else
     fail "run 2 lost its command line"
+fi
+
+# Swapping a disk while the game runs: the thing a multi-disk game needs, and
+# the thing that used to fail without saying so. The core only arms the swap
+# (eject, two emulated seconds of DSKCHANGE, then insert), so an image it
+# cannot open failed back there, put the old disk back, and left the host
+# announcing success to a player whose game still wanted disk two.
+#
+# Two ADFs and a Kickstart. The state the core saves afterwards is the
+# assertion: it records what is actually in the drive.
+ADF_DIR="${AMIGA_ADF_DIR:-$HOME/Amiga-Retro/Floppies}"
+KICKSTART="${AMIGA_KICKSTART:-$HOME/Amiberry/ROMs/kick13.rom}"
+mapfile -t ADFS < <(ls "$ADF_DIR"/*.adf 2>/dev/null | head -2)
+if [ "${#ADFS[@]}" -lt 2 ] || [ ! -f "$KICKSTART" ]; then
+    say "skip: needs two .adf files in $ADF_DIR and a Kickstart at $KICKSTART (swap-disk)"
+else
+    swap_log="$WORK/swap-disk.log"
+    LIBGL_ALWAYS_SOFTWARE=1 timeout 180 "$WORK/core-swap" "$CORE" 12 0 "${ADFS[1]}" \
+        "$WORK/swap.uss" --log "${JITOFF[@]}" -s kickstart_rom_file="$KICKSTART" \
+        -s floppy0="${ADFS[0]}" -G > "$swap_log" 2>&1
+    cp "$swap_log" /tmp/check-core-swap-disk.log
+    if grep -q "insert accepted: yes" "$swap_log" &&
+       strings "$WORK/swap.uss" 2>/dev/null | grep -qF "${ADFS[1]}"; then
+        pass "a disk swapped mid-game reaches the drive"
+    else
+        fail "mid-game swap did not reach the drive (see /tmp/check-core-swap-disk.log)"
+    fi
+
+    # The other half: an image that cannot be opened must be refused to the
+    # host's face, not silently back in the drive two seconds later.
+    bad_log="$WORK/swap-bad.log"
+    LIBGL_ALWAYS_SOFTWARE=1 timeout 180 "$WORK/core-swap" "$CORE" 12 0 \
+        "$WORK/no-such-disk.adf" "$WORK/bad.uss" --log "${JITOFF[@]}" \
+        -s kickstart_rom_file="$KICKSTART" -s floppy0="${ADFS[0]}" -G \
+        > "$bad_log" 2>&1
+    cp "$bad_log" /tmp/check-core-swap-bad.log
+    if grep -q "insert accepted: no" "$bad_log" &&
+       strings "$WORK/bad.uss" 2>/dev/null | grep -qF "${ADFS[0]}"; then
+        pass "an unopenable image is refused, and the drive keeps its disk"
+    else
+        fail "unopenable image was not refused (see /tmp/check-core-swap-bad.log)"
+    fi
 fi
 
 # ---- verdict ---------------------------------------------------------------
